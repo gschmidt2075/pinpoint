@@ -3,7 +3,7 @@ import { Field, SectionCard, Table, StatusBadge, inp, btn, fmt, fmtSm, ProgressB
 import { EXPENDITURE_CODES, FUNDS } from "../data/accountCodes.js";
 
 // ── FEMA Equipment Rates (partial — most common public works equipment) ───────
-const FEMA_EQUIPMENT_RATES = [
+export const FEMA_EQUIPMENT_RATES = [
   { type: "Motor Grader",           size: "100-149 HP",  rate: 112.00 },
   { type: "Motor Grader",           size: "150-199 HP",  rate: 130.00 },
   { type: "Dozer",                  size: "100-149 HP",  rate: 98.00  },

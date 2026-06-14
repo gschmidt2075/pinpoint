@@ -1,8 +1,12 @@
-import { useReducer } from "react";
+import { useReducer, useState } from "react";
 import FundAccounting from "./modules/FundAccounting.jsx";
 import CostAccounting from "./modules/CostAccounting.jsx";
 import Inventory from "./modules/Inventory.jsx";
+import Equipment from "./modules/Equipment.jsx";
+import Infrastructure from "./modules/Infrastructure.jsx";
+import Projects from "./modules/Projects.jsx";
 import { FISCAL_YEAR } from "./data/accountCodes.js";
+import { Icon } from "./components/shared.jsx";
 
 // ── Global State ──────────────────────────────────────────────────────────────
 const initialState = {
@@ -10,6 +14,9 @@ const initialState = {
   vendors: [], contracts: [], employees: [], payroll: [],
   equipment: [], permits: [], projects: [],
   inventoryItems: [], inventoryTransactions: [],
+  fuelLogs: [], pmLogs: [],
+  roads: [], bridges: [], structures: [], signs: [], signHistory: [],
+  customFunds: [],
 };
 
 function reducer(state, action) {
@@ -18,12 +25,17 @@ function reducer(state, action) {
     case "ADD_REVENUE":          return { ...state, revenue: [...state.revenue, action.payload] };
     case "ADD_AMENDMENT":        return { ...state, amendments: [...state.amendments, action.payload] };
     case "UPDATE_EXP_STATUS":    return { ...state, expenditures: state.expenditures.map(e => e.id===action.payload.id ? { ...e, status:action.payload.status } : e) };
+    case "UPDATE_EXPENDITURE":   return { ...state, expenditures: state.expenditures.map(e => e.id===action.payload.id ? { ...action.payload } : e) };
     case "UPDATE_REV_STATUS":    return { ...state, revenue: state.revenue.map(r => r.id===action.payload.id ? { ...r, status:action.payload.status } : r) };
     case "ADD_VENDOR":           return { ...state, vendors: [...state.vendors, action.payload] };
     case "ADD_CONTRACT":         return { ...state, contracts: [...state.contracts, action.payload] };
     case "ADD_EMPLOYEE":         return { ...state, employees: [...state.employees, action.payload] };
     case "ADD_PAYROLL":          return { ...state, payroll: [...state.payroll, action.payload] };
     case "ADD_EQUIPMENT":        return { ...state, equipment: [...state.equipment, action.payload] };
+    case "UPDATE_EQUIPMENT_STATUS": return { ...state, equipment: state.equipment.map(u => u.id===action.payload.id ? { ...u, status:action.payload.status } : u) };
+    case "ADD_PM_SCHEDULE":      return { ...state, equipment: state.equipment.map(u => u.id!==action.payload.unitId ? u : { ...u, pmSchedule:[...(u.pmSchedule||[]), action.payload.pm] }) };
+    case "ADD_PM_LOG":           return { ...state, pmLogs: [...state.pmLogs, action.payload] };
+    case "ADD_FUEL_LOG":         return { ...state, fuelLogs: [...state.fuelLogs, action.payload] };
     case "ADD_PERMIT":           return { ...state, permits: [...state.permits, action.payload] };
     case "ADD_PROJECT":          return { ...state, projects: [...state.projects, action.payload] };
     case "UPDATE_PROJECT":       return { ...state, projects: state.projects.map(p => p.id===action.payload.id ? action.payload : p) };
@@ -31,96 +43,160 @@ function reducer(state, action) {
       const { projectId, entryType, entry } = action.payload;
       return { ...state, projects: state.projects.map(p => p.id!==projectId ? p : { ...p, [entryType]:[...(p[entryType]||[]),entry] }) };
     }
-    case "ADD_INVENTORY_ITEM":
-      return { ...state, inventoryItems: [...state.inventoryItems, action.payload] };
-    case "UPDATE_INVENTORY_ITEM":
-      return { ...state, inventoryItems: state.inventoryItems.map(i => i.id===action.payload.id ? action.payload : i) };
+    case "ADD_INVENTORY_ITEM":   return { ...state, inventoryItems: [...state.inventoryItems, action.payload] };
+    case "UPDATE_INVENTORY_ITEM":return { ...state, inventoryItems: state.inventoryItems.map(i => i.id===action.payload.id ? action.payload : i) };
     case "ADD_INVENTORY_TRANSACTION": {
-      const tx   = action.payload;
-      const qty  = parseInt(tx.quantity)||0;
+      const tx  = action.payload;
+      const qty = parseInt(tx.quantity)||0;
       const items = state.inventoryItems.map(item => {
         if (item.id !== tx.itemId) return item;
         const stock = { ...item.locationStock };
         if (tx.type==="receive")   stock[tx.location] = (stock[tx.location]||0) + qty;
         if (tx.type==="issue")     stock[tx.location] = Math.max(0,(stock[tx.location]||0) - qty);
-        if (tx.type==="transfer") {
-          stock[tx.location]   = Math.max(0,(stock[tx.location]||0) - qty);
-          stock[tx.toLocation] = (stock[tx.toLocation]||0) + qty;
-        }
+        if (tx.type==="transfer") { stock[tx.location]=Math.max(0,(stock[tx.location]||0)-qty); stock[tx.toLocation]=(stock[tx.toLocation]||0)+qty; }
         if (tx.type==="adjust")    stock[tx.location] = Math.max(0,(stock[tx.location]||0) + qty);
         return { ...item, locationStock: stock };
       });
       return { ...state, inventoryItems: items, inventoryTransactions: [...state.inventoryTransactions, tx] };
     }
+    case "ADD_ROAD":         return { ...state, roads:      [...state.roads,      action.payload] };
+    case "UPDATE_ROAD":      return { ...state, roads:      state.roads.map(r      => r.id===action.payload.id ? action.payload : r) };
+    case "ADD_BRIDGE":       return { ...state, bridges:    [...state.bridges,    action.payload] };
+    case "UPDATE_BRIDGE":    return { ...state, bridges:    state.bridges.map(b    => b.id===action.payload.id ? action.payload : b) };
+    case "ADD_STRUCTURE":    return { ...state, structures: [...state.structures, action.payload] };
+    case "UPDATE_STRUCTURE": return { ...state, structures: state.structures.map(s => s.id===action.payload.id ? action.payload : s) };
+    case "ADD_SIGN":         return { ...state, signs:      [...state.signs,      action.payload] };
+    case "UPDATE_SIGN":      return { ...state, signs:      state.signs.map(s      => s.id===action.payload.id ? action.payload : s) };
+    case "ADD_SIGN_HISTORY":    return { ...state, signHistory:[...state.signHistory, action.payload] };
+    case "ADD_CUSTOM_FUND":    return { ...state, customFunds:[...state.customFunds, action.payload] };
+    case "REMOVE_CUSTOM_FUND": return { ...state, customFunds:state.customFunds.filter(f=>f!==action.payload) };
     default: return state;
   }
 }
 
-// ── Navigation ────────────────────────────────────────────────────────────────
-const TABS = [
-  { id:"fund",       label:"Fund Accounting",    icon:"🏦", color:"#1a3a5c" },
-  { id:"cost",       label:"Cost Accounting",    icon:"📐", color:"#6b3a1a" },
-  { id:"inventory",  label:"Inventory",          icon:"📦", color:"#1a5a3a" },
-  { id:"vendors",    label:"Vendors & Contracts", icon:"📋", color:"#6b3a1a", soon:true },
-  { id:"payroll",    label:"Payroll & Personnel", icon:"👷", color:"#1a6b35", soon:true },
-  { id:"equipment",  label:"Equipment & Assets",  icon:"🚛", color:"#d97706", soon:true },
-  { id:"permitting", label:"Permitting",          icon:"📄", color:"#5a1a8a", soon:true },
-  { id:"reporting",  label:"Reporting & Exports", icon:"📊", color:"#1a5a8a", soon:true },
+// ── Navigation config ─────────────────────────────────────────────────────────
+const NAV_GROUPS = [
+  {
+    label: "Finance",
+    items: [
+      { id:"fund",           label:"Fund Accounting",   icon:"ti-building-bank" },
+      { id:"cost",           label:"Cost Accounting",   icon:"ti-calculator" },
+    ],
+  },
+  {
+    label: "Operations",
+    items: [
+      { id:"inventory",      label:"Inventory",         icon:"ti-package" },
+      { id:"equipment",      label:"Equipment",         icon:"ti-tractor" },
+      { id:"infrastructure", label:"Infrastructure",    icon:"ti-road" },
+      { id:"projects",       label:"Projects",          icon:"ti-clipboard-list" },
+      { id:"payroll",        label:"Payroll",           icon:"ti-users",        soon:true },
+      { id:"vendors",        label:"Vendors",           icon:"ti-file-invoice", soon:true },
+    ],
+  },
+  {
+    label: "Admin",
+    items: [
+      { id:"permitting",     label:"Permitting",        icon:"ti-license",      soon:true },
+      { id:"reporting",      label:"Reporting",         icon:"ti-chart-bar",    soon:true },
+    ],
+  },
 ];
 
+const ALL_TABS = NAV_GROUPS.flatMap(g => g.items);
+
+// ── Module colors ─────────────────────────────────────────────────────────────
+const MODULE_COLORS = {
+  fund:"#1a3a5c", cost:"#6b3a1a", inventory:"#1a5a3a",
+  equipment:"#d97706", payroll:"#1a6b35", vendors:"#6b3a1a",
+  permitting:"#5a1a8a", reporting:"#1a5a8a",
+};
+
+// ── Coming Soon ───────────────────────────────────────────────────────────────
 function ComingSoon({ tab }) {
   return (
     <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", minHeight:400, color:"#aaa" }}>
-      <div style={{ fontSize:48, marginBottom:16 }}>{tab.icon}</div>
-      <div style={{ fontSize:20, fontWeight:700, color:"#555", marginBottom:8 }}>{tab.label}</div>
+      <Icon name={(tab?.icon||"").replace("ti-","")} size={48} color="#ddd" style={{ display:"block", marginBottom:16 }} />
+      <div style={{ fontSize:20, fontWeight:700, color:"#555", marginBottom:8 }}>{tab?.label}</div>
       <div style={{ fontSize:14, color:"#aaa", maxWidth:320, textAlign:"center" }}>This module is coming next.</div>
     </div>
   );
 }
 
+// ── App Shell ─────────────────────────────────────────────────────────────────
 export default function App() {
-  const [activeTab, setActiveTab] = useReducer((_,id) => id, "fund");
+  const [activeTab, setActiveTab] = useState("fund");
   const [db, dispatch]            = useReducer(reducer, initialState);
-  const currentTab = TABS.find(t => t.id===activeTab);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  const currentTab = ALL_TABS.find(t=>t.id===activeTab);
 
   return (
-    <div style={{ minHeight:"100vh", background:"#f5f4f0", fontFamily:"'Segoe UI', system-ui, sans-serif" }}>
-      <div style={{ background:"#1a3a5c", color:"#fff" }}>
-        <div style={{ padding:"14px 28px 0", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-          <div style={{ display:"flex", alignItems:"center", gap:14 }}>
-            <div style={{ width:36, height:36, background:"#2d6a9f", borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18 }}>📍</div>
-            <div>
-              <div style={{ fontWeight:700, fontSize:16 }}>Pinpoint</div>
-              <div style={{ fontSize:11, opacity:0.6, letterSpacing:"0.04em" }}>PUBLIC WORKS MANAGEMENT · {FISCAL_YEAR.label}</div>
-            </div>
+    <div style={{ minHeight:"100vh", background:"#f5f4f0", fontFamily:"'Segoe UI', system-ui, sans-serif", display:"flex", flexDirection:"column" }}>
+
+      {/* Top header */}
+      <div style={{ background:"#1a3a5c", color:"#fff", padding:"0 20px", display:"flex", alignItems:"center", justifyContent:"space-between", height:52, flexShrink:0 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+          <button onClick={()=>setSidebarOpen(o=>!o)} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.7)", cursor:"pointer", fontSize:18, padding:"4px 6px", borderRadius:4 }}>
+<Icon name="menu-2" size={18} color="rgba(255,255,255,0.7)" />
+          </button>
+          <div style={{ width:30, height:30, background:"#2d6a9f", borderRadius:7, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16 }}>📍</div>
+          <div>
+            <div style={{ fontWeight:700, fontSize:15, lineHeight:1.2 }}>Pinpoint</div>
+            <div style={{ fontSize:10, opacity:0.55, letterSpacing:"0.04em" }}>PUBLIC WORKS MANAGEMENT · {FISCAL_YEAR.label}</div>
           </div>
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:16 }}>
           <div style={{ fontSize:12, opacity:0.5 }}>Roads Fund · {FISCAL_YEAR.start} – {FISCAL_YEAR.end}</div>
-        </div>
-        <div style={{ display:"flex", paddingLeft:16, marginTop:6, overflowX:"auto" }}>
-          {TABS.map(tab => (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{
-              background:"transparent", border:"none",
-              color: activeTab===tab.id ? "#fff" : "rgba(255,255,255,0.5)",
-              padding:"10px 18px 12px", fontWeight: activeTab===tab.id ? 700 : 400,
-              fontSize:13, cursor:"pointer", whiteSpace:"nowrap",
-              borderBottom: activeTab===tab.id ? `3px solid ${tab.id==="fund"?"#7ab8e8":tab.color}` : "3px solid transparent",
-              display:"flex", alignItems:"center", gap:6,
-            }}>
-              <span>{tab.icon}</span><span>{tab.label}</span>
-              {tab.soon && <span style={{ fontSize:9, background:"rgba(255,255,255,0.15)", padding:"1px 5px", borderRadius:3 }}>SOON</span>}
-            </button>
-          ))}
+          <div style={{ width:30, height:30, background:"rgba(255,255,255,0.15)", borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center" }}>
+            <i className="ti ti-user" style={{ fontSize:15, color:"#fff" }} />
+          </div>
         </div>
       </div>
 
-      <div style={{ padding:"28px" }}>
-        {activeTab==="fund"      && <FundAccounting db={db} dispatch={dispatch} />}
-        {activeTab==="cost"      && <CostAccounting db={db} dispatch={dispatch} />}
-        {activeTab==="inventory" && <Inventory db={db} dispatch={dispatch} />}
-        {!["fund","cost","inventory"].includes(activeTab) && <ComingSoon tab={currentTab} />}
+      {/* Body */}
+      <div style={{ display:"flex", flex:1, overflow:"hidden" }}>
+
+        {/* Sidebar */}
+        {sidebarOpen && (
+          <div style={{ width:190, background:"#fff", borderRight:"1px solid #e8e8e5", flexShrink:0, overflowY:"auto", paddingTop:8 }}>
+            {NAV_GROUPS.map(group => (
+              <div key={group.label} style={{ marginBottom:8 }}>
+                <div style={{ fontSize:10, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", color:"#aaa", padding:"8px 16px 4px" }}>{group.label}</div>
+                {group.items.map(item => (
+                  <button key={item.id} onClick={() => !item.soon && setActiveTab(item.id)} style={{
+                    display:"flex", alignItems:"center", gap:10, width:"100%",
+                    padding:"9px 16px", background: activeTab===item.id?"#eef2f8":"transparent",
+                    border:"none", cursor: item.soon?"default":"pointer", textAlign:"left",
+                    color: activeTab===item.id?"#1a3a5c": item.soon?"#ccc":"#444",
+                    fontWeight: activeTab===item.id?700:400, fontSize:13,
+                    borderLeft: activeTab===item.id?"3px solid #1a3a5c":"3px solid transparent",
+                    opacity: item.soon?0.5:1,
+                  }}>
+                    <Icon name={item.icon.replace("ti-","")} size={16} color={activeTab===item.id?"#1a3a5c":"#888"} />
+                    <span style={{ flex:1 }}>{item.label}</span>
+                    {item.soon && <span style={{ fontSize:9, background:"#f0f0ee", color:"#aaa", padding:"1px 5px", borderRadius:3 }}>SOON</span>}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Main content */}
+        <div style={{ flex:1, overflowY:"auto", padding:"24px 28px" }}>
+          {activeTab==="fund"      && <FundAccounting db={db} dispatch={dispatch} />}
+          {activeTab==="cost"      && <CostAccounting db={db} dispatch={dispatch} />}
+          {activeTab==="inventory" && <Inventory db={db} dispatch={dispatch} />}
+          {activeTab==="equipment"      && <Equipment db={db} dispatch={dispatch} />}
+          {activeTab==="infrastructure" && <Infrastructure db={db} dispatch={dispatch} />}
+          {activeTab==="projects"       && <Projects db={db} dispatch={dispatch} />}
+          {!["fund","cost","inventory","equipment","infrastructure","projects"].includes(activeTab) && <ComingSoon tab={currentTab} />}
+        </div>
       </div>
 
-      <div style={{ padding:"14px 28px", borderTop:"1px solid #ddd", background:"#fff", fontSize:11, color:"#aaa", display:"flex", justifyContent:"space-between" }}>
+      {/* Footer */}
+      <div style={{ padding:"10px 24px", borderTop:"1px solid #ddd", background:"#fff", fontSize:11, color:"#aaa", display:"flex", justifyContent:"space-between", flexShrink:0 }}>
         <span>Pinpoint · County Public Works Management · {FISCAL_YEAR.label}</span>
         <span>In-memory session · connect to SQL Server for persistence</span>
       </div>
