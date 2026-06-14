@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Field, SectionCard, Table, inp, btn, fmt, fmtSm } from "../components/shared.jsx";
+import { Field, SectionCard, Table, Icon, inp, btn, fmt, fmtSm } from "../components/shared.jsx";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -54,12 +54,12 @@ export default function Infrastructure({ db, dispatch }) {
   const [view, setView] = useState("dashboard");
 
   const tabs = [
-    { id:"dashboard",   label:"Dashboard" },
-    { id:"roads",       label:`Roads (${(db.roads||[]).length})` },
-    { id:"bridges",     label:`Bridges (${(db.bridges||[]).length})` },
-    { id:"structures",  label:`Structures (${(db.structures||[]).filter(s=>s.assetClass==="structure").length})` },
-    { id:"culverts",    label:`Culverts (${(db.structures||[]).filter(s=>s.assetClass==="culvert").length})` },
-    { id:"signs",       label:`Signs (${(db.signs||[]).length})` },
+    { id:"dashboard",   label:"Dashboard",                                                                               icon:"layout-dashboard" },
+    { id:"roads",       label:`Roads (${(db.roads||[]).length})`,                                                  icon:"road" },
+    { id:"bridges",     label:`Bridges (${(db.bridges||[]).length})`,                                             icon:"bridge" },
+    { id:"structures",  label:`Structures (${(db.structures||[]).filter(s=>s.assetClass==="structure").length})`, icon:"circle-dashed" },
+    { id:"culverts",    label:`Culverts (${(db.structures||[]).filter(s=>s.assetClass==="culvert").length})`,     icon:"pipe" },
+    { id:"signs",       label:`Signs (${(db.signs||[]).length})`,                                                 icon:"road-sign" },
   ];
 
   return (
@@ -71,8 +71,11 @@ export default function Infrastructure({ db, dispatch }) {
             fontWeight: view===t.id?700:400, fontSize:13, cursor:"pointer",
             color: view===t.id?"#1a5a3a":"#666",
             borderBottom: view===t.id?"2px solid #1a5a3a":"2px solid transparent",
-            marginBottom:-1,
-          }}>{t.label}</button>
+            marginBottom:-1, display:"inline-flex", alignItems:"center", gap:6,
+          }}>
+            {t.icon && <Icon name={t.icon} size={13} color={view===t.id?"#1a5a3a":"#888"} />}
+            {t.label}
+          </button>
         ))}
       </div>
 
@@ -105,11 +108,11 @@ function InfraDashboard({ db, setView }) {
   const linkedProjects = (db.projects||[]).filter(p=>p.status==="active");
 
   const kpis = [
-    { label:"Road Segments",  value:roads.length,      sub:"In system",              accent:"#1a3a5c", id:"roads" },
-    { label:"Bridges",        value:bridges.length,     sub:`${poorBridges.length} rated ≤4`, accent:"#6b3a1a", id:"bridges" },
-    { label:"Structures",     value:structures.length,  sub:`${poorStructures.length} critical`, accent:"#1a5a3a", id:"structures" },
-    { label:"Culverts",       value:culverts.length,    sub:`${poorCulverts.length} critical`,   accent:"#5a1a8a", id:"culverts" },
-    { label:"Signs",          value:signs.length,       sub:`${poorSigns.length} poor/failed`,   accent:"#d97706", id:"signs" },
+    { label:"Road Segments",  value:roads.length,      sub:"In system",              accent:"#1a3a5c", id:"roads",      icon:"road" },
+    { label:"Bridges",        value:bridges.length,     sub:`${poorBridges.length} rated ≤4`, accent:"#6b3a1a", id:"bridges",   icon:"bridge" },
+    { label:"Structures",     value:structures.length,  sub:`${poorStructures.length} critical`, accent:"#1a5a3a", id:"structures",icon:"circle-dashed" },
+    { label:"Culverts",       value:culverts.length,    sub:`${poorCulverts.length} critical`,   accent:"#5a1a8a", id:"culverts",  icon:"pipe" },
+    { label:"Signs",          value:signs.length,       sub:`${poorSigns.length} poor/failed`,   accent:"#d97706", id:"signs",     icon:"road-sign" },
   ];
 
   return (
@@ -122,7 +125,10 @@ function InfraDashboard({ db, setView }) {
       <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12, marginBottom:20 }}>
         {kpis.map((k,i)=>(
           <button key={i} onClick={()=>setView(k.id)} style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:"16px 18px", borderTop:`3px solid ${k.accent}`, textAlign:"left", cursor:"pointer" }}>
-            <div style={{ fontSize:11, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", color:"#888", marginBottom:6 }}>{k.label}</div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+              <div style={{ fontSize:11, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", color:"#888" }}>{k.label}</div>
+              {k.icon && <Icon name={k.icon} size={18} color={k.accent} style={{ opacity:0.4 }} />}
+            </div>
             <div style={{ fontSize:24, fontWeight:700, fontFamily:"monospace", color:k.accent }}>{k.value}</div>
             <div style={{ fontSize:12, color:"#888", marginTop:4 }}>{k.sub}</div>
           </button>
@@ -271,7 +277,7 @@ function RoadDetail({ road, db, onBack }) {
             { label:"From 911",        value:road.from911||"—" },
             { label:"To 911",          value:road.to911||"—" },
             { label:"S/T/R",           value:road.miscLoc||"—" },
-            { label:"GPS",             value:road.latitude?`${road.latitude}, ${road.longitude}`:"—" },
+            { label:"GPS 📍",          value:road.latitude?`${road.latitude}, ${road.longitude}`:"—" },
           ].map((f,i)=>(
             <div key={i}>
               <div style={{ fontSize:11, color:"#888", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:3 }}>{f.label}</div>
@@ -534,7 +540,7 @@ function BridgeDetail({ bridge, db, dispatch, onBack }) {
       </div>
 
       {linkedProjects.length>0 && (
-        <SectionCard title="Projects on This Bridge">
+        <SectionCard title="Projects on This Bridge" icon="clipboard-list">
           <Table
             headers={[{ label:"Project #" },{ label:"Name" },{ label:"Type" },{ label:"Status" },{ label:"Notes" }]}
             rows={linkedProjects.map(p=>[

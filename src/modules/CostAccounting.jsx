@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Field, SectionCard, Table, StatusBadge, inp, btn, fmt, fmtSm, ProgressBar, pct } from "../components/shared.jsx";
+import { Field, SectionCard, Table, StatusBadge, Icon, inp, btn, fmt, fmtSm, ProgressBar, pct } from "../components/shared.jsx";
 import { EXPENDITURE_CODES, FUNDS } from "../data/accountCodes.js";
 
 // ── FEMA Equipment Rates (partial — most common public works equipment) ───────
@@ -116,10 +116,10 @@ function CADashboard({ db, setView }) {
       <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12, marginBottom:20 }}>
         {[
           { label:"Active Projects",     value: active.length,      sub:"Currently underway",        accent:"#6b3a1a" },
-          { label:"Capital Projects",    value: capital.length,     sub:"C1- numbered",              accent:"#1a3a5c" },
-          { label:"Maintenance Jobs",    value: maintenance.length, sub:"M-Year-# numbered",         accent:"#1a6b35" },
-          { label:"Total Budget",        value: fmt(totalBudget),   sub:"All projects estimated",    accent:"#d97706" },
-          { label:"FEMA Projects",       value: femaProjects.length,sub:"Disaster reimbursement",    accent:"#c0392b" },
+          { label:"Capital Projects",    value: capital.length,     sub:"C1- numbered",              accent:"#1a3a5c", icon:"building-skyscraper" },
+          { label:"Maintenance Jobs",    value: maintenance.length, sub:"M-Year-# numbered",         accent:"#1a6b35", icon:"tools" },
+          { label:"Total Budget",        value: fmt(totalBudget),   sub:"All projects estimated",    accent:"#d97706", icon:"coin" },
+          { label:"FEMA Projects",       value: femaProjects.length,sub:"Disaster reimbursement",    accent:"#c0392b", icon:"alert-octagon" },
         ].map((k,i) => (
           <div key={i} style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:"16px 18px", borderTop:`3px solid ${k.accent}` }}>
             <div style={{ fontSize:11, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", color:"#888", marginBottom:6 }}>{k.label}</div>
@@ -581,7 +581,7 @@ function LaborEntries({ entries, onAdd, isFEMA }) {
   return (
     <div>
       <SectionCard
-        title={isFEMA ? "Force Account Labor Record" : "Labor Entries"}
+        title={isFEMA ? "Force Account Labor Record" : "Labor Entries"} icon="user-hard-hat"
         subtitle={isFEMA ? "FEMA PA — daily labor log" : `${entries.length} entries · Total: ${fmtSm(entries.reduce((s,e)=>s+(e.totalCost||0),0))}`}
         action={<button onClick={() => setAdding(!adding)} style={{ ...btn.small }}>+ Add Entry</button>}
       >
@@ -661,7 +661,7 @@ function EquipmentEntries({ entries, onAdd, isFEMA }) {
   return (
     <div>
       <SectionCard
-        title={isFEMA ? "Force Account Equipment Record" : "Equipment Entries"}
+        title={isFEMA ? "Force Account Equipment Record" : "Equipment Entries"} icon="tractor"
         subtitle={isFEMA ? "FEMA Schedule of Equipment Rates" : `${entries.length} entries · Total: ${fmtSm(entries.reduce((s,e)=>s+(e.totalCost||0),0))}`}
         action={<button onClick={() => setAdding(!adding)} style={btn.small}>+ Add Entry</button>}
       >
@@ -753,7 +753,7 @@ function MaterialEntries({ entries, onAdd, isFEMA }) {
   return (
     <div>
       <SectionCard
-        title={isFEMA ? "Force Account Materials Record" : "Material Entries"}
+        title={isFEMA ? "Force Account Materials Record" : "Material Entries"} icon="package"
         subtitle={`${entries.length} entries · Total: ${fmtSm(entries.reduce((s,e)=>s+(e.totalCost||0),0))}`}
         action={<button onClick={() => setAdding(!adding)} style={btn.small}>+ Add Entry</button>}
       >
@@ -837,7 +837,7 @@ function ContractedEntries({ entries, onAdd }) {
   return (
     <div>
       <SectionCard
-        title="Contracted Work"
+        title="Contracted Work" icon="file-dollar"
         subtitle={`${entries.length} entries · Total: ${fmtSm(entries.reduce((s,e)=>s+(parseFloat(e.amount)||0),0))}`}
         action={<button onClick={() => setAdding(!adding)} style={btn.small}>+ Add Entry</button>}
       >

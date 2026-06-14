@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Field, SectionCard, Table, StatusBadge, inp, btn, fmt, fmtSm, pct, ProgressBar } from "../components/shared.jsx";
+import { Field, SectionCard, Table, StatusBadge, Icon, inp, btn, fmt, fmtSm, pct, ProgressBar } from "../components/shared.jsx";
 import { FEMA_EQUIPMENT_RATES } from "./CostAccounting.jsx";
 
 // ── Equipment Types ───────────────────────────────────────────────────────────
@@ -127,11 +127,11 @@ function EquipDashboard({ db, setView }) {
       {/* KPIs */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12, marginBottom:20 }}>
         {[
-          { label:"Active Units",      value:active.length,              sub:"In service",          accent:"#1a6b35" },
-          { label:"In Shop",           value:inShop.length,              sub:"Under maintenance",   accent:"#d97706" },
-          { label:"Out of Service",    value:outOfSvc.length,            sub:"Down units",          accent:"#c0392b" },
-          { label:"Fuel Cost (YTD)",   value:fmt(totalFuelCost),         sub:"All units",           accent:"#1a3a5c" },
-          { label:"Maintenance (YTD)", value:fmt(totalMaintCost),        sub:"Labor + parts",       accent:"#5a1a8a" },
+          { label:"Active Units",      value:active.length,              sub:"In service",          accent:"#1a6b35", icon:"circle-check" },
+          { label:"In Shop",           value:inShop.length,              sub:"Under maintenance",   accent:"#d97706", icon:"tool" },
+          { label:"Out of Service",    value:outOfSvc.length,            sub:"Down units",          accent:"#c0392b", icon:"circle-x" },
+          { label:"Fuel Cost (YTD)",   value:fmt(totalFuelCost),         sub:"All units",           accent:"#1a3a5c", icon:"gas-station" },
+          { label:"Maintenance (YTD)", value:fmt(totalMaintCost),        sub:"Labor + parts",       accent:"#5a1a8a", icon:"settings-2" },
         ].map((k,i) => (
           <div key={i} style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:"16px 18px", borderTop:`3px solid ${k.accent}` }}>
             <div style={{ fontSize:11, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", color:"#888", marginBottom:6 }}>{k.label}</div>

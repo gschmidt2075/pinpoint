@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Field, SectionCard, Table, StatusBadge, inp, btn, fmt, fmtSm } from "../components/shared.jsx";
+import { Field, SectionCard, Table, StatusBadge, Icon, inp, btn, fmt, fmtSm, pct } from "../components/shared.jsx";
 import { EXPENDITURE_CODES } from "../data/accountCodes.js";
 
 // ── Default locations & shelves ───────────────────────────────────────────────
@@ -13,10 +13,10 @@ const DEFAULT_LOCATIONS = [
 ];
 
 const ITEM_TYPES = [
-  { value: "material",       label: "Material / Supply",  icon: "📦", color: "#1a3a5c" },
-  { value: "part",           label: "Part (cross-ref)",   icon: "⚙️",  color: "#6b3a1a" },
-  { value: "tool",           label: "Small Tool",         icon: "🔧", color: "#1a6b35" },
-  { value: "assigned_asset", label: "Assigned Asset",     icon: "🔌", color: "#5a1a8a" },
+  { value: "material",       label: "Material / Supply",  emoji: "📦", tiIcon: "box",        color: "#1a3a5c" },
+  { value: "part",           label: "Part (cross-ref)",   emoji: "⚙️",  tiIcon: "settings-2", color: "#6b3a1a" },
+  { value: "tool",           label: "Small Tool",         emoji: "🔧", tiIcon: "tool",        color: "#1a6b35" },
+  { value: "assigned_asset", label: "Assigned Asset",     emoji: "🔌", tiIcon: "plug",        color: "#5a1a8a" },
 ];
 
 const UNITS = ["EA","PR","BX","CS","GAL","QT","LB","TON","CY","LF","SF","RL","SET","KIT","OTH"];
@@ -85,11 +85,11 @@ function InvDashboard({ db, setView }) {
       {/* KPIs */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12, marginBottom:20 }}>
         {[
-          { label:"Total Items",     value:totalItems,       sub:"In inventory",          accent:"#1a5a3a" },
-          { label:"Parts (Cross-ref)",value:partsCount,      sub:"Multi-machine parts",   accent:"#6b3a1a" },
-          { label:"Low Stock",       value:lowStock.length,  sub:"At or below reorder",   accent:"#d97706" },
-          { label:"Out of Stock",    value:outOfStock.length,sub:"Zero on hand",           accent:"#c0392b" },
-          { label:"Est. Value",      value:fmt(totalValue),  sub:"At cost",               accent:"#1a3a5c" },
+          { label:"Total Items",     value:totalItems,       sub:"In inventory",          accent:"#1a5a3a", icon:"package" },
+          { label:"Parts (Cross-ref)",value:partsCount,      sub:"Multi-machine parts",   accent:"#6b3a1a", icon:"settings-2" },
+          { label:"Low Stock",       value:lowStock.length,  sub:"At or below reorder",   accent:"#d97706", icon:"alert-triangle" },
+          { label:"Out of Stock",    value:outOfStock.length,sub:"Zero on hand",           accent:"#c0392b", icon:"circle-x" },
+          { label:"Est. Value",      value:fmt(totalValue),  sub:"At cost",               accent:"#1a3a5c", icon:"coin" },
         ].map((k,i) => (
           <div key={i} style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:"16px 18px", borderTop:`3px solid ${k.accent}` }}>
             <div style={{ fontSize:11, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", color:"#888", marginBottom:6 }}>{k.label}</div>
@@ -134,7 +134,7 @@ function InvDashboard({ db, setView }) {
       </div>
 
       {/* Recent transactions */}
-      <SectionCard title="Recent Transactions" subtitle={`${(db.inventoryTransactions||[]).length} total`}>
+      <SectionCard title="Recent Transactions" subtitle={`${(db.inventoryTransactions||[]).length} total`} icon="arrows-transfer-up">
         <Table
           headers={[{ label:"Date" },{ label:"Type" },{ label:"Item" },{ label:"Location" },{ label:"Shelf" },{ label:"Qty", right:true },{ label:"Reference" }]}
           rows={recentTx.map(tx => {
@@ -751,7 +751,7 @@ function LowStock({ db }) {
       </div>
 
       {outOfStock.length > 0 && (
-        <SectionCard title="Out of Stock" subtitle="Zero quantity on hand — order immediately">
+        <SectionCard title="Out of Stock" subtitle="Zero quantity on hand — order immediately" icon="circle-x">
           <Table
             headers={[{ label:"Item" },{ label:"Type" },{ label:"Part #" },{ label:"Vendor" },{ label:"Account Code" },{ label:"Last Unit Cost", right:true }]}
             rows={outOfStock.map(item => {
@@ -771,7 +771,7 @@ function LowStock({ db }) {
       )}
 
       {lowStock.length > 0 && (
-        <SectionCard title="Low Stock" subtitle="At or below reorder point — order soon">
+        <SectionCard title="Low Stock" subtitle="At or below reorder point — order soon" icon="alert-triangle">
           <Table
             headers={[{ label:"Item" },{ label:"On Hand", right:true },{ label:"Reorder At", right:true },{ label:"Needed", right:true },{ label:"Vendor" },{ label:"Part #" },{ label:"Unit Cost", right:true }]}
             rows={lowStock.map(item => {
