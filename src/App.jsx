@@ -5,6 +5,7 @@ import Inventory from "./modules/Inventory.jsx";
 import Equipment from "./modules/Equipment.jsx";
 import Infrastructure from "./modules/Infrastructure.jsx";
 import Projects from "./modules/Projects.jsx";
+import Settings from "./modules/Settings.jsx";
 import { FISCAL_YEAR } from "./data/accountCodes.js";
 import { Icon } from "./components/shared.jsx";
 
@@ -17,6 +18,7 @@ const initialState = {
   fuelLogs: [], pmLogs: [],
   roads: [], bridges: [], structures: [], signs: [], signHistory: [],
   customFunds: [],
+  townships: [], locations: [], countyInfo: {}, fiscalYear: null, customAccountCodes: {}, femaRates: [],
 };
 
 function reducer(state, action) {
@@ -69,7 +71,14 @@ function reducer(state, action) {
     case "UPDATE_SIGN":      return { ...state, signs:      state.signs.map(s      => s.id===action.payload.id ? action.payload : s) };
     case "ADD_SIGN_HISTORY":    return { ...state, signHistory:[...state.signHistory, action.payload] };
     case "ADD_CUSTOM_FUND":    return { ...state, customFunds:[...state.customFunds, action.payload] };
-    case "REMOVE_CUSTOM_FUND": return { ...state, customFunds:state.customFunds.filter(f=>f!==action.payload) };
+    case "REMOVE_CUSTOM_FUND":    return { ...state, customFunds:state.customFunds.filter(f=>f!==action.payload) };
+    case "UPDATE_COUNTY_INFO":    return { ...state, countyInfo:action.payload };
+    case "SET_FISCAL_YEAR":       return { ...state, fiscalYear:action.payload };
+    case "UPDATE_ACCOUNT_CODE":   return { ...state, customAccountCodes:{ ...state.customAccountCodes, [action.payload.code]:action.payload } };
+    case "ADD_TOWNSHIP":          return { ...state, townships:[...(state.townships||[]), action.payload] };
+    case "REMOVE_TOWNSHIP":       return { ...state, townships:(state.townships||[]).filter(t=>t!==action.payload) };
+    case "ADD_LOCATION":          return { ...state, locations:[...(state.locations||[]), action.payload] };
+    case "REMOVE_LOCATION":       return { ...state, locations:(state.locations||[]).filter(l=>l.id!==action.payload) };
     default: return state;
   }
 }
@@ -99,6 +108,7 @@ const NAV_GROUPS = [
     items: [
       { id:"permitting",     label:"Permitting",        icon:"ti-license",      soon:true },
       { id:"reporting",      label:"Reporting",         icon:"ti-chart-bar",    soon:true },
+      { id:"settings",       label:"Settings",          icon:"ti-settings",     adminOnly:true },
     ],
   },
 ];
@@ -126,6 +136,7 @@ function ComingSoon({ tab }) {
 // ── App Shell ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [activeTab, setActiveTab] = useState("fund");
+  const [role, setRole] = useState("superintendent"); // superintendent | staff
   const [db, dispatch]            = useReducer(reducer, initialState);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
@@ -147,7 +158,14 @@ export default function App() {
           </div>
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:16 }}>
-          <div style={{ fontSize:12, opacity:0.5 }}>Roads Fund · {FISCAL_YEAR.start} – {FISCAL_YEAR.end}</div>
+          <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+            <div style={{ fontSize:12, opacity:0.5 }}>Roads Fund · {FISCAL_YEAR.start} – {FISCAL_YEAR.end}</div>
+            <div style={{ display:"flex", background:"rgba(255,255,255,0.1)", borderRadius:6, padding:2 }}>
+              {["superintendent","staff"].map(r=>(
+                <button key={r} onClick={()=>setRole(r)} style={{ padding:"4px 10px", fontSize:11, fontWeight:600, border:"none", borderRadius:4, cursor:"pointer", background:role===r?"#fff":"transparent", color:role===r?"#1a3a5c":"rgba(255,255,255,0.6)", textTransform:"capitalize" }}>{r==="superintendent"?"Superintendent":"Staff"}</button>
+              ))}
+            </div>
+          </div>
           <div style={{ width:30, height:30, background:"rgba(255,255,255,0.15)", borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center" }}>
             <i className="ti ti-user" style={{ fontSize:15, color:"#fff" }} />
           </div>
@@ -163,7 +181,7 @@ export default function App() {
             {NAV_GROUPS.map(group => (
               <div key={group.label} style={{ marginBottom:8 }}>
                 <div style={{ fontSize:10, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", color:"#aaa", padding:"8px 16px 4px" }}>{group.label}</div>
-                {group.items.map(item => (
+                {group.items.filter(item=>!item.adminOnly||role==="superintendent").map(item => (
                   <button key={item.id} onClick={() => !item.soon && setActiveTab(item.id)} style={{
                     display:"flex", alignItems:"center", gap:10, width:"100%",
                     padding:"9px 16px", background: activeTab===item.id?"#eef2f8":"transparent",
@@ -191,7 +209,8 @@ export default function App() {
           {activeTab==="equipment"      && <Equipment db={db} dispatch={dispatch} />}
           {activeTab==="infrastructure" && <Infrastructure db={db} dispatch={dispatch} />}
           {activeTab==="projects"       && <Projects db={db} dispatch={dispatch} />}
-          {!["fund","cost","inventory","equipment","infrastructure","projects"].includes(activeTab) && <ComingSoon tab={currentTab} />}
+          {activeTab==="settings"      && <Settings db={db} dispatch={dispatch} />}
+          {!["fund","cost","inventory","equipment","infrastructure","projects","settings"].includes(activeTab) && <ComingSoon tab={currentTab} />}
         </div>
       </div>
 
