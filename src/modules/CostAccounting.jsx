@@ -1,955 +1,1151 @@
 import { useState, useMemo } from "react";
-import { Field, SectionCard, Table, StatusBadge, Icon, inp, btn, fmt, fmtSm, ProgressBar, pct } from "../components/shared.jsx";
-import { EXPENDITURE_CODES, FUNDS } from "../data/accountCodes.js";
+import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm } from "../components/shared.jsx";
+import { createLaborEntry, createEquipmentEntry, createMaterialEntry, createContractorEntry, createEngineeringEntry, uid, today } from "../data/schema.js";
+import { FEMA_EQUIPMENT_RATES } from "./Equipment.jsx";
 
-// ── FEMA Equipment Rates (partial — most common public works equipment) ───────
-export const FEMA_EQUIPMENT_RATES = [
-  { type: "Motor Grader",           size: "100-149 HP",  rate: 112.00 },
-  { type: "Motor Grader",           size: "150-199 HP",  rate: 130.00 },
-  { type: "Dozer",                  size: "100-149 HP",  rate: 98.00  },
-  { type: "Backhoe / Excavator",    size: "1.0-1.5 CY",  rate: 89.00  },
-  { type: "Backhoe / Excavator",    size: "1.5-2.0 CY",  rate: 108.00 },
-  { type: "Dump Truck",             size: "10-14 CY",    rate: 52.00  },
-  { type: "Dump Truck",             size: "15-20 CY",    rate: 68.00  },
-  { type: "Tandem Dump Truck",      size: "14-18 CY",    rate: 65.00  },
-  { type: "Side Dump Trailer",      size: "20+ CY",      rate: 48.00  },
-  { type: "Pickup Truck",           size: "1/2 - 1 ton", rate: 28.00  },
-  { type: "Loader",                 size: "2.0-2.5 CY",  rate: 95.00  },
-  { type: "Loader",                 size: "2.5-3.5 CY",  rate: 115.00 },
-  { type: "Skid Steer",             size: "< 1 CY",      rate: 42.00  },
-  { type: "Tractor",                size: "50-99 HP",    rate: 38.00  },
-  { type: "Mower (Rotary)",         size: "Tractor mtd", rate: 32.00  },
-  { type: "Crack Sealer",           size: "Trailer",     rate: 45.00  },
-  { type: "Roller / Compactor",     size: "10-12 ton",   rate: 58.00  },
-  { type: "Water Truck",            size: "2000+ gal",   rate: 48.00  },
-  { type: "Chip Spreader",          size: "Self prop",   rate: 88.00  },
-  { type: "Paver",                  size: "Asphalt",     rate: 125.00 },
-  { type: "Sign Truck / Bucket",    size: "1 ton",       rate: 55.00  },
-  { type: "Generator",              size: "< 25 KW",     rate: 14.00  },
-  { type: "Trailer (Flatbed)",      size: "< 20 ton",    rate: 18.00  },
-];
+// ── Constants ─────────────────────────────────────────────────────────────────
+const FEMA_OVH = 1.157; // 15.7% overhead multiplier (labor force account)
 
-const PROJECT_TYPES_OWN = [
-  "Culvert Replacement","Culvert Repair","Bridge Repair",
-  "Grading / Gravel Road","Ditching / Drainage","Crack Sealing",
-  "Mowing / Vegetation","Sign Installation","Sign Replacement",
-  "Patching / Pothole Repair","Snow Removal","Other",
-];
-
-const PROJECT_TYPES_CONTRACT = [
-  "Overlay / Resurfacing","Bridge Replacement","Concrete Work","Other Contracted",
-];
-
-const FUNDING_SOURCES = [
-  "Roads Fund","Capital Fund","FEMA / Disaster","NDOT Buyback — Street",
-  "NDOT Buyback — Bridge","NDOT Grant","Federal Aid","Special Assessment","Other",
-];
-
-const STATUS_OPTIONS = ["planned","active","on_hold","complete"];
+const ENG_PHASES = ["design","inspection","survey","construction_mgmt","other"];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-const today = () => new Date().toISOString().split("T")[0];
-
-function nextMaintenanceNumber(jobs) {
-  const year = new Date().getFullYear();
-  const nums = jobs
-    .filter(j => j.projectNumber?.startsWith(`M-${year}-`))
-    .map(j => parseInt(j.projectNumber.split("-")[2]) || 0);
-  const next = nums.length > 0 ? Math.max(...nums) + 1 : 1;
-  return `M-${year}-${String(next).padStart(2,"0")}`;
+function fmtDate(str) {
+  if (!str) return "—";
+  const [y,m,d] = str.split("-");
+  return d && m && y ? `${m}/${d}/${y}` : str;
 }
 
-// ── Cost Accounting Module ────────────────────────────────────────────────────
+// Calculate labor entry total (standard)
+function laborTotal(e) {
+  const base = (e.straightTimeHours||0)*(e.straightTimeRate||0) + (e.overtimeHours||0)*(e.overtimeRate||0);
+  const fringe = (e.straightTimeHours||0)*(e.straightTimeRate||0)*(e.fringeRate||0)/100;
+  return base + fringe;
+}
+
+// Calculate labor FEMA total (overhead replaces fringe)
+function laborFEMA(e) {
+  const base = (e.straightTimeHours||0)*(e.straightTimeRate||0) + (e.overtimeHours||0)*(e.overtimeRate||0);
+  return base * FEMA_OVH;
+}
+
+// FIFO batch lookup for material entries
+function buildFIFO(itemId, qty, batches) {
+  const open = [...batches]
+    .filter(b => b.itemId === itemId && b.status === "open")
+    .sort((a,b) => a.receiptDate.localeCompare(b.receiptDate));
+  let remaining = qty;
+  const lines = [];
+  let totalCost = 0;
+  for (const b of open) {
+    if (remaining <= 0) break;
+    const take = Math.min(remaining, b.quantityRemaining||0);
+    if (take <= 0) continue;
+    lines.push({
+      id: uid(), batchId: b.id,
+      batchRef: `${b.receiptDate} — ${b.vendorName||""}`,
+      itemId: b.itemId, itemName: b.itemName||"",
+      quantity: take, unitOfMeasure: b.unitOfMeasure||"",
+      unitCost: b.unitCost||0, totalCost: take*(b.unitCost||0),
+    });
+    totalCost += take*(b.unitCost||0);
+    remaining -= take;
+  }
+  return { lines, totalCost, canFulfill: remaining<=0, shortfall: Math.max(0,remaining) };
+}
+
+// Get project cost totals
+function projectTotals(p) {
+  const sum = arr => (arr||[]).reduce((s,e)=>s+(e.totalCost||e.amount||0),0);
+  const labor    = sum(p.laborEntries);
+  const equip    = sum(p.equipmentEntries);
+  const material = sum(p.materialEntries);
+  const contract = (p.contractorEntries||[]).reduce((s,e)=>s+(e.amount||0),0);
+  const eng      = (p.engineeringEntries||[]).reduce((s,e)=>s+(e.amount||0),0);
+  return { labor, equip, material, contract, eng, total: labor+equip+material+contract+eng };
+}
+
+// Status chip
+function StatusChip({ status }) {
+  const cfg = {
+    active:    { color:"#1a6b35", bg:"#e6f4ec" },
+    pending:   { color:"#d97706", bg:"#fef3cd" },
+    planning:  { color:"#888",    bg:"#f0f0ee" },
+    complete:  { color:"#1a3a5c", bg:"#e6edf5" },
+    on_hold:   { color:"#c0392b", bg:"#fdecea" },
+  };
+  const c = cfg[status]||{ color:"#888", bg:"#f0f0ee" };
+  return <span style={{ background:c.bg, color:c.color, padding:"2px 9px", borderRadius:99, fontSize:11, fontWeight:700, textTransform:"uppercase" }}>{status?.replace("_"," ")||"—"}</span>;
+}
+
+// ── Module Shell ──────────────────────────────────────────────────────────────
 export default function CostAccounting({ db, dispatch }) {
-  const [view, setView] = useState("dashboard");
+  const [tab, setTab] = useState("enter");
+
+  const TABS = [
+    { id:"enter",   label:"Enter Costs",   icon:"circle-plus" },
+    { id:"project", label:"By Project",    icon:"folder" },
+    { id:"asset",   label:"By Asset",      icon:"building-arch" },
+    { id:"fema",    label:"FEMA Rates",    icon:"table" },
+  ];
 
   return (
     <div>
       <div style={{ display:"flex", gap:2, marginBottom:24, borderBottom:"1px solid #ddd" }}>
-        {[
-          { id:"dashboard",    label:"Dashboard" },
-          { id:"projects",     label:"Capital Projects" },
-          { id:"newProject",   label:"New Project" },
-          { id:"maintenance",  label:"Maintenance Jobs" },
-          { id:"newMaint",     label:"New Maintenance Job" },
-          { id:"fema",         label:"FEMA Records" },
-        ].map(v => (
-          <button key={v.id} onClick={() => setView(v.id)} style={{
-            background:"transparent", border:"none", padding:"8px 16px 10px",
-            fontWeight: view===v.id ? 700 : 400, fontSize:13, cursor:"pointer",
-            color: view===v.id ? "#6b3a1a" : "#666",
-            borderBottom: view===v.id ? "2px solid #6b3a1a" : "2px solid transparent",
-            marginBottom:-1,
-          }}>{v.label}</button>
+        {TABS.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{
+            background:"transparent", border:"none", padding:"8px 14px 10px",
+            fontWeight:tab===t.id?700:400, fontSize:13, cursor:"pointer",
+            color:tab===t.id?"#1a5a3a":"#666",
+            borderBottom:tab===t.id?"2px solid #1a5a3a":"2px solid transparent",
+            marginBottom:-1, display:"inline-flex", alignItems:"center", gap:6,
+          }}>
+            <Icon name={t.icon} size={13} color={tab===t.id?"#1a5a3a":"#888"} />
+            {t.label}
+          </button>
         ))}
       </div>
 
-      {view==="dashboard"   && <CADashboard db={db} setView={setView} />}
-      {view==="projects"    && <ProjectList db={db} dispatch={dispatch} type="capital" setView={setView} />}
-      {view==="newProject"  && <ProjectForm db={db} dispatch={dispatch} type="capital" onDone={() => setView("projects")} />}
-      {view==="maintenance" && <ProjectList db={db} dispatch={dispatch} type="maintenance" setView={setView} />}
-      {view==="newMaint"    && <ProjectForm db={db} dispatch={dispatch} type="maintenance" onDone={() => setView("maintenance")} />}
-      {view==="fema"        && <FEMARecords db={db} />}
+      {tab==="enter"   && <EnterCostsTab   db={db} dispatch={dispatch} />}
+      {tab==="project" && <ByProjectTab    db={db} />}
+      {tab==="asset"   && <ByAssetTab      db={db} />}
+      {tab==="fema"    && <FEMARatesTab />}
     </div>
   );
 }
 
-// ── Dashboard ─────────────────────────────────────────────────────────────────
-function CADashboard({ db, setView }) {
-  const allProjects = db.projects || [];
-  const capital     = allProjects.filter(p => p.type === "capital");
-  const maintenance = allProjects.filter(p => p.type === "maintenance");
-  const active      = allProjects.filter(p => p.status === "active");
-  const femaProjects = allProjects.filter(p => p.isFEMA);
+// ═══════════════════════════════════════════════════════════════════════════════
+// ENTER COSTS
+// ═══════════════════════════════════════════════════════════════════════════════
 
-  const totalBudget  = allProjects.reduce((s,p) => s + (parseFloat(p.estimatedCost)||0), 0);
-  const totalActual  = allProjects.reduce((s,p) => s + projectTotal(p), 0);
+function EnterCostsTab({ db, dispatch }) {
+  const [projectId, setProjectId] = useState("");
+  const [entryTab, setEntryTab]   = useState("labor");
+
+  const projects  = db.projects  || [];
+  const employees = db.employees || [];
+  const equipment = db.equipment || [];
+  const invItems  = db.inventoryItems  || [];
+  const invBatches= db.inventoryBatches|| [];
+  const vendors   = db.vendors   || [];
+
+  // Projects available for cost entry (active or pending)
+  const eligible = projects.filter(p=>["active","pending"].includes(p.status));
+  const project  = projects.find(p=>p.id===projectId);
+
+  const ENTRY_TABS = [
+    { id:"labor",      label:"Labor",           icon:"user-check" },
+    { id:"equipment",  label:"Equipment",       icon:"truck" },
+    { id:"materials",  label:"Materials",       icon:"package" },
+    { id:"contractor", label:"Contractor",      icon:"building-factory-2" },
+    { id:"engineering",label:"Engineering",     icon:"compass" },
+  ];
 
   return (
     <div>
-      <div style={{ marginBottom:20 }}>
-        <div style={{ fontSize:18, fontWeight:700, color:"#1a1a1a" }}>Cost Accounting</div>
-        <div style={{ fontSize:13, color:"#888", marginTop:3 }}>Capital Projects · Maintenance Jobs · FEMA Force Account Records</div>
-      </div>
-
-      {/* KPIs */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12, marginBottom:20 }}>
-        {[
-          { label:"Active Projects",     value: active.length,      sub:"Currently underway",        accent:"#6b3a1a" },
-          { label:"Capital Projects",    value: capital.length,     sub:"C1- numbered",              accent:"#1a3a5c", icon:"building-skyscraper" },
-          { label:"Maintenance Jobs",    value: maintenance.length, sub:"M-Year-# numbered",         accent:"#1a6b35", icon:"tools" },
-          { label:"Total Budget",        value: fmt(totalBudget),   sub:"All projects estimated",    accent:"#d97706", icon:"coin" },
-          { label:"FEMA Projects",       value: femaProjects.length,sub:"Disaster reimbursement",    accent:"#c0392b", icon:"alert-octagon" },
-        ].map((k,i) => (
-          <div key={i} style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:"16px 18px", borderTop:`3px solid ${k.accent}` }}>
-            <div style={{ fontSize:11, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", color:"#888", marginBottom:6 }}>{k.label}</div>
-            <div style={{ fontSize:22, fontWeight:700, fontFamily:"monospace", color:"#1a1a1a" }}>{k.value}</div>
-            <div style={{ fontSize:12, color:"#888", marginTop:4 }}>{k.sub}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Active projects */}
-      <SectionCard title="Active Projects & Jobs" subtitle={`${active.length} currently underway`}>
-        {active.length === 0 ? (
-          <div style={{ padding:"32px", textAlign:"center", color:"#aaa", fontSize:13 }}>
-            No active projects — click New Project or New Maintenance Job to get started
-          </div>
-        ) : (
-          <Table
-            headers={[
-              { label:"Project #" },{ label:"Name" },{ label:"Type" },{ label:"Location" },
-              { label:"Funding" },{ label:"Budget", right:true },{ label:"Actual", right:true },
-              { label:"% Used", right:true },{ label:"FEMA" },
-            ]}
-            rows={active.map(p => {
-              const actual = projectTotal(p);
-              const budget = parseFloat(p.estimatedCost)||0;
-              const used   = pct(actual, budget);
-              return [
-                <span style={{ fontFamily:"monospace", fontSize:12, color:"#6b3a1a", fontWeight:600 }}>{p.projectNumber}</span>,
-                <span style={{ fontWeight:600, color:"#1a1a1a" }}>{p.name}</span>,
-                <span style={{ fontSize:11, background:"#f0f0ee", padding:"2px 7px", borderRadius:4 }}>{p.projectType}</span>,
-                <span style={{ fontSize:12, color:"#555" }}>{p.location}</span>,
-                <span style={{ fontSize:11, color:"#888" }}>{p.fundingSource}</span>,
-                <span style={{ fontFamily:"monospace" }}>{budget > 0 ? fmt(budget) : "—"}</span>,
-                <span style={{ fontFamily:"monospace", fontWeight:600 }}>{fmt(actual)}</span>,
-                budget > 0 ? (
-                  <div style={{ display:"flex", alignItems:"center", gap:6, justifyContent:"flex-end" }}>
-                    <div style={{ width:50 }}><ProgressBar value={used} /></div>
-                    <span style={{ fontSize:11, fontWeight:600, color: used>=90?"#c0392b":used>=75?"#d97706":"#555" }}>{used}%</span>
-                  </div>
-                ) : "—",
-                p.isFEMA ? <span style={{ fontSize:10, background:"#fdecea", color:"#c0392b", padding:"2px 7px", borderRadius:4, fontWeight:600 }}>FEMA</span> : "—",
-              ];
-            })}
-          />
-        )}
-      </SectionCard>
-    </div>
-  );
-}
-
-// ── Project cost total helper ─────────────────────────────────────────────────
-function projectTotal(p) {
-  const labor      = (p.laborEntries||[]).reduce((s,e) => s + (e.totalCost||0), 0);
-  const equipment  = (p.equipmentEntries||[]).reduce((s,e) => s + (e.totalCost||0), 0);
-  const materials  = (p.materialEntries||[]).reduce((s,e) => s + (e.totalCost||0), 0);
-  const contracted = (p.contractedEntries||[]).reduce((s,e) => s + (parseFloat(e.amount)||0), 0);
-  return labor + equipment + materials + contracted;
-}
-
-// ── Project List ──────────────────────────────────────────────────────────────
-function ProjectList({ db, dispatch, type, setView }) {
-  const [selected, setSelected] = useState(null);
-  const [search, setSearch]     = useState("");
-  const [statusF, setStatusF]   = useState("all");
-
-  const projects = (db.projects||[]).filter(p => p.type === type);
-  const filtered = projects.filter(p => {
-    if (statusF !== "all" && p.status !== statusF) return false;
-    if (search && !`${p.projectNumber} ${p.name} ${p.location}`.toLowerCase().includes(search.toLowerCase())) return false;
-    return true;
-  });
-
-  if (selected) {
-    return <ProjectDetail project={selected} db={db} dispatch={dispatch} onBack={() => setSelected(null)} />;
-  }
-
-  return (
-    <div>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20, flexWrap:"wrap", gap:12 }}>
-        <div>
-          <div style={{ fontSize:18, fontWeight:700, color:"#1a1a1a" }}>{type==="capital" ? "Capital Projects" : "Maintenance Jobs"}</div>
-          <div style={{ fontSize:13, color:"#888", marginTop:3 }}>
-            {type==="capital" ? "C1- numbered · One and Six Year Plan" : "M-Year-# numbered · Own forces"}
-          </div>
-        </div>
-        <div style={{ display:"flex", gap:10, alignItems:"center" }}>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…" style={{ ...inp, width:180, margin:0 }} />
-          <div style={{ display:"flex", border:"1px solid #ccc", borderRadius:6, overflow:"hidden" }}>
-            {["all","planned","active","on_hold","complete"].map(s => (
-              <button key={s} onClick={() => setStatusF(s)} style={{ padding:"7px 10px", fontSize:11, fontWeight:600, border:"none", cursor:"pointer", background: statusF===s?"#6b3a1a":"#fff", color: statusF===s?"#fff":"#555", textTransform:"capitalize" }}>
-                {s.replace("_"," ")}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <SectionCard title={`${type==="capital"?"Projects":"Jobs"} (${filtered.length})`}>
-        <Table
-          headers={[
-            { label:"#" },{ label:"Name" },{ label:"Type" },{ label:"Location" },
-            { label:"Funding" },{ label:"Budget", right:true },{ label:"Actual", right:true },
-            { label:"Status" },{ label:"FEMA" },
-          ]}
-          rows={filtered.map(p => {
-            const actual = projectTotal(p);
-            const budget = parseFloat(p.estimatedCost)||0;
-            return [
-              <button onClick={() => setSelected(p)} style={{ background:"none", border:"none", padding:0, color:"#6b3a1a", fontWeight:600, fontSize:12, cursor:"pointer", fontFamily:"monospace" }}>{p.projectNumber}</button>,
-              <button onClick={() => setSelected(p)} style={{ background:"none", border:"none", padding:0, color:"#1a3a5c", fontWeight:600, fontSize:13, cursor:"pointer" }}>{p.name}</button>,
-              <span style={{ fontSize:11, background:"#f0f0ee", padding:"2px 6px", borderRadius:4 }}>{p.projectType}</span>,
-              <span style={{ fontSize:12, color:"#555" }}>{p.location}</span>,
-              <span style={{ fontSize:12, color:"#888" }}>{p.fundingSource}</span>,
-              <span style={{ fontFamily:"monospace" }}>{budget > 0 ? fmt(budget) : "—"}</span>,
-              <span style={{ fontFamily:"monospace", fontWeight:600, color: actual>budget&&budget>0?"#c0392b":"#1a1a1a" }}>{fmt(actual)}</span>,
-              <StatusBadge status={p.status} />,
-              p.isFEMA ? <span style={{ fontSize:10, background:"#fdecea", color:"#c0392b", padding:"2px 6px", borderRadius:4, fontWeight:600 }}>FEMA</span> : "—",
-            ];
-          })}
-          emptyMessage={`No ${type==="capital"?"projects":"maintenance jobs"} yet — click New ${type==="capital"?"Project":"Maintenance Job"} to add one`}
-        />
-      </SectionCard>
-    </div>
-  );
-}
-
-// ── Project Form ──────────────────────────────────────────────────────────────
-function ProjectForm({ db, dispatch, type, onDone }) {
-  const isCapital = type === "capital";
-  const jobs = (db.projects||[]).filter(p => p.type==="maintenance");
-
-  const [form, setForm] = useState({
-    name:"", projectNumber: isCapital ? "C1-" : nextMaintenanceNumber(jobs),
-    projectType:"", location:"", roadName:"", roadNumber:"", mileStart:"", mileEnd:"",
-    fundingSource:"Roads Fund", estimatedCost:"", startDate:"", endDate:"",
-    status:"planned", isFEMA:false, disasterNumber:"", ndotProjectNumber:"",
-    isOneSixYear:false, boardResolution:"", notes:"", ownForces: !isCapital,
-  });
-  const [saved, setSaved] = useState(false);
-  const set = (k,v) => setForm(f => ({ ...f, [k]: v }));
-
-  const projectTypes = isCapital ? PROJECT_TYPES_CONTRACT : PROJECT_TYPES_OWN;
-
-  const handleSubmit = () => {
-    if (!form.name || !form.projectNumber || !form.projectType) return;
-    dispatch({
-      type:"ADD_PROJECT",
-      payload:{
-        ...form, id:Date.now(), type,
-        estimatedCost: parseFloat(form.estimatedCost)||0,
-        laborEntries:[], equipmentEntries:[], materialEntries:[], contractedEntries:[],
-      },
-    });
-    setSaved(true);
-    setTimeout(() => { setSaved(false); onDone(); }, 1500);
-  };
-
-  return (
-    <div style={{ maxWidth:760 }}>
-      <div style={{ marginBottom:20 }}>
-        <div style={{ fontSize:18, fontWeight:700, color:"#1a1a1a" }}>
-          {isCapital ? "New Capital Project" : "New Maintenance Job"}
-        </div>
-        <div style={{ fontSize:13, color:"#888", marginTop:3 }}>
-          {isCapital ? "C1- numbered · One and Six Year Plan projects" : `Auto-numbered: ${form.projectNumber}`}
-        </div>
-      </div>
-
-      {saved && <div style={{ background:"#e6f4ec", border:"1px solid #a8d5b5", borderRadius:6, padding:"12px 16px", marginBottom:16, color:"#1a6b35", fontWeight:600, fontSize:13 }}>✓ {isCapital?"Project":"Job"} created — redirecting…</div>}
-
-      {/* Basic info */}
-      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
-        <div style={{ fontWeight:700, fontSize:13, marginBottom:14 }}>Project Information</div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginBottom:16 }}>
-          <div style={{ gridColumn:"span 2" }}>
-            <Field label="Project / Job Name" required>
-              <input type="text" placeholder={isCapital ? "e.g. CR14 Bridge Replacement" : "e.g. CR8 Annual Grading Run"} value={form.name} onChange={e => set("name",e.target.value)} style={inp} />
+      {/* Project selector */}
+      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:20 }}>
+        <div style={{ display:"flex", alignItems:"flex-end", gap:16, flexWrap:"wrap" }}>
+          <div style={{ flex:"1 1 260px" }}>
+            <Field label="Select Project">
+              <select value={projectId} onChange={e=>setProjectId(e.target.value)} style={{ ...inp, fontSize:13 }}>
+                <option value="">— Choose a project —</option>
+                {["capital","maintenance","miscellaneous"].map(type => {
+                  const group = eligible.filter(p=>p.type===type);
+                  if (!group.length) return null;
+                  return (
+                    <optgroup key={type} label={type.charAt(0).toUpperCase()+type.slice(1)}>
+                      {group.map(p=><option key={p.id} value={p.id}>{p.projectNumber?`${p.projectNumber} — `:""}{p.name}</option>)}
+                    </optgroup>
+                  );
+                })}
+              </select>
             </Field>
           </div>
-          <Field label={isCapital ? "C1 Number" : "Job Number"} required>
-            <input type="text" value={form.projectNumber} onChange={e => set("projectNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
-          </Field>
-        </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginBottom:16 }}>
-          <Field label="Project Type" required>
-            <select value={form.projectType} onChange={e => set("projectType",e.target.value)} style={inp}>
-              <option value="">Select type…</option>
-              {projectTypes.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </Field>
-          <Field label="Status">
-            <select value={form.status} onChange={e => set("status",e.target.value)} style={inp}>
-              {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s.replace("_"," ").replace(/\b\w/g,c=>c.toUpperCase())}</option>)}
-            </select>
-          </Field>
-          <Field label="Funding Source">
-            <select value={form.fundingSource} onChange={e => set("fundingSource",e.target.value)} style={inp}>
-              {FUNDING_SOURCES.map(f => <option key={f} value={f}>{f}</option>)}
-            </select>
-          </Field>
-        </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16 }}>
-          <Field label="Estimated Cost ($)">
-            <input type="number" min="0" step="0.01" placeholder="0.00" value={form.estimatedCost} onChange={e => set("estimatedCost",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
-          </Field>
-          <Field label="Start Date">
-            <input type="date" value={form.startDate} onChange={e => set("startDate",e.target.value)} style={inp} />
-          </Field>
-          <Field label="End Date">
-            <input type="date" value={form.endDate} onChange={e => set("endDate",e.target.value)} style={inp} />
-          </Field>
-        </div>
-      </div>
-
-      {/* Location */}
-      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
-        <div style={{ fontWeight:700, fontSize:13, marginBottom:14 }}>Location</div>
-        <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr", gap:16, marginBottom:16 }}>
-          <Field label="Road Name">
-            <input type="text" placeholder="e.g. County Road 14" value={form.roadName} onChange={e => set("roadName",e.target.value)} style={inp} />
-          </Field>
-          <Field label="Road Number">
-            <input type="text" placeholder="e.g. CR14" value={form.roadNumber} onChange={e => set("roadNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
-          </Field>
-          <Field label="Mile Start">
-            <input type="number" step="0.1" placeholder="0.0" value={form.mileStart} onChange={e => set("mileStart",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
-          </Field>
-          <Field label="Mile End">
-            <input type="number" step="0.1" placeholder="0.0" value={form.mileEnd} onChange={e => set("mileEnd",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
-          </Field>
-        </div>
-        <Field label="Location Description">
-          <input type="text" placeholder="e.g. From intersection of CR8 north 2.3 miles to…" value={form.location} onChange={e => set("location",e.target.value)} style={inp} />
-        </Field>
-      </div>
-
-      {/* Nebraska / NDOT */}
-      {isCapital && (
-        <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
-          <div style={{ fontWeight:700, fontSize:13, marginBottom:14 }}>Nebraska / NDOT</div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginBottom:16 }}>
-            <Field label="NDOT Project Number">
-              <input type="text" placeholder="NDOT assigned number…" value={form.ndotProjectNumber} onChange={e => set("ndotProjectNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
-            </Field>
-            <Field label="Board Resolution #">
-              <input type="text" placeholder="Resolution number…" value={form.boardResolution} onChange={e => set("boardResolution",e.target.value)} style={inp} />
-            </Field>
-            <div style={{ display:"flex", alignItems:"center", gap:10, paddingTop:22 }}>
-              <input type="checkbox" id="oneSix" checked={form.isOneSixYear} onChange={e => set("isOneSixYear",e.target.checked)} style={{ width:16, height:16 }} />
-              <label htmlFor="oneSix" style={{ fontSize:13, fontWeight:600, color:"#444", cursor:"pointer" }}>On One and Six Year Plan</label>
+          {project && (
+            <div style={{ display:"flex", gap:20, fontSize:13, paddingBottom:8, flexWrap:"wrap" }}>
+              <div><span style={{ color:"#888" }}>Type: </span><strong style={{ textTransform:"capitalize" }}>{project.type}</strong></div>
+              <div><span style={{ color:"#888" }}>Status: </span><StatusChip status={project.status} /></div>
+              {project.isFEMA && <div style={{ background:"#fef3cd", color:"#d97706", padding:"2px 10px", borderRadius:99, fontSize:11, fontWeight:700 }}>FEMA · {project.disasterNumber||"—"}</div>}
+              {project.isNDOT && <div style={{ background:"#e6edf5", color:"#1a3a5c", padding:"2px 10px", borderRadius:99, fontSize:11, fontWeight:700 }}>NDOT · {project.ndotNumber||""}</div>}
+              {project.estimatedCost>0 && <div><span style={{ color:"#888" }}>Est. Cost: </span><strong>{fmtSm(project.estimatedCost)}</strong></div>}
             </div>
-          </div>
+          )}
+        </div>
+      </div>
+
+      {!project && (
+        <div style={{ padding:48, textAlign:"center", color:"#aaa", border:"1px dashed #ccc", borderRadius:8, fontSize:13 }}>
+          Select an active or pending project above to enter cost data.
         </div>
       )}
 
-      {/* FEMA */}
-      <div style={{ background: form.isFEMA ? "#fef8f5" : "#fff", border:`1px solid ${form.isFEMA?"#e8c4a8":"#ddd"}`, borderRadius:8, padding:22, marginBottom:16 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom: form.isFEMA ? 16 : 0 }}>
-          <input type="checkbox" id="fema" checked={form.isFEMA} onChange={e => set("isFEMA",e.target.checked)} style={{ width:16, height:16 }} />
-          <label htmlFor="fema" style={{ fontSize:13, fontWeight:700, color: form.isFEMA?"#c0392b":"#444", cursor:"pointer" }}>
-            FEMA Disaster Project — activate force account record tracking
-          </label>
-        </div>
-        {form.isFEMA && (
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
-            <Field label="FEMA Disaster Declaration Number">
-              <input type="text" placeholder="e.g. DR-4567-NE" value={form.disasterNumber} onChange={e => set("disasterNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
-            </Field>
-            <div style={{ background:"#fdecea", borderRadius:6, padding:"10px 14px", fontSize:12, color:"#8c1b18" }}>
-              ⚠️ FEMA mode active — all labor, equipment, and material entries will be formatted as force account records for PA reimbursement
-            </div>
-          </div>
-        )}
-      </div>
+      {project && (
+        <>
+          {/* Cost summary bar */}
+          <CostSummaryBar project={project} isFEMA={project.isFEMA} />
 
-      {/* Notes */}
-      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:20 }}>
-        <Field label="Notes / Scope of Work">
-          <textarea rows={3} placeholder="Description of work, special conditions, specifications…" value={form.notes} onChange={e => set("notes",e.target.value)} style={{ ...inp, resize:"vertical" }} />
-        </Field>
-      </div>
-
-      <div style={{ display:"flex", gap:10 }}>
-        <button onClick={handleSubmit} style={{ ...btn.primary, background:"#6b3a1a" }}>Create {isCapital?"Project":"Job"}</button>
-        <button onClick={onDone} style={btn.ghost}>Cancel</button>
-      </div>
-    </div>
-  );
-}
-
-// ── Project Detail — cost entry and summary ───────────────────────────────────
-function ProjectDetail({ project, db, dispatch, onBack }) {
-  const [costTab, setCostTab] = useState("summary");
-  const [p, setP] = useState(project);
-
-  // Keep local state in sync with db
-  const current = (db.projects||[]).find(x => x.id === project.id) || project;
-
-  const labor      = current.laborEntries      || [];
-  const equipment  = current.equipmentEntries  || [];
-  const materials  = current.materialEntries   || [];
-  const contracted = current.contractedEntries || [];
-
-  const laborTotal      = labor.reduce((s,e) => s+(e.totalCost||0), 0);
-  const equipmentTotal  = equipment.reduce((s,e) => s+(e.totalCost||0), 0);
-  const materialsTotal  = materials.reduce((s,e) => s+(e.totalCost||0), 0);
-  const contractedTotal = contracted.reduce((s,e) => s+(parseFloat(e.amount)||0), 0);
-  const grandTotal      = laborTotal + equipmentTotal + materialsTotal + contractedTotal;
-  const budget          = parseFloat(current.estimatedCost)||0;
-
-  const addEntry = (entryType, entry) => {
-    dispatch({ type:"ADD_PROJECT_ENTRY", payload:{ projectId:current.id, entryType, entry:{ ...entry, id:Date.now() } } });
-  };
-
-  return (
-    <div>
-      <button onClick={onBack} style={{ ...btn.ghost, marginBottom:20, fontSize:12, padding:"6px 14px" }}>← Back</button>
-
-      {/* Project header */}
-      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:12 }}>
-          <div>
-            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-              <span style={{ fontFamily:"monospace", fontSize:14, fontWeight:700, color:"#6b3a1a" }}>{current.projectNumber}</span>
-              {current.isFEMA && <span style={{ fontSize:11, background:"#fdecea", color:"#c0392b", padding:"2px 8px", borderRadius:4, fontWeight:600 }}>FEMA {current.disasterNumber}</span>}
-              {current.isOneSixYear && <span style={{ fontSize:11, background:"#e8f0fb", color:"#1a4a8a", padding:"2px 8px", borderRadius:4, fontWeight:600 }}>1&6 Year Plan</span>}
-            </div>
-            <div style={{ fontSize:20, fontWeight:700, color:"#1a1a1a", margin:"6px 0 2px" }}>{current.name}</div>
-            <div style={{ fontSize:13, color:"#555" }}>{current.projectType} · {current.location || `${current.roadName} ${current.roadNumber}`}</div>
-            <div style={{ fontSize:12, color:"#888", marginTop:2 }}>{current.fundingSource} · {current.startDate||"—"} to {current.endDate||"—"}</div>
-          </div>
-          <StatusBadge status={current.status} />
-        </div>
-
-        {/* Cost summary bars */}
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12, marginTop:18 }}>
-          {[
-            { label:"Labor",      value:laborTotal,      color:"#1a3a5c" },
-            { label:"Equipment",  value:equipmentTotal,  color:"#6b3a1a" },
-            { label:"Materials",  value:materialsTotal,  color:"#1a6b35" },
-            { label:"Contracted", value:contractedTotal, color:"#5a1a8a" },
-            { label:"Total",      value:grandTotal,      color: grandTotal>budget&&budget>0?"#c0392b":"#1a1a1a" },
-          ].map((k,i) => (
-            <div key={i} style={{ background:"#f7f7f5", borderRadius:8, padding:"12px 14px", borderTop:`3px solid ${k.color}` }}>
-              <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em", color:"#888", marginBottom:4 }}>{k.label}</div>
-              <div style={{ fontSize:16, fontWeight:700, fontFamily:"monospace", color:k.color }}>{fmtSm(k.value)}</div>
-            </div>
-          ))}
-        </div>
-        {budget > 0 && (
-          <div style={{ marginTop:12 }}>
-            <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, color:"#888", marginBottom:4 }}>
-              <span>Budget utilization</span>
-              <span>{fmt(grandTotal)} of {fmt(budget)} ({pct(grandTotal,budget)}%)</span>
-            </div>
-            <ProgressBar value={pct(grandTotal,budget)} />
-          </div>
-        )}
-      </div>
-
-      {/* Cost entry tabs */}
-      <div style={{ display:"flex", gap:2, marginBottom:16, borderBottom:"1px solid #ddd" }}>
-        {[
-          { id:"summary",    label:`Summary` },
-          { id:"labor",      label:`Labor (${labor.length})` },
-          { id:"equipment",  label:`Equipment (${equipment.length})` },
-          { id:"materials",  label:`Materials (${materials.length})` },
-          { id:"contracted", label:`Contracted (${contracted.length})` },
-        ].map(t => (
-          <button key={t.id} onClick={() => setCostTab(t.id)} style={{
-            background:"transparent", border:"none", padding:"7px 14px 9px",
-            fontWeight: costTab===t.id ? 700 : 400, fontSize:12, cursor:"pointer",
-            color: costTab===t.id ? "#6b3a1a" : "#666",
-            borderBottom: costTab===t.id ? "2px solid #6b3a1a" : "2px solid transparent",
-            marginBottom:-1,
-          }}>{t.label}</button>
-        ))}
-      </div>
-
-      {costTab==="summary"    && <CostSummary current={current} labor={labor} equipment={equipment} materials={materials} contracted={contracted} />}
-      {costTab==="labor"      && <LaborEntries entries={labor} onAdd={e => addEntry("laborEntries",e)} isFEMA={current.isFEMA} />}
-      {costTab==="equipment"  && <EquipmentEntries entries={equipment} onAdd={e => addEntry("equipmentEntries",e)} isFEMA={current.isFEMA} />}
-      {costTab==="materials"  && <MaterialEntries entries={materials} onAdd={e => addEntry("materialEntries",e)} isFEMA={current.isFEMA} />}
-      {costTab==="contracted" && <ContractedEntries entries={contracted} onAdd={e => addEntry("contractedEntries",e)} />}
-    </div>
-  );
-}
-
-// ── Cost Summary ──────────────────────────────────────────────────────────────
-function CostSummary({ current, labor, equipment, materials, contracted }) {
-  const laborTotal      = labor.reduce((s,e) => s+(e.totalCost||0), 0);
-  const equipmentTotal  = equipment.reduce((s,e) => s+(e.totalCost||0), 0);
-  const materialsTotal  = materials.reduce((s,e) => s+(e.totalCost||0), 0);
-  const contractedTotal = contracted.reduce((s,e) => s+(parseFloat(e.amount)||0), 0);
-  const grandTotal      = laborTotal + equipmentTotal + materialsTotal + contractedTotal;
-
-  return (
-    <div>
-      <SectionCard title="Project Cost Summary" subtitle={current.isFEMA ? `FEMA Disaster ${current.disasterNumber} — Force Account Summary` : "All cost categories"}>
-        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
-          <thead>
-            <tr style={{ background:"#f7f7f5" }}>
-              {["Cost Category","Entries","Total Cost","% of Project"].map(h => (
-                <th key={h} style={{ padding:"9px 14px", textAlign: h==="Entries"||h==="% of Project"||h==="Total Cost"?"right":"left", fontWeight:600, fontSize:11, letterSpacing:"0.05em", textTransform:"uppercase", color:"#666", borderBottom:"1px solid #eee" }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {[
-              { label:"Labor",                  count:labor.length,      total:laborTotal,      color:"#1a3a5c" },
-              { label:"Equipment",              count:equipment.length,  total:equipmentTotal,  color:"#6b3a1a" },
-              { label:"Materials & Supplies",   count:materials.length,  total:materialsTotal,  color:"#1a6b35" },
-              { label:"Contracted Work",        count:contracted.length, total:contractedTotal, color:"#5a1a8a" },
-            ].map((row,i) => (
-              <tr key={i} style={{ borderTop:"1px solid #eee" }}>
-                <td style={{ padding:"12px 14px" }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                    <div style={{ width:10, height:10, borderRadius:"50%", background:row.color }}></div>
-                    <span style={{ fontWeight:600 }}>{row.label}</span>
-                  </div>
-                </td>
-                <td style={{ padding:"12px 14px", textAlign:"right", color:"#888" }}>{row.count}</td>
-                <td style={{ padding:"12px 14px", textAlign:"right", fontFamily:"monospace", fontWeight:700, color:row.color }}>{fmtSm(row.total)}</td>
-                <td style={{ padding:"12px 14px", textAlign:"right", color:"#888" }}>{grandTotal>0?pct(row.total,grandTotal):0}%</td>
-              </tr>
+          {/* Entry type tabs */}
+          <div style={{ display:"flex", borderBottom:"1px solid #ddd", marginBottom:20 }}>
+            {ENTRY_TABS.map(t=>(
+              <button key={t.id} onClick={()=>setEntryTab(t.id)} style={{
+                background:"transparent", border:"none", padding:"8px 14px 10px",
+                fontWeight:entryTab===t.id?700:400, fontSize:13, cursor:"pointer",
+                color:entryTab===t.id?"#1a5a3a":"#666",
+                borderBottom:entryTab===t.id?"2px solid #1a5a3a":"2px solid transparent",
+                marginBottom:-1, display:"inline-flex", alignItems:"center", gap:6,
+              }}>
+                <Icon name={t.icon} size={12} color={entryTab===t.id?"#1a5a3a":"#888"} />
+                {t.label}
+                <EntryCount project={project} type={t.id} />
+              </button>
             ))}
-            <tr style={{ borderTop:"2px solid #ddd", background:"#f7f7f5" }}>
-              <td style={{ padding:"12px 14px", fontWeight:700, fontSize:14 }}>Grand Total</td>
-              <td style={{ padding:"12px 14px", textAlign:"right", color:"#888" }}>{labor.length+equipment.length+materials.length+contracted.length}</td>
-              <td style={{ padding:"12px 14px", textAlign:"right", fontFamily:"monospace", fontWeight:700, fontSize:16, color:"#1a1a1a" }}>{fmtSm(grandTotal)}</td>
-              <td style={{ padding:"12px 14px", textAlign:"right", fontWeight:700 }}>100%</td>
-            </tr>
-          </tbody>
-        </table>
-      </SectionCard>
+          </div>
+
+          {entryTab==="labor"       && <LaborEntries      project={project} employees={employees} dispatch={dispatch} />}
+          {entryTab==="equipment"   && <EquipmentEntries  project={project} equipment={equipment} dispatch={dispatch} />}
+          {entryTab==="materials"   && <MaterialEntries   project={project} invItems={invItems} invBatches={invBatches} dispatch={dispatch} />}
+          {entryTab==="contractor"  && <ContractorEntries project={project} vendors={vendors} dispatch={dispatch} />}
+          {entryTab==="engineering" && <EngineeringEntries project={project} vendors={vendors} dispatch={dispatch} />}
+        </>
+      )}
+    </div>
+  );
+}
+
+function EntryCount({ project, type }) {
+  const map = { labor:"laborEntries", equipment:"equipmentEntries", materials:"materialEntries", contractor:"contractorEntries", engineering:"engineeringEntries" };
+  const count = (project[map[type]]||[]).length;
+  if (!count) return null;
+  return <span style={{ background:"#1a3a5c", color:"#fff", fontSize:10, fontWeight:700, padding:"1px 6px", borderRadius:99, marginLeft:2 }}>{count}</span>;
+}
+
+function CostSummaryBar({ project, isFEMA }) {
+  const t = projectTotals(project);
+  const sections = [
+    { label:"Labor",       value:t.labor,    color:"#1a6b35" },
+    { label:"Equipment",   value:t.equip,    color:"#1a3a5c" },
+    { label:"Materials",   value:t.material, color:"#d97706" },
+    { label:"Contractor",  value:t.contract, color:"#5a1a8a" },
+    { label:"Engineering", value:t.eng,      color:"#888"    },
+  ];
+  return (
+    <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:"14px 18px", marginBottom:16, display:"flex", gap:24, flexWrap:"wrap", alignItems:"center" }}>
+      {sections.map(s=>(
+        <div key={s.label} style={{ textAlign:"center" }}>
+          <div style={{ fontSize:11, color:"#888", marginBottom:2 }}>{s.label}</div>
+          <div style={{ fontFamily:"monospace", fontWeight:700, fontSize:14, color:s.color }}>{fmtSm(s.value)}</div>
+        </div>
+      ))}
+      <div style={{ borderLeft:"1px solid #eee", paddingLeft:24 }}>
+        <div style={{ fontSize:11, color:"#888", marginBottom:2 }}>Total</div>
+        <div style={{ fontFamily:"monospace", fontWeight:700, fontSize:16 }}>{fmtSm(t.total)}</div>
+      </div>
+      {isFEMA && (
+        <div style={{ borderLeft:"1px solid #eee", paddingLeft:24 }}>
+          <div style={{ fontSize:11, color:"#d97706", marginBottom:2, fontWeight:700 }}>FEMA Labor Total</div>
+          <div style={{ fontFamily:"monospace", fontWeight:700, fontSize:14, color:"#d97706" }}>
+            {fmtSm((project.laborEntries||[]).reduce((s,e)=>s+laborFEMA(e),0))}
+          </div>
+          <div style={{ fontSize:10, color:"#aaa" }}>×1.157 overhead</div>
+        </div>
+      )}
+      {project.estimatedCost>0 && (
+        <div style={{ borderLeft:"1px solid #eee", paddingLeft:24 }}>
+          <div style={{ fontSize:11, color:"#888", marginBottom:2 }}>Estimated</div>
+          <div style={{ fontFamily:"monospace", fontWeight:700, fontSize:14, color:"#888" }}>{fmtSm(project.estimatedCost)}</div>
+          <div style={{ fontSize:10, color: t.total>project.estimatedCost?"#c0392b":"#1a6b35", fontWeight:700 }}>
+            {t.total>project.estimatedCost?"OVER":"UNDER"} by {fmtSm(Math.abs(t.total-project.estimatedCost))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // ── Labor Entries ─────────────────────────────────────────────────────────────
-function LaborEntries({ entries, onAdd, isFEMA }) {
-  const empty = { date:"", employee:"", title:"", regularHours:"", otHours:"", hourlyRate:"", fringeRate:"", notes:"" };
-  const [form, setForm] = useState(empty);
-  const [adding, setAdding] = useState(false);
-  const set = (k,v) => setForm(f => ({ ...f, [k]:v }));
+function LaborEntries({ project, employees, dispatch }) {
+  const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId]     = useState(null);
+  const entries = project.laborEntries||[];
 
-  const regHours   = parseFloat(form.regularHours)||0;
-  const otHours    = parseFloat(form.otHours)||0;
-  const rate       = parseFloat(form.hourlyRate)||0;
-  const fringeRate = parseFloat(form.fringeRate)||0;
-  const totalCost  = (regHours * rate) + (otHours * rate * 1.5) + ((regHours + otHours) * rate * (fringeRate/100));
+  const blankForm = () => ({ date:today(), employeeId:"", employeeName:"", classification:"", straightTimeHours:0, straightTimeRate:0, overtimeHours:0, overtimeRate:0, fringeRate:0, notes:"" });
+  const [form, setForm] = useState(blankForm());
+  const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
-  const handleAdd = () => {
-    if (!form.date || !form.employee || !form.hourlyRate) return;
-    onAdd({ ...form, regularHours:regHours, otHours, hourlyRate:rate, fringeRate, totalCost });
-    setForm(empty); setAdding(false);
+  const fillEmployee = id => {
+    const emp = employees.find(e=>e.id===id);
+    if (!emp) { set("employeeId",id); return; }
+    setForm(f=>({ ...f, employeeId:id, employeeName:emp.name, classification:emp.classification, straightTimeRate:emp.straightTimeRate||0, overtimeRate:emp.overtimeRate||0, fringeRate:emp.fringeRate||0 }));
   };
+
+  const cost = laborTotal(form);
+  const fema = laborFEMA(form);
+
+  const handleSave = () => {
+    if (!form.date||!form.employeeName) return;
+    const entry = { ...createLaborEntry(), ...form, id: editId||uid(), totalCost: cost, createdAt: new Date().toISOString() };
+    if (editId) {
+      dispatch({ type:"UPDATE_PROJECT_ENTRY", payload:{ projectId:project.id, entryType:"laborEntries", entry } });
+      setEditId(null);
+    } else {
+      dispatch({ type:"ADD_PROJECT_ENTRY", payload:{ projectId:project.id, entryType:"laborEntries", entry } });
+    }
+    setForm(blankForm()); setShowForm(false);
+  };
+
+  const handleEdit = e => { setForm({ ...e }); setEditId(e.id); setShowForm(true); };
+  const handleDelete = id => dispatch({ type:"DELETE_PROJECT_ENTRY", payload:{ projectId:project.id, entryType:"laborEntries", entryId:id } });
+
+  const totalST   = entries.reduce((s,e)=>s+(e.straightTimeHours||0),0);
+  const totalOT   = entries.reduce((s,e)=>s+(e.overtimeHours||0),0);
+  const totalCost = entries.reduce((s,e)=>s+(e.totalCost||0),0);
+  const totalFEMA = entries.reduce((s,e)=>s+laborFEMA(e),0);
 
   return (
     <div>
-      <SectionCard
-        title={isFEMA ? "Force Account Labor Record" : "Labor Entries"} icon="user-hard-hat"
-        subtitle={isFEMA ? "FEMA PA — daily labor log" : `${entries.length} entries · Total: ${fmtSm(entries.reduce((s,e)=>s+(e.totalCost||0),0))}`}
-        action={<button onClick={() => setAdding(!adding)} style={{ ...btn.small }}>+ Add Entry</button>}
-      >
-        {adding && (
-          <div style={{ padding:16, background:"#f7f7f5", borderBottom:"1px solid #eee" }}>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:12 }}>
-              <Field label="Date" required><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} /></Field>
-              <div style={{ gridColumn:"span 2" }}>
-                <Field label="Employee Name" required><input type="text" placeholder="Full name…" value={form.employee} onChange={e=>set("employee",e.target.value)} style={inp} /></Field>
-              </div>
-              <Field label="Title / Classification"><input type="text" placeholder="e.g. Equipment Operator" value={form.title} onChange={e=>set("title",e.target.value)} style={inp} /></Field>
-            </div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12, marginBottom:12 }}>
-              <Field label="Regular Hours"><input type="number" min="0" step="0.5" placeholder="0" value={form.regularHours} onChange={e=>set("regularHours",e.target.value)} style={inp} /></Field>
-              <Field label="OT Hours"><input type="number" min="0" step="0.5" placeholder="0" value={form.otHours} onChange={e=>set("otHours",e.target.value)} style={inp} /></Field>
-              <Field label="Hourly Rate ($)" required><input type="number" min="0" step="0.01" placeholder="0.00" value={form.hourlyRate} onChange={e=>set("hourlyRate",e.target.value)} style={inp} /></Field>
-              <Field label="Fringe Rate (%)"><input type="number" min="0" step="0.1" placeholder="0.0" value={form.fringeRate} onChange={e=>set("fringeRate",e.target.value)} style={inp} /></Field>
-              <div style={{ display:"flex", flexDirection:"column", justifyContent:"flex-end" }}>
-                <div style={{ fontSize:11, color:"#888", marginBottom:4 }}>Total Cost</div>
-                <div style={{ fontFamily:"monospace", fontWeight:700, fontSize:16, color:"#1a3a5c" }}>{fmtSm(totalCost)}</div>
-              </div>
-            </div>
-            <div style={{ marginBottom:12 }}>
-              <Field label="Notes"><input type="text" placeholder="Work performed…" value={form.notes} onChange={e=>set("notes",e.target.value)} style={inp} /></Field>
-            </div>
-            <div style={{ display:"flex", gap:8 }}>
-              <button onClick={handleAdd} style={{ ...btn.small, background:"#6b3a1a" }}>Add Labor Entry</button>
-              <button onClick={() => setAdding(false)} style={{ ...btn.small, background:"#888" }}>Cancel</button>
-            </div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+        <div style={{ fontSize:13 }}>
+          {entries.length} entries · <strong>{totalST.toFixed(2)} ST hrs</strong> · {totalOT.toFixed(2)} OT hrs · Total: <strong style={{ color:"#1a6b35" }}>{fmtSm(totalCost)}</strong>
+          {project.isFEMA && <span style={{ color:"#d97706", fontWeight:700 }}> · FEMA: {fmtSm(totalFEMA)}</span>}
+        </div>
+        <button onClick={()=>{ setShowForm(v=>!v); setEditId(null); setForm(blankForm()); }} style={btn.primary}>{showForm&&!editId?"Cancel":"+ Add Labor"}</button>
+      </div>
+
+      {showForm && (
+        <div style={{ background:"#f7f7f5", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:16 }}>
+          <div style={{ fontWeight:700, fontSize:12, marginBottom:12 }}>{editId?"Edit Labor Entry":"New Labor Entry"}</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr", gap:12, marginBottom:12 }}>
+            <Field label="Date"><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <Field label="Employee">
+              {employees.length>0
+                ? <select value={form.employeeId} onChange={e=>fillEmployee(e.target.value)} style={{ ...inp, margin:0 }}>
+                    <option value="">Manual entry…</option>
+                    {employees.filter(e=>e.active).map(e=><option key={e.id} value={e.id}>{e.name}{e.classification?` — ${e.classification}`:""}</option>)}
+                  </select>
+                : <input type="text" value={form.employeeName} onChange={e=>set("employeeName",e.target.value)} style={{ ...inp, margin:0 }} placeholder="Employee name…" />
+              }
+            </Field>
+            <Field label="Classification"><input type="text" value={form.classification} onChange={e=>set("classification",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
           </div>
-        )}
-        <Table
-          headers={[{ label:"Date" },{ label:"Employee" },{ label:"Title" },{ label:"Reg Hrs", right:true },{ label:"OT Hrs", right:true },{ label:"Rate", right:true },{ label:"Fringe %", right:true },{ label:"Total", right:true }]}
-          rows={entries.map(e => [
-            <span style={{ fontFamily:"monospace", fontSize:12 }}>{e.date}</span>,
-            <span style={{ fontWeight:600 }}>{e.employee}</span>,
-            e.title||"—",
-            <span style={{ fontFamily:"monospace" }}>{e.regularHours}</span>,
-            <span style={{ fontFamily:"monospace" }}>{e.otHours||0}</span>,
-            <span style={{ fontFamily:"monospace" }}>{fmtSm(e.hourlyRate)}</span>,
-            <span style={{ fontFamily:"monospace" }}>{e.fringeRate||0}%</span>,
-            <span style={{ fontFamily:"monospace", fontWeight:700, color:"#1a3a5c" }}>{fmtSm(e.totalCost||0)}</span>,
-          ])}
-          emptyMessage="No labor entries yet"
-        />
-      </SectionCard>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr 1fr", gap:12, marginBottom:12 }}>
+            <Field label="ST Hours"><input type="number" min="0" step="0.25" value={form.straightTimeHours} onChange={e=>set("straightTimeHours",parseFloat(e.target.value)||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+            <Field label="ST Rate ($/hr)"><input type="number" min="0" step="0.01" value={form.straightTimeRate} onChange={e=>set("straightTimeRate",parseFloat(e.target.value)||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+            <Field label="OT Hours"><input type="number" min="0" step="0.25" value={form.overtimeHours} onChange={e=>set("overtimeHours",parseFloat(e.target.value)||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+            <Field label="OT Rate ($/hr)"><input type="number" min="0" step="0.01" value={form.overtimeRate} onChange={e=>set("overtimeRate",parseFloat(e.target.value)||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+            <Field label="Fringe Rate (%)"><input type="number" min="0" step="0.1" value={form.fringeRate} onChange={e=>set("fringeRate",parseFloat(e.target.value)||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+            <Field label="Cost"><div style={{ ...inp, margin:0, background:"#fff", fontFamily:"monospace", fontWeight:700, color:"#1a6b35", fontSize:13 }}>{fmtSm(cost)}</div></Field>
+          </div>
+          {project.isFEMA && (
+            <div style={{ background:"#fef3cd", border:"1px solid #f5c842", borderRadius:6, padding:"8px 14px", marginBottom:12, fontSize:12, display:"flex", gap:20, alignItems:"center" }}>
+              <span style={{ fontWeight:700, color:"#d97706" }}>FEMA Force Account:</span>
+              <span>Base = {fmtSm((form.straightTimeHours||0)*(form.straightTimeRate||0)+(form.overtimeHours||0)*(form.overtimeRate||0))} × 1.157 = <strong>{fmtSm(fema)}</strong></span>
+              <span style={{ color:"#888", fontSize:11 }}>(overhead replaces fringe for FEMA)</span>
+            </div>
+          )}
+          <div style={{ display:"flex", gap:10 }}>
+            <Field label="Notes" style={{ flex:1 }}><input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <button onClick={handleSave} style={{ ...btn.primary, marginTop:20 }}>{editId?"Save":"Add"}</button>
+            {editId && <button onClick={()=>{ setEditId(null); setShowForm(false); setForm(blankForm()); }} style={{ ...btn.ghost, marginTop:20 }}>Cancel</button>}
+          </div>
+        </div>
+      )}
+
+      <Table
+        headers={[{label:"Date"},{label:"Employee"},{label:"Classification"},{label:"ST Hrs"},{label:"ST Rate"},{label:"OT Hrs"},{label:"OT Rate"},{label:"Fringe %"},{label:"Total"},{label:"FEMA Total"},{label:""}]}
+        rows={entries.map(e=>[
+          <span style={{fontFamily:"monospace",fontSize:12}}>{fmtDate(e.date)}</span>,
+          <span style={{fontWeight:600}}>{e.employeeName||"—"}</span>,
+          <span style={{fontSize:12,color:"#888"}}>{e.classification||"—"}</span>,
+          <span style={{fontFamily:"monospace"}}>{e.straightTimeHours}</span>,
+          <span style={{fontFamily:"monospace"}}>{fmtSm(e.straightTimeRate||0)}</span>,
+          <span style={{fontFamily:"monospace"}}>{e.overtimeHours||0}</span>,
+          <span style={{fontFamily:"monospace"}}>{e.overtimeRate?fmtSm(e.overtimeRate):"—"}</span>,
+          <span style={{fontFamily:"monospace"}}>{e.fringeRate||0}%</span>,
+          <span style={{fontFamily:"monospace",fontWeight:700,color:"#1a6b35"}}>{fmtSm(e.totalCost||0)}</span>,
+          project.isFEMA?<span style={{fontFamily:"monospace",fontWeight:700,color:"#d97706"}}>{fmtSm(laborFEMA(e))}</span>:<span style={{color:"#ccc"}}>—</span>,
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={()=>handleEdit(e)} style={{...btn.small,background:"#1a3a5c",fontSize:10,padding:"3px 8px"}}>Edit</button>
+            <button onClick={()=>handleDelete(e.id)} style={{...btn.small,background:"#c0392b",fontSize:10,padding:"3px 8px"}}>Del</button>
+          </div>,
+        ])}
+        emptyMessage="No labor entries — click Add Labor above"
+      />
     </div>
   );
 }
 
 // ── Equipment Entries ─────────────────────────────────────────────────────────
-function EquipmentEntries({ entries, onAdd, isFEMA }) {
-  const empty = { date:"", equipmentType:"", size:"", assetTag:"", operator:"", hours:"", femaRate:"", notes:"" };
-  const [form, setForm] = useState(empty);
-  const [adding, setAdding] = useState(false);
-  const set = (k,v) => setForm(f => ({ ...f, [k]:v }));
+function EquipmentEntries({ project, equipment, dispatch }) {
+  const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId]     = useState(null);
+  const entries = project.equipmentEntries||[];
 
-  // Auto-fill FEMA rate when equipment type/size selected
-  const handleTypeChange = (type) => {
-    set("equipmentType", type);
-    const match = FEMA_EQUIPMENT_RATES.find(r => r.type === type);
-    if (match) { set("femaRate", match.rate); set("size", match.size); }
+  const blankForm = () => ({ date:today(), equipmentId:"", equipmentName:"", unitNumber:"", hoursOperated:0, femaRate:0, operatorName:"", notes:"" });
+  const [form, setForm] = useState(blankForm());
+  const set = (k,v) => setForm(f=>({...f,[k]:v}));
+
+  const fillUnit = id => {
+    const u = equipment.find(e=>e.id===id);
+    if (!u) { set("equipmentId",id); return; }
+    setForm(f=>({ ...f, equipmentId:id, equipmentName:`${u.year||""} ${u.make||""} ${u.model||""}`.trim()||u.description||"", unitNumber:u.unitNumber||"", femaRate:u.femaRate||0 }));
   };
 
-  const hours     = parseFloat(form.hours)||0;
-  const rate      = parseFloat(form.femaRate)||0;
-  const totalCost = hours * rate;
+  const cost = (form.hoursOperated||0)*(form.femaRate||0);
 
-  const handleAdd = () => {
-    if (!form.date || !form.equipmentType || !form.hours) return;
-    onAdd({ ...form, hours, femaRate:rate, totalCost });
-    setForm(empty); setAdding(false);
+  const handleSave = () => {
+    if (!form.date||!form.hoursOperated) return;
+    const entry = { ...createEquipmentEntry(), ...form, id:editId||uid(), totalCost:cost, createdAt:new Date().toISOString() };
+    if (editId) {
+      dispatch({ type:"UPDATE_PROJECT_ENTRY", payload:{ projectId:project.id, entryType:"equipmentEntries", entry } });
+      setEditId(null);
+    } else {
+      dispatch({ type:"ADD_PROJECT_ENTRY", payload:{ projectId:project.id, entryType:"equipmentEntries", entry } });
+    }
+    setForm(blankForm()); setShowForm(false);
   };
 
-  const uniqueTypes = [...new Set(FEMA_EQUIPMENT_RATES.map(r => r.type))];
+  const handleEdit = e => { setForm({ ...e }); setEditId(e.id); setShowForm(true); };
+  const handleDelete = id => dispatch({ type:"DELETE_PROJECT_ENTRY", payload:{ projectId:project.id, entryType:"equipmentEntries", entryId:id } });
+
+  const totalHours = entries.reduce((s,e)=>s+(e.hoursOperated||0),0);
+  const totalCost  = entries.reduce((s,e)=>s+(e.totalCost||0),0);
 
   return (
     <div>
-      <SectionCard
-        title={isFEMA ? "Force Account Equipment Record" : "Equipment Entries"} icon="tractor"
-        subtitle={isFEMA ? "FEMA Schedule of Equipment Rates" : `${entries.length} entries · Total: ${fmtSm(entries.reduce((s,e)=>s+(e.totalCost||0),0))}`}
-        action={<button onClick={() => setAdding(!adding)} style={btn.small}>+ Add Entry</button>}
-      >
-        {adding && (
-          <div style={{ padding:16, background:"#f7f7f5", borderBottom:"1px solid #eee" }}>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:12 }}>
-              <Field label="Date" required><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} /></Field>
-              <div style={{ gridColumn:"span 2" }}>
-                <Field label="Equipment Type" required>
-                  <select value={form.equipmentType} onChange={e=>handleTypeChange(e.target.value)} style={inp}>
-                    <option value="">Select equipment…</option>
-                    {uniqueTypes.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                </Field>
-              </div>
-              <Field label="Size / Class">
-                <select value={form.size} onChange={e => {
-                  set("size",e.target.value);
-                  const match = FEMA_EQUIPMENT_RATES.find(r => r.type===form.equipmentType && r.size===e.target.value);
-                  if (match) set("femaRate", match.rate);
-                }} style={inp}>
-                  <option value="">Select size…</option>
-                  {FEMA_EQUIPMENT_RATES.filter(r=>r.type===form.equipmentType).map(r=>(
-                    <option key={r.size} value={r.size}>{r.size}</option>
-                  ))}
-                </select>
-              </Field>
-            </div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12, marginBottom:12 }}>
-              <Field label="Asset Tag / Unit #"><input type="text" placeholder="Unit #…" value={form.assetTag} onChange={e=>set("assetTag",e.target.value)} style={inp} /></Field>
-              <Field label="Operator"><input type="text" placeholder="Operator name…" value={form.operator} onChange={e=>set("operator",e.target.value)} style={inp} /></Field>
-              <Field label="Hours Used" required><input type="number" min="0" step="0.5" placeholder="0" value={form.hours} onChange={e=>set("hours",e.target.value)} style={inp} /></Field>
-              <Field label="FEMA Rate ($/hr)">
-                <input type="number" min="0" step="0.01" value={form.femaRate} onChange={e=>set("femaRate",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
-              </Field>
-              <div style={{ display:"flex", flexDirection:"column", justifyContent:"flex-end" }}>
-                <div style={{ fontSize:11, color:"#888", marginBottom:4 }}>Total Cost</div>
-                <div style={{ fontFamily:"monospace", fontWeight:700, fontSize:16, color:"#6b3a1a" }}>{fmtSm(totalCost)}</div>
-              </div>
-            </div>
-            <div style={{ marginBottom:12 }}>
-              <Field label="Notes"><input type="text" placeholder="Work performed, location…" value={form.notes} onChange={e=>set("notes",e.target.value)} style={inp} /></Field>
-            </div>
-            <div style={{ display:"flex", gap:8 }}>
-              <button onClick={handleAdd} style={{ ...btn.small, background:"#6b3a1a" }}>Add Equipment Entry</button>
-              <button onClick={() => setAdding(false)} style={{ ...btn.small, background:"#888" }}>Cancel</button>
-            </div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+        <div style={{ fontSize:13 }}>
+          {entries.length} entries · <strong>{totalHours.toFixed(1)} hrs</strong> · Total: <strong style={{ color:"#1a3a5c" }}>{fmtSm(totalCost)}</strong>
+        </div>
+        <button onClick={()=>{ setShowForm(v=>!v); setEditId(null); setForm(blankForm()); }} style={btn.primary}>{showForm&&!editId?"Cancel":"+ Add Equipment"}</button>
+      </div>
+
+      {showForm && (
+        <div style={{ background:"#f7f7f5", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:16 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr 1fr 1fr 1fr", gap:12, marginBottom:12 }}>
+            <Field label="Date"><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <Field label="Equipment Unit">
+              <select value={form.equipmentId} onChange={e=>fillUnit(e.target.value)} style={{ ...inp, margin:0 }}>
+                <option value="">Select unit…</option>
+                {equipment.filter(u=>u.status!=="sold").map(u=><option key={u.id} value={u.id}>{u.unitNumber?`${u.unitNumber} — `:""}{u.year} {u.make} {u.model}</option>)}
+              </select>
+            </Field>
+            <Field label="Hours Operated"><input type="number" min="0" step="0.25" value={form.hoursOperated} onChange={e=>set("hoursOperated",parseFloat(e.target.value)||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+            <Field label="FEMA Rate ($/hr)"><input type="number" min="0" step="0.01" value={form.femaRate} onChange={e=>set("femaRate",parseFloat(e.target.value)||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+            <Field label="Total Cost"><div style={{ ...inp, margin:0, background:"#fff", fontFamily:"monospace", fontWeight:700, color:"#1a3a5c" }}>{fmtSm(cost)}</div></Field>
+            <Field label="Operator"><input type="text" value={form.operatorName} onChange={e=>set("operatorName",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
           </div>
-        )}
-        <Table
-          headers={[{ label:"Date" },{ label:"Equipment" },{ label:"Size" },{ label:"Asset #" },{ label:"Operator" },{ label:"Hours", right:true },{ label:"FEMA Rate", right:true },{ label:"Total", right:true }]}
-          rows={entries.map(e => [
-            <span style={{ fontFamily:"monospace", fontSize:12 }}>{e.date}</span>,
-            <span style={{ fontWeight:600 }}>{e.equipmentType}</span>,
-            e.size||"—",
-            <span style={{ fontFamily:"monospace", fontSize:12 }}>{e.assetTag||"—"}</span>,
-            e.operator||"—",
-            <span style={{ fontFamily:"monospace" }}>{e.hours}</span>,
-            <span style={{ fontFamily:"monospace" }}>{fmtSm(e.femaRate)}/hr</span>,
-            <span style={{ fontFamily:"monospace", fontWeight:700, color:"#6b3a1a" }}>{fmtSm(e.totalCost||0)}</span>,
-          ])}
-          emptyMessage="No equipment entries yet"
-        />
-      </SectionCard>
+          <div style={{ display:"flex", gap:10 }}>
+            <Field label="Notes" style={{ flex:1 }}><input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <button onClick={handleSave} style={{ ...btn.primary, marginTop:20 }}>{editId?"Save":"Add"}</button>
+            {editId && <button onClick={()=>{ setEditId(null); setShowForm(false); setForm(blankForm()); }} style={{ ...btn.ghost, marginTop:20 }}>Cancel</button>}
+          </div>
+        </div>
+      )}
+
+      <Table
+        headers={[{label:"Date"},{label:"Unit"},{label:"Hours"},{label:"FEMA Rate"},{label:"Total"},{label:"Operator"},{label:"Notes"},{label:""}]}
+        rows={entries.map(e=>[
+          <span style={{fontFamily:"monospace",fontSize:12}}>{fmtDate(e.date)}</span>,
+          <span style={{fontWeight:600}}>{e.unitNumber?`#${e.unitNumber} `:""}{e.equipmentName||"—"}</span>,
+          <span style={{fontFamily:"monospace"}}>{e.hoursOperated}</span>,
+          <span style={{fontFamily:"monospace"}}>{fmtSm(e.femaRate||0)}/hr</span>,
+          <span style={{fontFamily:"monospace",fontWeight:700,color:"#1a3a5c"}}>{fmtSm(e.totalCost||0)}</span>,
+          e.operatorName||"—",
+          <span style={{fontSize:12,color:"#888"}}>{e.notes||"—"}</span>,
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={()=>handleEdit(e)} style={{...btn.small,background:"#1a3a5c",fontSize:10,padding:"3px 8px"}}>Edit</button>
+            <button onClick={()=>handleDelete(e.id)} style={{...btn.small,background:"#c0392b",fontSize:10,padding:"3px 8px"}}>Del</button>
+          </div>,
+        ])}
+        emptyMessage="No equipment entries"
+      />
     </div>
   );
 }
 
 // ── Material Entries ──────────────────────────────────────────────────────────
-function MaterialEntries({ entries, onAdd, isFEMA }) {
-  const empty = { date:"", accountCode:"", description:"", unit:"", quantity:"", unitCost:"", fromInventory:false, notes:"" };
-  const [form, setForm] = useState(empty);
-  const [adding, setAdding] = useState(false);
-  const [catFilter, setCatFilter] = useState("materials");
-  const set = (k,v) => setForm(f => ({ ...f, [k]:v }));
+function MaterialEntries({ project, invItems, invBatches, dispatch }) {
+  const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId]     = useState(null);
+  const entries = project.materialEntries||[];
 
-  const qty       = parseFloat(form.quantity)||0;
-  const unitCost  = parseFloat(form.unitCost)||0;
-  const totalCost = qty * unitCost;
+  const blankForm = () => ({ date:today(), itemId:"", itemName:"", quantity:0, unitOfMeasure:"", unitCost:0, notes:"" });
+  const [form, setForm] = useState(blankForm());
+  const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
-  const matCodes = EXPENDITURE_CODES.filter(c => catFilter==="all" || c.category===catFilter);
+  const selectedItem = invItems.find(i=>i.id===form.itemId);
+  const fifo = form.itemId && form.quantity>0 ? buildFIFO(form.itemId, form.quantity, invBatches) : null;
+  const cost = fifo ? fifo.totalCost : (form.quantity||0)*(form.unitCost||0);
 
-  const handleAdd = () => {
-    if (!form.date || !form.description || !form.quantity || !form.unitCost) return;
-    onAdd({ ...form, quantity:qty, unitCost, totalCost });
-    setForm(empty); setAdding(false);
+  const fillItem = id => {
+    const item = invItems.find(i=>i.id===id);
+    setForm(f=>({ ...f, itemId:id, itemName:item?.name||"", unitOfMeasure:item?.unitOfMeasure||"", unitCost:item?.standardCost||0 }));
   };
 
-  return (
-    <div>
-      <SectionCard
-        title={isFEMA ? "Force Account Materials Record" : "Material Entries"} icon="package"
-        subtitle={`${entries.length} entries · Total: ${fmtSm(entries.reduce((s,e)=>s+(e.totalCost||0),0))}`}
-        action={<button onClick={() => setAdding(!adding)} style={btn.small}>+ Add Entry</button>}
-      >
-        {adding && (
-          <div style={{ padding:16, background:"#f7f7f5", borderBottom:"1px solid #eee" }}>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, marginBottom:12 }}>
-              <Field label="Date" required><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} /></Field>
-              <div style={{ gridColumn:"span 2" }}>
-                <Field label="Description" required><input type="text" placeholder="e.g. 36 inch concrete culvert…" value={form.description} onChange={e=>set("description",e.target.value)} style={inp} /></Field>
-              </div>
-            </div>
-            <div style={{ marginBottom:12 }}>
-              <Field label="Account Code">
-                <div style={{ display:"flex", gap:6, marginBottom:6, flexWrap:"wrap" }}>
-                  {["all","materials","contracts","capital"].map(cat => (
-                    <button key={cat} onClick={()=>setCatFilter(cat)} style={{ padding:"2px 8px", fontSize:11, fontWeight:600, border:"1px solid", borderRadius:4, cursor:"pointer", background: catFilter===cat?"#1a3a5c":"#fff", color: catFilter===cat?"#fff":"#555", borderColor: catFilter===cat?"#1a3a5c":"#ccc", textTransform:"capitalize" }}>{cat}</button>
-                  ))}
-                </div>
-                <select value={form.accountCode} onChange={e=>set("accountCode",e.target.value)} style={{ ...inp, fontFamily:"monospace", fontSize:12 }}>
-                  <option value="">Select account code…</option>
-                  {matCodes.map(c=><option key={c.code} value={c.code}>{c.code} — {c.description}</option>)}
-                </select>
-              </Field>
-            </div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12, marginBottom:12 }}>
-              <Field label="Unit"><input type="text" placeholder="CY, LF, EA…" value={form.unit} onChange={e=>set("unit",e.target.value)} style={inp} /></Field>
-              <Field label="Quantity" required><input type="number" min="0" step="0.01" placeholder="0" value={form.quantity} onChange={e=>set("quantity",e.target.value)} style={inp} /></Field>
-              <Field label="Unit Cost ($)" required><input type="number" min="0" step="0.01" placeholder="0.00" value={form.unitCost} onChange={e=>set("unitCost",e.target.value)} style={inp} /></Field>
-              <div style={{ display:"flex", alignItems:"center", gap:8, paddingTop:20 }}>
-                <input type="checkbox" id="inv" checked={form.fromInventory} onChange={e=>set("fromInventory",e.target.checked)} style={{ width:14, height:14 }} />
-                <label htmlFor="inv" style={{ fontSize:12, fontWeight:600, color:"#444", cursor:"pointer" }}>From Inventory</label>
-              </div>
-              <div style={{ display:"flex", flexDirection:"column", justifyContent:"flex-end" }}>
-                <div style={{ fontSize:11, color:"#888", marginBottom:4 }}>Total Cost</div>
-                <div style={{ fontFamily:"monospace", fontWeight:700, fontSize:16, color:"#1a6b35" }}>{fmtSm(totalCost)}</div>
-              </div>
-            </div>
-            <div style={{ marginBottom:12 }}>
-              <Field label="Notes / Vendor"><input type="text" placeholder="Supplier, delivery details…" value={form.notes} onChange={e=>set("notes",e.target.value)} style={inp} /></Field>
-            </div>
-            <div style={{ display:"flex", gap:8 }}>
-              <button onClick={handleAdd} style={{ ...btn.small, background:"#6b3a1a" }}>Add Material Entry</button>
-              <button onClick={() => setAdding(false)} style={{ ...btn.small, background:"#888" }}>Cancel</button>
-            </div>
-          </div>
-        )}
-        <Table
-          headers={[{ label:"Date" },{ label:"Code" },{ label:"Description" },{ label:"Unit" },{ label:"Qty", right:true },{ label:"Unit Cost", right:true },{ label:"Source" },{ label:"Total", right:true }]}
-          rows={entries.map(e => [
-            <span style={{ fontFamily:"monospace", fontSize:12 }}>{e.date}</span>,
-            <span style={{ fontFamily:"monospace", fontSize:11, color:"#1a3a5c", fontWeight:600 }}>{e.accountCode||"—"}</span>,
-            e.description,
-            e.unit||"—",
-            <span style={{ fontFamily:"monospace" }}>{e.quantity}</span>,
-            <span style={{ fontFamily:"monospace" }}>{fmtSm(e.unitCost)}</span>,
-            e.fromInventory ? <span style={{ fontSize:10, background:"#e6f4ec", color:"#1a6b35", padding:"2px 6px", borderRadius:4, fontWeight:600 }}>Inventory</span> : "Purchase",
-            <span style={{ fontFamily:"monospace", fontWeight:700, color:"#1a6b35" }}>{fmtSm(e.totalCost||0)}</span>,
-          ])}
-          emptyMessage="No material entries yet"
-        />
-      </SectionCard>
-    </div>
-  );
-}
-
-// ── Contracted Work ───────────────────────────────────────────────────────────
-function ContractedEntries({ entries, onAdd }) {
-  const empty = { date:"", vendor:"", invoiceNumber:"", description:"", amount:"", accountCode:"", notes:"" };
-  const [form, setForm] = useState(empty);
-  const [adding, setAdding] = useState(false);
-  const set = (k,v) => setForm(f => ({ ...f, [k]:v }));
-
-  const handleAdd = () => {
-    if (!form.date || !form.vendor || !form.amount) return;
-    onAdd({ ...form, amount:parseFloat(form.amount)||0 });
-    setForm(empty); setAdding(false);
+  const handleSave = () => {
+    if (!form.date||(!form.itemId&&!form.itemName)||!form.quantity) return;
+    const batchLines = fifo?.lines||[];
+    const entry = {
+      ...createMaterialEntry(), ...form, id:editId||uid(),
+      itemName: form.itemId ? (selectedItem?.name||form.itemName) : form.itemName,
+      batchLines, totalCost:cost, createdAt:new Date().toISOString(),
+    };
+    if (editId) {
+      dispatch({ type:"UPDATE_PROJECT_ENTRY", payload:{ projectId:project.id, entryType:"materialEntries", entry } });
+      setEditId(null);
+    } else {
+      dispatch({ type:"ADD_PROJECT_ENTRY", payload:{ projectId:project.id, entryType:"materialEntries", entry } });
+      // Decrement inventory batches if from catalog
+      if (form.itemId && batchLines.length>0) {
+        dispatch({ type:"ADD_INVENTORY_TRANSACTION", payload:{
+          id:uid(), type:"issue", date:form.date,
+          itemId:form.itemId, itemName:entry.itemName,
+          quantity:form.quantity, location:"all",
+          projectId:project.id, projectName:project.name||project.projectNumber||"",
+          linkedAssets:[], batchLines, totalCost:cost,
+          notes:`Cost Accounting — ${project.projectNumber||project.name}`,
+          createdAt:new Date().toISOString(),
+        }});
+      }
+    }
+    setForm(blankForm()); setShowForm(false);
   };
 
-  const contractCodes = EXPENDITURE_CODES.filter(c => c.category==="contracts");
+  const handleEdit = e => { setForm({ ...e, itemId:e.itemId||"" }); setEditId(e.id); setShowForm(true); };
+  const handleDelete = id => dispatch({ type:"DELETE_PROJECT_ENTRY", payload:{ projectId:project.id, entryType:"materialEntries", entryId:id } });
+
+  const totalCost = entries.reduce((s,e)=>s+(e.totalCost||0),0);
 
   return (
     <div>
-      <SectionCard
-        title="Contracted Work" icon="file-dollar"
-        subtitle={`${entries.length} entries · Total: ${fmtSm(entries.reduce((s,e)=>s+(parseFloat(e.amount)||0),0))}`}
-        action={<button onClick={() => setAdding(!adding)} style={btn.small}>+ Add Entry</button>}
-      >
-        {adding && (
-          <div style={{ padding:16, background:"#f7f7f5", borderBottom:"1px solid #eee" }}>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:12 }}>
-              <Field label="Date" required><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} /></Field>
-              <div style={{ gridColumn:"span 2" }}>
-                <Field label="Vendor / Contractor" required><input type="text" placeholder="Contractor name…" value={form.vendor} onChange={e=>set("vendor",e.target.value)} style={inp} /></Field>
-              </div>
-            </div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:12, marginBottom:12 }}>
-              <Field label="Invoice Number"><input type="text" placeholder="Invoice #…" value={form.invoiceNumber} onChange={e=>set("invoiceNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
-              <div style={{ gridColumn:"span 2" }}>
-                <Field label="Description" required><input type="text" placeholder="Work performed…" value={form.description} onChange={e=>set("description",e.target.value)} style={inp} /></Field>
-              </div>
-              <Field label="Amount ($)" required><input type="number" min="0" step="0.01" placeholder="0.00" value={form.amount} onChange={e=>set("amount",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
-            </div>
-            <div style={{ marginBottom:12 }}>
-              <Field label="Account Code">
-                <select value={form.accountCode} onChange={e=>set("accountCode",e.target.value)} style={{ ...inp, fontFamily:"monospace", fontSize:12 }}>
-                  <option value="">Select code…</option>
-                  {contractCodes.map(c=><option key={c.code} value={c.code}>{c.code} — {c.description}</option>)}
-                </select>
-              </Field>
-            </div>
-            <div style={{ display:"flex", gap:8 }}>
-              <button onClick={handleAdd} style={{ ...btn.small, background:"#6b3a1a" }}>Add Entry</button>
-              <button onClick={() => setAdding(false)} style={{ ...btn.small, background:"#888" }}>Cancel</button>
-            </div>
-          </div>
-        )}
-        <Table
-          headers={[{ label:"Date" },{ label:"Vendor" },{ label:"Invoice #" },{ label:"Description" },{ label:"Code" },{ label:"Amount", right:true }]}
-          rows={entries.map(e => [
-            <span style={{ fontFamily:"monospace", fontSize:12 }}>{e.date}</span>,
-            <span style={{ fontWeight:600 }}>{e.vendor}</span>,
-            <span style={{ fontFamily:"monospace", fontSize:12 }}>{e.invoiceNumber||"—"}</span>,
-            e.description,
-            <span style={{ fontFamily:"monospace", fontSize:11, color:"#1a3a5c" }}>{e.accountCode||"—"}</span>,
-            <span style={{ fontFamily:"monospace", fontWeight:700, color:"#5a1a8a" }}>{fmtSm(parseFloat(e.amount)||0)}</span>,
-          ])}
-          emptyMessage="No contracted work entries yet"
-        />
-      </SectionCard>
-    </div>
-  );
-}
-
-// ── FEMA Records ──────────────────────────────────────────────────────────────
-function FEMARecords({ db }) {
-  const femaProjects = (db.projects||[]).filter(p => p.isFEMA);
-
-  return (
-    <div>
-      <div style={{ marginBottom:20 }}>
-        <div style={{ fontSize:18, fontWeight:700, color:"#1a1a1a" }}>FEMA Force Account Records</div>
-        <div style={{ fontSize:13, color:"#888", marginTop:3 }}>Public Assistance — Nebraska Emergency Management (NEMA) · Force account documentation</div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+        <div style={{ fontSize:13 }}>{entries.length} entries · Total: <strong style={{ color:"#d97706" }}>{fmtSm(totalCost)}</strong></div>
+        <button onClick={()=>{ setShowForm(v=>!v); setEditId(null); setForm(blankForm()); }} style={btn.primary}>{showForm&&!editId?"Cancel":"+ Add Materials"}</button>
       </div>
 
-      {femaProjects.length === 0 ? (
-        <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:40, textAlign:"center" }}>
-          <div style={{ fontSize:32, marginBottom:12 }}>🚨</div>
-          <div style={{ fontSize:15, fontWeight:700, color:"#555", marginBottom:8 }}>No FEMA Projects</div>
-          <div style={{ fontSize:13, color:"#aaa", maxWidth:360, margin:"0 auto" }}>
-            To activate FEMA force account tracking, create a project and check "FEMA Disaster Project" with a disaster declaration number.
+      {showForm && (
+        <div style={{ background:"#f7f7f5", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:16 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr 1fr 1fr", gap:12, marginBottom:12 }}>
+            <Field label="Date"><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <Field label="Item (catalog or manual)">
+              <select value={form.itemId} onChange={e=>fillItem(e.target.value)} style={{ ...inp, margin:0 }}>
+                <option value="">Manual entry…</option>
+                {invItems.filter(i=>i.active!==false).map(i=><option key={i.id} value={i.id}>{i.name}{i.unitOfMeasure?` (${i.unitOfMeasure})`:""}</option>)}
+              </select>
+            </Field>
+            <Field label="Quantity"><input type="number" min="0" step="any" value={form.quantity} onChange={e=>set("quantity",parseFloat(e.target.value)||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+            <Field label="Unit">
+              {form.itemId
+                ? <div style={{ ...inp, margin:0, background:"#fff", color:"#888" }}>{form.unitOfMeasure||"—"}</div>
+                : <input type="text" value={form.unitOfMeasure} onChange={e=>set("unitOfMeasure",e.target.value)} style={{ ...inp, margin:0 }} placeholder="ton, LF, CY…" />
+              }
+            </Field>
+            <Field label="Total Cost"><div style={{ ...inp, margin:0, background:"#fff", fontFamily:"monospace", fontWeight:700, color:"#d97706" }}>{fmtSm(cost)}</div></Field>
+          </div>
+          {!form.itemId && (
+            <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr", gap:12, marginBottom:12 }}>
+              <Field label="Item Description"><input type="text" value={form.itemName} onChange={e=>set("itemName",e.target.value)} style={{ ...inp, margin:0 }} placeholder="Description of material…" /></Field>
+              <Field label="Unit Cost (manual)"><input type="number" min="0" step="0.01" value={form.unitCost} onChange={e=>set("unitCost",parseFloat(e.target.value)||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+            </div>
+          )}
+          {fifo && (
+            <div style={{ background:fifo.canFulfill?"#e6f4ec":"#fdecea", border:`1px solid ${fifo.canFulfill?"#c3e6cb":"#f5c6cb"}`, borderRadius:6, padding:"8px 14px", marginBottom:12, fontSize:12 }}>
+              {fifo.canFulfill
+                ? <><strong>FIFO:</strong> {fifo.lines.length} batch line{fifo.lines.length!==1?"s":""} · {fifo.lines.map(l=>`${l.quantity} ${l.unitOfMeasure||""} @ ${fmtSm(l.unitCost)}`).join(", ")}</>
+                : <><strong style={{color:"#c0392b"}}>⚠ Stock shortage:</strong> {fifo.shortfall} {form.unitOfMeasure||"units"} unavailable in inventory</>
+              }
+            </div>
+          )}
+          <div style={{ display:"flex", gap:10 }}>
+            <Field label="Notes" style={{ flex:1 }}><input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <button onClick={handleSave} style={{ ...btn.primary, marginTop:20 }}>{editId?"Save":"Add"}</button>
+            {editId && <button onClick={()=>{ setEditId(null); setShowForm(false); setForm(blankForm()); }} style={{ ...btn.ghost, marginTop:20 }}>Cancel</button>}
           </div>
         </div>
-      ) : (
-        femaProjects.map(p => {
-          const labor      = p.laborEntries||[];
-          const equipment  = p.equipmentEntries||[];
-          const materials  = p.materialEntries||[];
-          const contracted = p.contractedEntries||[];
-          const laborTotal      = labor.reduce((s,e)=>s+(e.totalCost||0),0);
-          const equipmentTotal  = equipment.reduce((s,e)=>s+(e.totalCost||0),0);
-          const materialsTotal  = materials.reduce((s,e)=>s+(e.totalCost||0),0);
-          const contractedTotal = contracted.reduce((s,e)=>s+(parseFloat(e.amount)||0),0);
-          const grandTotal      = laborTotal+equipmentTotal+materialsTotal+contractedTotal;
-
-          return (
-            <div key={p.id} style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, marginBottom:16, overflow:"hidden" }}>
-              <div style={{ padding:"14px 18px", background:"#fdecea", borderBottom:"1px solid #f5c6c6", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                <div>
-                  <div style={{ fontSize:14, fontWeight:700, color:"#8c1b18" }}>{p.projectNumber} — {p.name}</div>
-                  <div style={{ fontSize:12, color:"#c0392b", marginTop:2 }}>Disaster: {p.disasterNumber||"—"} · {p.location}</div>
-                </div>
-                <div style={{ fontFamily:"monospace", fontWeight:700, fontSize:18, color:"#8c1b18" }}>{fmtSm(grandTotal)}</div>
-              </div>
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:0 }}>
-                {[
-                  { label:"Force Account Labor",     value:laborTotal,      count:labor.length,      color:"#1a3a5c" },
-                  { label:"Force Account Equipment", value:equipmentTotal,  count:equipment.length,  color:"#6b3a1a" },
-                  { label:"Force Account Materials", value:materialsTotal,  count:materials.length,  color:"#1a6b35" },
-                  { label:"Contract Work",           value:contractedTotal, count:contracted.length, color:"#5a1a8a" },
-                ].map((k,i) => (
-                  <div key={i} style={{ padding:"14px 18px", borderRight: i<3 ? "1px solid #eee" : "none" }}>
-                    <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:"#888", marginBottom:4 }}>{k.label}</div>
-                    <div style={{ fontSize:18, fontWeight:700, fontFamily:"monospace", color:k.color }}>{fmtSm(k.value)}</div>
-                    <div style={{ fontSize:11, color:"#aaa", marginTop:2 }}>{k.count} entr{k.count===1?"y":"ies"}</div>
-                  </div>
-                ))}
-              </div>
-              <div style={{ padding:"10px 18px", borderTop:"1px solid #eee", display:"flex", gap:10 }}>
-                <button style={{ ...btn.small, background:"#c0392b", fontSize:11 }} onClick={() => alert("FEMA force account export coming in Reporting module — will generate PA-compliant documentation")}>
-                  Export Force Account Records
-                </button>
-              </div>
-            </div>
-          );
-        })
       )}
+
+      <Table
+        headers={[{label:"Date"},{label:"Item"},{label:"Qty"},{label:"Unit"},{label:"FIFO Batches"},{label:"Total"},{label:""}]}
+        rows={entries.map(e=>[
+          <span style={{fontFamily:"monospace",fontSize:12}}>{fmtDate(e.date)}</span>,
+          <span style={{fontWeight:600}}>{e.itemName||"—"}</span>,
+          <span style={{fontFamily:"monospace"}}>{e.quantity}</span>,
+          <span style={{fontSize:12,color:"#888"}}>{e.unitOfMeasure||"—"}</span>,
+          <span style={{fontSize:11,color:"#888"}}>{e.batchLines?.length?`${e.batchLines.length} batch line${e.batchLines.length!==1?"s":""}`:e.itemId?"catalog":"manual"}</span>,
+          <span style={{fontFamily:"monospace",fontWeight:700,color:"#d97706"}}>{fmtSm(e.totalCost||0)}</span>,
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={()=>handleEdit(e)} style={{...btn.small,background:"#1a3a5c",fontSize:10,padding:"3px 8px"}}>Edit</button>
+            <button onClick={()=>handleDelete(e.id)} style={{...btn.small,background:"#c0392b",fontSize:10,padding:"3px 8px"}}>Del</button>
+          </div>,
+        ])}
+        emptyMessage="No material entries"
+      />
+    </div>
+  );
+}
+
+// ── Contractor Entries ────────────────────────────────────────────────────────
+function ContractorEntries({ project, vendors, dispatch }) {
+  const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId]     = useState(null);
+  const entries = project.contractorEntries||[];
+
+  const blankForm = () => ({ date:today(), vendorId:"", vendorName:"", invoiceNumber:"", description:"", amount:0, expenditureCode:"", notes:"" });
+  const [form, setForm] = useState(blankForm());
+  const set = (k,v) => setForm(f=>({...f,[k]:v}));
+
+  const fillVendor = id => {
+    const v = vendors.find(v=>v.id===id);
+    setForm(f=>({ ...f, vendorId:id, vendorName:v?.name||"" }));
+  };
+
+  const handleSave = () => {
+    if (!form.date||!form.description||!form.amount) return;
+    const entry = { ...createContractorEntry(), ...form, id:editId||uid(), createdAt:new Date().toISOString() };
+    if (editId) {
+      dispatch({ type:"UPDATE_PROJECT_ENTRY", payload:{ projectId:project.id, entryType:"contractorEntries", entry } });
+      setEditId(null);
+    } else {
+      dispatch({ type:"ADD_PROJECT_ENTRY", payload:{ projectId:project.id, entryType:"contractorEntries", entry } });
+    }
+    setForm(blankForm()); setShowForm(false);
+  };
+
+  const handleEdit = e => { setForm({ ...e }); setEditId(e.id); setShowForm(true); };
+  const handleDelete = id => dispatch({ type:"DELETE_PROJECT_ENTRY", payload:{ projectId:project.id, entryType:"contractorEntries", entryId:id } });
+
+  const totalAmt = entries.reduce((s,e)=>s+(e.amount||0),0);
+
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+        <div style={{ fontSize:13 }}>{entries.length} invoices · Total: <strong style={{ color:"#5a1a8a" }}>{fmtSm(totalAmt)}</strong></div>
+        <button onClick={()=>{ setShowForm(v=>!v); setEditId(null); setForm(blankForm()); }} style={btn.primary}>{showForm&&!editId?"Cancel":"+ Add Contractor Invoice"}</button>
+      </div>
+
+      {showForm && (
+        <div style={{ background:"#f7f7f5", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:16 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr", gap:12, marginBottom:12 }}>
+            <Field label="Date"><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <Field label="Contractor">
+              {vendors.filter(v=>v.type==="contractor").length>0
+                ? <select value={form.vendorId} onChange={e=>fillVendor(e.target.value)} style={{ ...inp, margin:0 }}>
+                    <option value="">Select contractor…</option>
+                    {vendors.filter(v=>v.active!==false&&v.type==="contractor").map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+                  </select>
+                : <input type="text" value={form.vendorName} onChange={e=>set("vendorName",e.target.value)} style={{ ...inp, margin:0 }} placeholder="Contractor name…" />
+              }
+            </Field>
+            <Field label="Invoice #"><input type="text" value={form.invoiceNumber} onChange={e=>set("invoiceNumber",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"3fr 1fr 1fr", gap:12, marginBottom:12 }}>
+            <Field label="Work Description"><input type="text" value={form.description} onChange={e=>set("description",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <Field label="Amount ($)"><input type="number" min="0" step="0.01" value={form.amount} onChange={e=>set("amount",parseFloat(e.target.value)||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+            <Field label="Expenditure Code"><input type="text" value={form.expenditureCode} onChange={e=>set("expenditureCode",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+          </div>
+          <div style={{ display:"flex", gap:10 }}>
+            <Field label="Notes" style={{ flex:1 }}><input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <button onClick={handleSave} style={{ ...btn.primary, marginTop:20 }}>{editId?"Save":"Add"}</button>
+            {editId && <button onClick={()=>{ setEditId(null); setShowForm(false); setForm(blankForm()); }} style={{ ...btn.ghost, marginTop:20 }}>Cancel</button>}
+          </div>
+        </div>
+      )}
+
+      <Table
+        headers={[{label:"Date"},{label:"Contractor"},{label:"Invoice #"},{label:"Description"},{label:"Amount"},{label:"Exp. Code"},{label:""}]}
+        rows={entries.map(e=>[
+          <span style={{fontFamily:"monospace",fontSize:12}}>{fmtDate(e.date)}</span>,
+          e.vendorName||"—",
+          <span style={{fontFamily:"monospace",fontSize:12,color:"#888"}}>{e.invoiceNumber||"—"}</span>,
+          <span style={{fontWeight:600,fontSize:12}}>{e.description||"—"}</span>,
+          <span style={{fontFamily:"monospace",fontWeight:700,color:"#5a1a8a"}}>{fmtSm(e.amount||0)}</span>,
+          <span style={{fontFamily:"monospace",fontSize:11,color:"#888"}}>{e.expenditureCode||"—"}</span>,
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={()=>handleEdit(e)} style={{...btn.small,background:"#1a3a5c",fontSize:10,padding:"3px 8px"}}>Edit</button>
+            <button onClick={()=>handleDelete(e.id)} style={{...btn.small,background:"#c0392b",fontSize:10,padding:"3px 8px"}}>Del</button>
+          </div>,
+        ])}
+        emptyMessage="No contractor invoices"
+      />
+    </div>
+  );
+}
+
+// ── Engineering Entries ───────────────────────────────────────────────────────
+function EngineeringEntries({ project, vendors, dispatch }) {
+  const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId]     = useState(null);
+  const entries = project.engineeringEntries||[];
+
+  const blankForm = () => ({ date:today(), vendorId:"", firmName:"", invoiceNumber:"", phase:"design", amount:0, expenditureCode:"", notes:"" });
+  const [form, setForm] = useState(blankForm());
+  const set = (k,v) => setForm(f=>({...f,[k]:v}));
+
+  const fillFirm = id => {
+    const v = vendors.find(v=>v.id===id);
+    setForm(f=>({ ...f, vendorId:id, firmName:v?.name||"" }));
+  };
+
+  const handleSave = () => {
+    if (!form.date||!form.amount) return;
+    const entry = { ...createEngineeringEntry(), ...form, id:editId||uid(), createdAt:new Date().toISOString() };
+    if (editId) {
+      dispatch({ type:"UPDATE_PROJECT_ENTRY", payload:{ projectId:project.id, entryType:"engineeringEntries", entry } });
+      setEditId(null);
+    } else {
+      dispatch({ type:"ADD_PROJECT_ENTRY", payload:{ projectId:project.id, entryType:"engineeringEntries", entry } });
+    }
+    setForm(blankForm()); setShowForm(false);
+  };
+
+  const handleEdit = e => { setForm({ ...e }); setEditId(e.id); setShowForm(true); };
+  const handleDelete = id => dispatch({ type:"DELETE_PROJECT_ENTRY", payload:{ projectId:project.id, entryType:"engineeringEntries", entryId:id } });
+
+  const totalAmt = entries.reduce((s,e)=>s+(e.amount||0),0);
+
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+        <div style={{ fontSize:13 }}>{entries.length} invoices · Total: <strong style={{ color:"#888" }}>{fmtSm(totalAmt)}</strong></div>
+        <button onClick={()=>{ setShowForm(v=>!v); setEditId(null); setForm(blankForm()); }} style={btn.primary}>{showForm&&!editId?"Cancel":"+ Add Engineering"}</button>
+      </div>
+
+      {showForm && (
+        <div style={{ background:"#f7f7f5", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:16 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr 1fr", gap:12, marginBottom:12 }}>
+            <Field label="Date"><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <Field label="Engineering Firm">
+              {vendors.filter(v=>v.type==="engineering_firm").length>0
+                ? <select value={form.vendorId} onChange={e=>fillFirm(e.target.value)} style={{ ...inp, margin:0 }}>
+                    <option value="">Select firm…</option>
+                    {vendors.filter(v=>v.active!==false&&v.type==="engineering_firm").map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+                  </select>
+                : <input type="text" value={form.firmName} onChange={e=>set("firmName",e.target.value)} style={{ ...inp, margin:0 }} placeholder="Firm name…" />
+              }
+            </Field>
+            <Field label="Invoice #"><input type="text" value={form.invoiceNumber} onChange={e=>set("invoiceNumber",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+            <Field label="Phase">
+              <select value={form.phase} onChange={e=>set("phase",e.target.value)} style={{ ...inp, margin:0 }}>
+                {ENG_PHASES.map(p=><option key={p} value={p}>{p.replace("_"," ")}</option>)}
+              </select>
+            </Field>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+            <Field label="Amount ($)"><input type="number" min="0" step="0.01" value={form.amount} onChange={e=>set("amount",parseFloat(e.target.value)||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+            <Field label="Expenditure Code"><input type="text" value={form.expenditureCode} onChange={e=>set("expenditureCode",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+          </div>
+          <div style={{ display:"flex", gap:10, marginTop:12 }}>
+            <Field label="Notes" style={{ flex:1 }}><input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <button onClick={handleSave} style={{ ...btn.primary, marginTop:20 }}>{editId?"Save":"Add"}</button>
+            {editId && <button onClick={()=>{ setEditId(null); setShowForm(false); setForm(blankForm()); }} style={{ ...btn.ghost, marginTop:20 }}>Cancel</button>}
+          </div>
+        </div>
+      )}
+
+      <Table
+        headers={[{label:"Date"},{label:"Firm"},{label:"Invoice #"},{label:"Phase"},{label:"Amount"},{label:"Exp. Code"},{label:""}]}
+        rows={entries.map(e=>[
+          <span style={{fontFamily:"monospace",fontSize:12}}>{fmtDate(e.date)}</span>,
+          e.firmName||"—",
+          <span style={{fontFamily:"monospace",fontSize:12,color:"#888"}}>{e.invoiceNumber||"—"}</span>,
+          <span style={{fontSize:12,textTransform:"capitalize"}}>{(e.phase||"—").replace("_"," ")}</span>,
+          <span style={{fontFamily:"monospace",fontWeight:700}}>{fmtSm(e.amount||0)}</span>,
+          <span style={{fontFamily:"monospace",fontSize:11,color:"#888"}}>{e.expenditureCode||"—"}</span>,
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={()=>handleEdit(e)} style={{...btn.small,background:"#1a3a5c",fontSize:10,padding:"3px 8px"}}>Edit</button>
+            <button onClick={()=>handleDelete(e.id)} style={{...btn.small,background:"#c0392b",fontSize:10,padding:"3px 8px"}}>Del</button>
+          </div>,
+        ])}
+        emptyMessage="No engineering entries"
+      />
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BY PROJECT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function ByProjectTab({ db }) {
+  const [detail, setDetail] = useState(null);
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+
+  const projects = db.projects||[];
+  const project = detail ? projects.find(p=>p.id===detail) : null;
+
+  if (project) {
+    return <ProjectCostDetail project={project} onBack={()=>setDetail(null)} />;
+  }
+
+  const filtered = projects.filter(p=>{
+    if (typeFilter!=="all"   && p.type!==typeFilter)     return false;
+    if (statusFilter!=="all" && p.status!==statusFilter) return false;
+    return true;
+  });
+
+  const grandTotal = filtered.reduce((s,p)=>s+projectTotals(p).total,0);
+
+  // KPIs
+  const activeTotal  = projects.filter(p=>p.status==="active").reduce((s,p)=>s+projectTotals(p).total,0);
+  const laborTotal2  = projects.reduce((s,p)=>s+projectTotals(p).labor,0);
+  const equipTotal   = projects.reduce((s,p)=>s+projectTotals(p).equip,0);
+  const matTotal     = projects.reduce((s,p)=>s+projectTotals(p).material,0);
+
+  return (
+    <div>
+      <div style={{ fontSize:16, fontWeight:700, marginBottom:16 }}>Cost Summary by Project</div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:18 }}>
+        <KPICard label="Active Project Spend" value={fmtSm(activeTotal)} sub="Cumulative" accent="#1a6b35" icon="folder-open" />
+        <KPICard label="Labor"                value={fmtSm(laborTotal2)} sub="All projects" accent="#1a5a3a" icon="user-check" />
+        <KPICard label="Equipment"            value={fmtSm(equipTotal)}  sub="All projects" accent="#1a3a5c" icon="truck" />
+        <KPICard label="Materials"            value={fmtSm(matTotal)}    sub="All projects" accent="#d97706" icon="package" />
+      </div>
+
+      <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
+        <div style={{ display:"flex", border:"1px solid #ddd", borderRadius:6, overflow:"hidden" }}>
+          {[["all","All Types"],["capital","Capital"],["maintenance","Maintenance"],["miscellaneous","Misc"]].map(([v,l])=>(
+            <button key={v} onClick={()=>setTypeFilter(v)} style={{ padding:"6px 12px", fontSize:12, fontWeight:600, border:"none", cursor:"pointer", background:typeFilter===v?"#1a3a5c":"#fff", color:typeFilter===v?"#fff":"#555" }}>{l}</button>
+          ))}
+        </div>
+        <div style={{ display:"flex", border:"1px solid #ddd", borderRadius:6, overflow:"hidden" }}>
+          {[["all","All Status"],["active","Active"],["pending","Pending"],["planning","Planning"],["complete","Complete"]].map(([v,l])=>(
+            <button key={v} onClick={()=>setStatusFilter(v)} style={{ padding:"6px 12px", fontSize:12, fontWeight:600, border:"none", cursor:"pointer", background:statusFilter===v?"#1a3a5c":"#fff", color:statusFilter===v?"#fff":"#555" }}>{l}</button>
+          ))}
+        </div>
+        <div style={{ fontSize:13, color:"#888", marginLeft:"auto" }}>
+          {filtered.length} project{filtered.length!==1?"s":""} · <strong>{fmtSm(grandTotal)}</strong> total
+        </div>
+      </div>
+
+      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, overflow:"hidden" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+          <thead>
+            <tr style={{ background:"#f7f7f5" }}>
+              {["Project","Type","Status","Labor","Equipment","Materials","Contractor","Engineering","Total","vs. Est.",""].map(h=>(
+                <th key={h} style={{ padding:"9px 12px", textAlign:["Labor","Equipment","Materials","Contractor","Engineering","Total","vs. Est."].includes(h)?"right":"left", fontWeight:600, fontSize:11, textTransform:"uppercase", letterSpacing:"0.05em", color:"#666", borderBottom:"1px solid #eee" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length===0 && (
+              <tr><td colSpan={11} style={{ padding:32, textAlign:"center", color:"#aaa" }}>No projects match filter.</td></tr>
+            )}
+            {filtered.map((p,i)=>{
+              const t = projectTotals(p);
+              const over = p.estimatedCost>0 ? t.total - p.estimatedCost : null;
+              return (
+                <tr key={p.id} style={{ borderTop:"1px solid #eee", background:i%2===0?"#fff":"#fafaf8", cursor:"pointer" }}
+                  onClick={()=>setDetail(p.id)}
+                  onMouseEnter={e=>e.currentTarget.style.background="#f0f8f4"}
+                  onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"#fff":"#fafaf8"}>
+                  <td style={{ padding:"9px 12px", fontWeight:700 }}>{p.name||p.projectNumber||"—"}</td>
+                  <td style={{ padding:"9px 12px", fontSize:12, textTransform:"capitalize" }}>{p.type}</td>
+                  <td style={{ padding:"9px 12px" }}><StatusChip status={p.status} /></td>
+                  <td style={{ padding:"9px 12px", textAlign:"right", fontFamily:"monospace" }}>{t.labor?fmtSm(t.labor):"—"}</td>
+                  <td style={{ padding:"9px 12px", textAlign:"right", fontFamily:"monospace" }}>{t.equip?fmtSm(t.equip):"—"}</td>
+                  <td style={{ padding:"9px 12px", textAlign:"right", fontFamily:"monospace" }}>{t.material?fmtSm(t.material):"—"}</td>
+                  <td style={{ padding:"9px 12px", textAlign:"right", fontFamily:"monospace" }}>{t.contract?fmtSm(t.contract):"—"}</td>
+                  <td style={{ padding:"9px 12px", textAlign:"right", fontFamily:"monospace" }}>{t.eng?fmtSm(t.eng):"—"}</td>
+                  <td style={{ padding:"9px 12px", textAlign:"right", fontFamily:"monospace", fontWeight:700 }}>{fmtSm(t.total)}</td>
+                  <td style={{ padding:"9px 12px", textAlign:"right", fontSize:11, fontWeight:700, color:over>0?"#c0392b":over<0?"#1a6b35":"#888" }}>
+                    {over!==null?(over>0?`+${fmtSm(over)}`:fmtSm(over)):"—"}
+                  </td>
+                  <td style={{ padding:"9px 12px" }}><Icon name="chevron-right" size={14} color="#ccc" /></td>
+                </tr>
+              );
+            })}
+            {filtered.length>0 && (
+              <tr style={{ background:"#f7f7f5", borderTop:"2px solid #ddd" }}>
+                <td colSpan={3} style={{ padding:"9px 12px", fontWeight:700, fontSize:12, color:"#888" }}>TOTALS</td>
+                {["labor","equip","material","contract","eng"].map(k=>(
+                  <td key={k} style={{ padding:"9px 12px", textAlign:"right", fontFamily:"monospace", fontWeight:700 }}>{fmtSm(filtered.reduce((s,p)=>s+projectTotals(p)[k],0))}</td>
+                ))}
+                <td style={{ padding:"9px 12px", textAlign:"right", fontFamily:"monospace", fontWeight:700, fontSize:14 }}>{fmtSm(grandTotal)}</td>
+                <td colSpan={2} />
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function ProjectCostDetail({ project: p, onBack }) {
+  const [tab, setTab] = useState("labor");
+  const t = projectTotals(p);
+  const TABS = [
+    ["labor","Labor","user-check"],["equipment","Equipment","truck"],["materials","Materials","package"],
+    ["contractor","Contractor","building-factory-2"],["engineering","Engineering","compass"],
+  ];
+  return (
+    <div>
+      <div style={{ display:"flex", gap:10, alignItems:"center", marginBottom:16 }}>
+        <button onClick={onBack} style={{ ...btn.ghost, fontSize:12, padding:"5px 12px" }}>← Projects</button>
+        <div style={{ flex:1 }}>
+          <div style={{ fontSize:11, color:"#888", textTransform:"capitalize" }}>{p.type}{p.projectNumber?` · ${p.projectNumber}`:""}</div>
+          <div style={{ fontSize:18, fontWeight:700 }}>{p.name||p.projectNumber||"Project"}</div>
+        </div>
+        <StatusChip status={p.status} />
+        {p.isFEMA && <span style={{ background:"#fef3cd", color:"#d97706", padding:"3px 10px", borderRadius:99, fontSize:11, fontWeight:700 }}>FEMA</span>}
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(6,1fr)", gap:10, marginBottom:20 }}>
+        <KPICard label="Labor"       value={fmtSm(t.labor)}    sub="" accent="#1a6b35" icon="user-check" />
+        <KPICard label="Equipment"   value={fmtSm(t.equip)}    sub="" accent="#1a3a5c" icon="truck" />
+        <KPICard label="Materials"   value={fmtSm(t.material)} sub="" accent="#d97706" icon="package" />
+        <KPICard label="Contractor"  value={fmtSm(t.contract)} sub="" accent="#5a1a8a" icon="building-factory-2" />
+        <KPICard label="Engineering" value={fmtSm(t.eng)}      sub="" accent="#888"    icon="compass" />
+        <KPICard label="Total"       value={fmtSm(t.total)}    sub="" accent="#1a1a1a" icon="coin" />
+      </div>
+
+      <div style={{ display:"flex", borderBottom:"1px solid #ddd", marginBottom:20 }}>
+        {TABS.map(([id,label,icon])=>(
+          <button key={id} onClick={()=>setTab(id)} style={{ background:"transparent", border:"none", padding:"8px 14px 10px", fontWeight:tab===id?700:400, fontSize:13, cursor:"pointer", color:tab===id?"#1a5a3a":"#666", borderBottom:tab===id?"2px solid #1a5a3a":"2px solid transparent", marginBottom:-1, display:"inline-flex", alignItems:"center", gap:6 }}>
+            <Icon name={icon} size={12} color={tab===id?"#1a5a3a":"#888"} />{label}
+          </button>
+        ))}
+      </div>
+
+      {tab==="labor" && (
+        <Table
+          headers={[{label:"Date"},{label:"Employee"},{label:"ST Hrs"},{label:"ST Rate"},{label:"OT Hrs"},{label:"OT Rate"},{label:"Fringe %"},{label:"Total"},{label:"FEMA Total"}]}
+          rows={(p.laborEntries||[]).map(e=>[
+            <span style={{fontFamily:"monospace",fontSize:12}}>{fmtDate(e.date)}</span>,
+            <span style={{fontWeight:600}}>{e.employeeName}{e.classification?` — ${e.classification}`:""}</span>,
+            <span style={{fontFamily:"monospace"}}>{e.straightTimeHours}</span>,
+            <span style={{fontFamily:"monospace"}}>{fmtSm(e.straightTimeRate||0)}</span>,
+            <span style={{fontFamily:"monospace"}}>{e.overtimeHours||0}</span>,
+            <span style={{fontFamily:"monospace"}}>{e.overtimeRate?fmtSm(e.overtimeRate):"—"}</span>,
+            <span style={{fontFamily:"monospace"}}>{e.fringeRate||0}%</span>,
+            <span style={{fontFamily:"monospace",fontWeight:700}}>{fmtSm(e.totalCost||0)}</span>,
+            p.isFEMA?<span style={{fontFamily:"monospace",color:"#d97706",fontWeight:700}}>{fmtSm(laborFEMA(e))}</span>:<span style={{color:"#ccc"}}>—</span>,
+          ])}
+          emptyMessage="No labor entries"
+        />
+      )}
+      {tab==="equipment" && (
+        <Table
+          headers={[{label:"Date"},{label:"Unit"},{label:"Hours"},{label:"FEMA Rate"},{label:"Total"},{label:"Operator"}]}
+          rows={(p.equipmentEntries||[]).map(e=>[
+            <span style={{fontFamily:"monospace",fontSize:12}}>{fmtDate(e.date)}</span>,
+            <span style={{fontWeight:600}}>{e.unitNumber?`#${e.unitNumber} `:""}{e.equipmentName||"—"}</span>,
+            <span style={{fontFamily:"monospace"}}>{e.hoursOperated}</span>,
+            <span style={{fontFamily:"monospace"}}>{fmtSm(e.femaRate||0)}/hr</span>,
+            <span style={{fontFamily:"monospace",fontWeight:700}}>{fmtSm(e.totalCost||0)}</span>,
+            e.operatorName||"—",
+          ])}
+          emptyMessage="No equipment entries"
+        />
+      )}
+      {tab==="materials" && (
+        <Table
+          headers={[{label:"Date"},{label:"Item"},{label:"Qty"},{label:"Unit"},{label:"FIFO Batches"},{label:"Total"}]}
+          rows={(p.materialEntries||[]).map(e=>[
+            <span style={{fontFamily:"monospace",fontSize:12}}>{fmtDate(e.date)}</span>,
+            <span style={{fontWeight:600}}>{e.itemName||"—"}</span>,
+            <span style={{fontFamily:"monospace"}}>{e.quantity}</span>,
+            <span style={{fontSize:12,color:"#888"}}>{e.unitOfMeasure||"—"}</span>,
+            <span style={{fontSize:11,color:"#888"}}>{e.batchLines?.length?`${e.batchLines.length} batch line${e.batchLines.length!==1?"s":""}`:e.itemId?"catalog":"manual"}</span>,
+            <span style={{fontFamily:"monospace",fontWeight:700}}>{fmtSm(e.totalCost||0)}</span>,
+          ])}
+          emptyMessage="No material entries"
+        />
+      )}
+      {tab==="contractor" && (
+        <Table
+          headers={[{label:"Date"},{label:"Contractor"},{label:"Invoice #"},{label:"Description"},{label:"Amount"},{label:"Exp. Code"}]}
+          rows={(p.contractorEntries||[]).map(e=>[
+            <span style={{fontFamily:"monospace",fontSize:12}}>{fmtDate(e.date)}</span>,
+            e.vendorName||"—",
+            <span style={{fontFamily:"monospace",fontSize:12,color:"#888"}}>{e.invoiceNumber||"—"}</span>,
+            <span style={{fontWeight:600}}>{e.description||"—"}</span>,
+            <span style={{fontFamily:"monospace",fontWeight:700}}>{fmtSm(e.amount||0)}</span>,
+            <span style={{fontFamily:"monospace",fontSize:11}}>{e.expenditureCode||"—"}</span>,
+          ])}
+          emptyMessage="No contractor entries"
+        />
+      )}
+      {tab==="engineering" && (
+        <Table
+          headers={[{label:"Date"},{label:"Firm"},{label:"Invoice #"},{label:"Phase"},{label:"Amount"},{label:"Exp. Code"}]}
+          rows={(p.engineeringEntries||[]).map(e=>[
+            <span style={{fontFamily:"monospace",fontSize:12}}>{fmtDate(e.date)}</span>,
+            e.firmName||"—",
+            <span style={{fontFamily:"monospace",fontSize:12,color:"#888"}}>{e.invoiceNumber||"—"}</span>,
+            <span style={{fontSize:12,textTransform:"capitalize"}}>{(e.phase||"—").replace("_"," ")}</span>,
+            <span style={{fontFamily:"monospace",fontWeight:700}}>{fmtSm(e.amount||0)}</span>,
+            <span style={{fontFamily:"monospace",fontSize:11}}>{e.expenditureCode||"—"}</span>,
+          ])}
+          emptyMessage="No engineering entries"
+        />
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BY ASSET
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function ByAssetTab({ db }) {
+  const [assetType, setAssetType] = useState("road");
+  const [assetId, setAssetId]     = useState("");
+
+  const projects   = db.projects   || [];
+  const roads      = db.roads      || [];
+  const bridges    = db.bridges    || [];
+  const structures = db.structures || [];
+  const signs      = db.signs      || [];
+  const equipment  = db.equipment  || [];
+
+  const TYPES = [
+    { id:"road",      label:"Roads",      list:roads.filter(r=>r.status!=="inactive"),      key:"name" },
+    { id:"bridge",    label:"Bridges",    list:bridges.filter(b=>b.status==="active"),       key:null },
+    { id:"structure", label:"Structures", list:structures.filter(s=>s.status==="active"),    key:"road" },
+    { id:"sign",      label:"Signs",      list:signs.filter(s=>s.status==="active"),         key:"signName" },
+    { id:"equipment", label:"Equipment",  list:equipment.filter(u=>u.status!=="sold"),       key:null },
+  ];
+
+  const typeInfo  = TYPES.find(t=>t.id===assetType);
+  const assetList = typeInfo?.list||[];
+
+  function assetLabel(a, type) {
+    if (type==="bridge")    return `${a.stateNumber||""} ${a.countyNumber||""} — ${a.road||a.features||"Bridge"}`.trim();
+    if (type==="structure") return `${a.culvertNumber||""} — ${a.road||""} ${a.township||""}`.trim();
+    if (type==="sign")      return `${a.signName||""} — ${a.onRoad||""} ${a.township||""}`.trim();
+    if (type==="equipment") return `${a.unitNumber?`#${a.unitNumber} `:""}${a.year||""} ${a.make||""} ${a.model||""}`.trim();
+    return a[typeInfo?.key]||a.name||a.id;
+  }
+
+  // Find all projects / entries linked to this assetId
+  const linkedProjects = assetId ? projects.filter(p =>
+    (p.linkedAssets||[]).includes(assetId) ||
+    [...(p.laborEntries||[]), ...(p.equipmentEntries||[]), ...(p.materialEntries||[]),
+     ...(p.contractorEntries||[]), ...(p.engineeringEntries||[])].some(e=>(e.linkedAssets||[]).includes(assetId))
+  ) : [];
+
+  const grandTotal = linkedProjects.reduce((s,p)=>s+projectTotals(p).total,0);
+
+  return (
+    <div>
+      <div style={{ display:"flex", gap:10, marginBottom:20, flexWrap:"wrap", alignItems:"flex-end" }}>
+        <div>
+          <div style={{ fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em", color:"#888", marginBottom:6 }}>Asset Type</div>
+          <div style={{ display:"flex", border:"1px solid #ddd", borderRadius:6, overflow:"hidden" }}>
+            {TYPES.map(t=>(
+              <button key={t.id} onClick={()=>{ setAssetType(t.id); setAssetId(""); }} style={{ padding:"7px 14px", fontSize:12, fontWeight:600, border:"none", cursor:"pointer", background:assetType===t.id?"#1a3a5c":"#fff", color:assetType===t.id?"#fff":"#555" }}>{t.label}</button>
+            ))}
+          </div>
+        </div>
+        <Field label="Select Asset" style={{ minWidth:320 }}>
+          <select value={assetId} onChange={e=>setAssetId(e.target.value)} style={{ ...inp, margin:0, fontSize:13 }}>
+            <option value="">— Select —</option>
+            {assetList.map(a=><option key={a.id} value={a.id}>{assetLabel(a,assetType)}</option>)}
+          </select>
+        </Field>
+      </div>
+
+      {!assetId && (
+        <div style={{ padding:48, textAlign:"center", color:"#aaa", border:"1px dashed #ccc", borderRadius:8, fontSize:13 }}>
+          Select an asset above to see its complete cost history across all projects.
+        </div>
+      )}
+
+      {assetId && (
+        <div>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+            <div style={{ fontSize:15, fontWeight:700 }}>
+              {assetLabel(assetList.find(a=>a.id===assetId)||{},assetType)}
+            </div>
+            <div style={{ fontSize:13, color:"#888" }}>
+              {linkedProjects.length} project{linkedProjects.length!==1?"s":" "} · <strong>{fmtSm(grandTotal)}</strong> total
+            </div>
+          </div>
+
+          {linkedProjects.length===0 && (
+            <div style={{ padding:32, textAlign:"center", color:"#aaa", fontSize:13, background:"#fafaf8", borderRadius:8, border:"1px solid #eee" }}>
+              No projects have this asset in their linked assets or cost entry asset lists yet.
+            </div>
+          )}
+
+          {linkedProjects.length>0 && (
+            <>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:10, marginBottom:18 }}>
+                {["labor","equip","material","contract","eng"].map((k,i)=>{
+                  const labels=["Labor","Equipment","Materials","Contractor","Engineering"];
+                  const colors=["#1a6b35","#1a3a5c","#d97706","#5a1a8a","#888"];
+                  return <KPICard key={k} label={labels[i]} value={fmtSm(linkedProjects.reduce((s,p)=>s+projectTotals(p)[k],0))} sub="" accent={colors[i]} icon="coin" />;
+                })}
+              </div>
+              <Table
+                headers={[{label:"Project"},{label:"Type"},{label:"Status"},{label:"Labor"},{label:"Equipment"},{label:"Materials"},{label:"Contractor"},{label:"Engineering"},{label:"Total"}]}
+                rows={linkedProjects.map(p=>{
+                  const t=projectTotals(p);
+                  return [
+                    <span style={{fontWeight:700}}>{p.name||p.projectNumber||"—"}</span>,
+                    <span style={{fontSize:12,textTransform:"capitalize"}}>{p.type}</span>,
+                    <StatusChip status={p.status} />,
+                    <span style={{fontFamily:"monospace",fontSize:12}}>{t.labor?fmtSm(t.labor):"—"}</span>,
+                    <span style={{fontFamily:"monospace",fontSize:12}}>{t.equip?fmtSm(t.equip):"—"}</span>,
+                    <span style={{fontFamily:"monospace",fontSize:12}}>{t.material?fmtSm(t.material):"—"}</span>,
+                    <span style={{fontFamily:"monospace",fontSize:12}}>{t.contract?fmtSm(t.contract):"—"}</span>,
+                    <span style={{fontFamily:"monospace",fontSize:12}}>{t.eng?fmtSm(t.eng):"—"}</span>,
+                    <span style={{fontFamily:"monospace",fontWeight:700}}>{fmtSm(t.total)}</span>,
+                  ];
+                })}
+                emptyMessage=""
+              />
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FEMA RATES REFERENCE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function FEMARatesTab() {
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", marginBottom:16 }}>
+        <div>
+          <div style={{ fontSize:16, fontWeight:700 }}>FEMA Equipment Rate Schedule</div>
+          <div style={{ fontSize:13, color:"#888", marginTop:4 }}>Used for force account equipment cost documentation. Labor overhead multiplier: ×1.157 (15.7%)</div>
+        </div>
+      </div>
+
+      <div style={{ background:"#fef3cd", border:"1px solid #f5c842", borderRadius:8, padding:"12px 18px", marginBottom:18, fontSize:13, display:"flex", gap:24, flexWrap:"wrap" }}>
+        <div><span style={{ fontWeight:700, color:"#d97706" }}>Labor formula (FEMA):</span> (ST hrs × ST rate + OT hrs × OT rate) × <strong>1.157</strong></div>
+        <div><span style={{ fontWeight:700, color:"#d97706" }}>Equipment formula:</span> hours × FEMA rate (no markup)</div>
+        <div><span style={{ fontWeight:700, color:"#d97706" }}>Materials:</span> actual invoice cost (no markup)</div>
+      </div>
+
+      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, overflow:"hidden" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+          <thead>
+            <tr style={{ background:"#f7f7f5" }}>
+              {["Equipment Type","Size / Class","Rate ($/hr)"].map(h=>(
+                <th key={h} style={{ padding:"9px 14px", textAlign:h==="Rate ($/hr)"?"right":"left", fontWeight:600, fontSize:11, textTransform:"uppercase", letterSpacing:"0.05em", color:"#666", borderBottom:"1px solid #eee" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {FEMA_EQUIPMENT_RATES.map((r,i)=>(
+              <tr key={i} style={{ borderTop:"1px solid #eee", background:i%2===0?"#fff":"#fafaf8" }}>
+                <td style={{ padding:"9px 14px", fontWeight:600 }}>{r.type}</td>
+                <td style={{ padding:"9px 14px", fontSize:12, color:"#666" }}>{r.size}</td>
+                <td style={{ padding:"9px 14px", textAlign:"right", fontFamily:"monospace", fontWeight:700, color:"#d97706" }}>${r.rate.toFixed(2)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

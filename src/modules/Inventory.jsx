@@ -1,804 +1,1272 @@
 import { useState, useMemo } from "react";
-import { Field, SectionCard, Table, StatusBadge, Icon, inp, btn, fmt, fmtSm, pct } from "../components/shared.jsx";
-import { EXPENDITURE_CODES } from "../data/accountCodes.js";
+import { Icon, Field, SectionCard, Table, KPICard, StatusBadge, inp, btn, fmt, fmtSm } from "../components/shared.jsx";
 
-// ── Default locations & shelves ───────────────────────────────────────────────
-const DEFAULT_LOCATIONS = [
-  { id: "main",     name: "Main Shop",      shelves: ["A1","A2","A3","B1","B2","B3","C1","C2","C3","D1","D2","E1","E2"] },
-  { id: "pauline",  name: "Pauline Shed",   shelves: ["A1","A2","B1","B2","C1"] },
-  { id: "kenesaw",  name: "Kenesaw Shed",   shelves: ["A1","A2","B1","B2","C1"] },
-  { id: "roseland", name: "Roseland Shed",  shelves: ["A1","A2","B1","B2","C1"] },
-  { id: "holstein", name: "Holstein Shed",  shelves: ["A1","A2","B1","B2","C1"] },
-  { id: "on_asset", name: "On-Asset",       shelves: [] },
+// ── Constants ─────────────────────────────────────────────────────────────────
+const UNITS = ["TON","CY","LF","EA","LB","GAL","QT","SF","BX","CS","RL","SET","PR","KIT","OTH"];
+
+const COMMODITY_GROUPS = [
+  "AGGREGATE","ASPHALT","COLD PATCH","CULVERTS","FILTERS","FLUIDS",
+  "HARDWARE","PARTS","SAFETY","SIGNS","SMALL TOOLS","OTHER",
 ];
 
-const ITEM_TYPES = [
-  { value: "material",       label: "Material / Supply",  emoji: "📦", tiIcon: "box",        color: "#1a3a5c" },
-  { value: "part",           label: "Part (cross-ref)",   emoji: "⚙️",  tiIcon: "settings-2", color: "#6b3a1a" },
-  { value: "tool",           label: "Small Tool",         emoji: "🔧", tiIcon: "tool",        color: "#1a6b35" },
-  { value: "assigned_asset", label: "Assigned Asset",     emoji: "🔌", tiIcon: "plug",        color: "#5a1a8a" },
+const HAUL_TYPES = [
+  { value:"county_pickup",        label:"County Pickup" },
+  { value:"contractor_delivery",  label:"Contractor Delivery" },
 ];
 
-const UNITS = ["EA","PR","BX","CS","GAL","QT","LB","TON","CY","LF","SF","RL","SET","KIT","OTH"];
-
-const TX_TYPES = [
-  { value: "receive",  label: "Receive",  color: "#1a6b35" },
-  { value: "issue",    label: "Issue",    color: "#6b3a1a" },
-  { value: "transfer", label: "Transfer", color: "#1a3a5c" },
-  { value: "adjust",   label: "Adjust",   color: "#5a1a8a" },
+const DEST_TYPES = [
+  { value:"wanda_stockpile",         label:"Wanda Stockpile" },
+  { value:"adams_central_stockpile", label:"Adams Central Stockpile" },
+  { value:"road_segment",            label:"Road Segment (direct)" },
 ];
 
-// ── Inventory Module ──────────────────────────────────────────────────────────
+// ── FIFO Helpers ──────────────────────────────────────────────────────────────
+// Total quantity on hand for an item at a specific location (or all locations)
+function getOnHand(itemId, batches, location = null) {
+  return batches
+    .filter(b => b.itemId === itemId && b.status === "open" && (location === null || b.location === location))
+    .reduce((s, b) => s + (b.quantityRemaining || 0), 0);
+}
+
+// Total inventory value for an item (FIFO remaining batches)
+function getItemValue(itemId, batches) {
+  return batches
+    .filter(b => b.itemId === itemId && b.status === "open")
+    .reduce((s, b) => s + (b.quantityRemaining || 0) * (b.unitCost || 0), 0);
+}
+
+// Build FIFO batch lines for issuing qty units from a location
+// Returns { batchLines, totalCost, canFulfill }
+function buildFIFOLines(itemId, location, qtyNeeded, batches) {
+  const open = batches
+    .filter(b => b.itemId === itemId && b.status === "open" && (location === "all" || b.location === location))
+    .sort((a, b) => a.receiptDate.localeCompare(b.receiptDate)); // oldest first
+
+  let remaining = qtyNeeded;
+  const batchLines = [];
+  let totalCost = 0;
+
+  for (const batch of open) {
+    if (remaining <= 0) break;
+    const take = Math.min(remaining, batch.quantityRemaining || 0);
+    if (take <= 0) continue;
+    batchLines.push({
+      batchId:   batch.id,
+      batchRef:  `${batch.receiptDate} — ${batch.vendorName || ""}`,
+      itemId:    batch.itemId,
+      itemName:  batch.itemName || "",
+      quantity:  take,
+      unitCost:  batch.unitCost || 0,
+      totalCost: take * (batch.unitCost || 0),
+    });
+    totalCost += take * (batch.unitCost || 0);
+    remaining -= take;
+  }
+
+  return { batchLines, totalCost, canFulfill: remaining <= 0 };
+}
+
+function fmtDate(str) {
+  if (!str) return "—";
+  const [y, m, d] = str.split("-");
+  return d && m && y ? `${m}/${d}/${y}` : str;
+}
+
+// ── Module Shell ──────────────────────────────────────────────────────────────
 export default function Inventory({ db, dispatch }) {
   const [view, setView] = useState("dashboard");
+
+  const tabs = [
+    { id:"dashboard",   label:"Dashboard",         icon:"layout-dashboard" },
+    { id:"items",       label:"Items",              icon:"package" },
+    { id:"receive",     label:"Receive",            icon:"truck-delivery" },
+    { id:"scaletix",    label:"Scale Ticket",       icon:"clipboard-text" },
+    { id:"issue",       label:"Issue to Project",   icon:"arrow-bar-right" },
+    { id:"transfer",    label:"Transfer",           icon:"arrows-exchange" },
+    { id:"adjust",      label:"Adjust",             icon:"adjustments-horizontal" },
+    { id:"crosswalk",   label:"Crosswalk",          icon:"database-import" },
+  ];
 
   return (
     <div>
       <div style={{ display:"flex", gap:2, marginBottom:24, borderBottom:"1px solid #ddd" }}>
-        {[
-          { id:"dashboard",  label:"Dashboard" },
-          { id:"items",      label:"All Items" },
-          { id:"addItem",    label:"Add Item" },
-          { id:"transaction",label:"Issue / Receive" },
-          { id:"locations",  label:"Locations & Shelves" },
-          { id:"lowstock",   label:"Low Stock" },
-        ].map(v => (
+        {tabs.map(v => (
           <button key={v.id} onClick={() => setView(v.id)} style={{
-            background:"transparent", border:"none", padding:"8px 16px 10px",
+            background:"transparent", border:"none", padding:"8px 14px 10px",
             fontWeight: view===v.id ? 700 : 400, fontSize:13, cursor:"pointer",
             color: view===v.id ? "#1a5a3a" : "#666",
             borderBottom: view===v.id ? "2px solid #1a5a3a" : "2px solid transparent",
-            marginBottom:-1,
-          }}>{v.label}</button>
+            marginBottom:-1, display:"inline-flex", alignItems:"center", gap:6,
+          }}>
+            <Icon name={v.icon} size={13} color={view===v.id?"#1a5a3a":"#888"} />
+            {v.label}
+          </button>
         ))}
       </div>
-
-      {view==="dashboard"   && <InvDashboard db={db} setView={setView} />}
-      {view==="items"       && <ItemList db={db} dispatch={dispatch} />}
-      {view==="addItem"     && <AddItemForm db={db} dispatch={dispatch} onDone={() => setView("items")} />}
-      {view==="transaction" && <TransactionForm db={db} dispatch={dispatch} onDone={() => setView("items")} />}
-      {view==="locations"   && <Locations db={db} dispatch={dispatch} />}
-      {view==="lowstock"    && <LowStock db={db} />}
+      {view==="dashboard" && <InvDashboard  db={db} setView={setView} />}
+      {view==="items"     && <ItemList      db={db} dispatch={dispatch} />}
+      {view==="receive"   && <ReceiveForm   db={db} dispatch={dispatch} onDone={() => setView("dashboard")} />}
+      {view==="scaletix"  && <ScaleTicket   db={db} dispatch={dispatch} onDone={() => setView("dashboard")} />}
+      {view==="issue"     && <IssueForm     db={db} dispatch={dispatch} onDone={() => setView("dashboard")} />}
+      {view==="transfer"  && <TransferForm  db={db} dispatch={dispatch} onDone={() => setView("dashboard")} />}
+      {view==="adjust"    && <AdjustForm    db={db} dispatch={dispatch} onDone={() => setView("dashboard")} />}
+      {view==="crosswalk" && <CrosswalkForm db={db} dispatch={dispatch} onDone={() => setView("items")} />}
     </div>
   );
 }
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 function InvDashboard({ db, setView }) {
-  const items = db.inventoryItems || [];
+  const items   = db.inventoryItems    || [];
+  const batches = db.inventoryBatches  || [];
+  const txs     = db.inventoryTransactions || [];
 
-  const totalItems    = items.length;
-  const lowStock      = items.filter(i => i.reorderPoint > 0 && totalOnHand(i) <= i.reorderPoint && totalOnHand(i) > 0);
-  const outOfStock    = items.filter(i => totalOnHand(i) === 0);
-  const totalValue    = items.reduce((s,i) => s + (totalOnHand(i) * (i.unitCost||0)), 0);
-  const partsCount    = items.filter(i => i.type==="part").length;
+  const totalValue = useMemo(() =>
+    items.reduce((s, i) => s + getItemValue(i.id, batches), 0)
+  , [items, batches]);
 
-  const recentTx = [...(db.inventoryTransactions||[])].sort((a,b) => new Date(b.date)-new Date(a.date)).slice(0,8);
+  const pendingReconcile = batches.filter(b => b.invoiceStatus === "pending_reconciliation").length;
+  const recentTx = [...txs].sort((a,b) => (b.createdAt||"").localeCompare(a.createdAt||"")).slice(0, 12);
+
+  // Group items by commodity group
+  const byGroup = useMemo(() => {
+    const map = {};
+    items.forEach(i => {
+      const g = i.commodityGroup || "OTHER";
+      if (!map[g]) map[g] = { count:0, value:0 };
+      map[g].count++;
+      map[g].value += getItemValue(i.id, batches);
+    });
+    return Object.entries(map).sort((a,b) => b[1].value - a[1].value);
+  }, [items, batches]);
 
   return (
     <div>
       <div style={{ marginBottom:20 }}>
         <div style={{ fontSize:18, fontWeight:700, color:"#1a1a1a" }}>Inventory</div>
-        <div style={{ fontSize:13, color:"#888", marginTop:3 }}>Materials · Parts · Tools · Assigned Assets · {DEFAULT_LOCATIONS.length} locations</div>
+        <div style={{ fontSize:13, color:"#888", marginTop:3 }}>FIFO costing · stock enters via receipt or crosswalk · issues to projects update cost accounting</div>
       </div>
 
-      {/* KPIs */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12, marginBottom:20 }}>
-        {[
-          { label:"Total Items",     value:totalItems,       sub:"In inventory",          accent:"#1a5a3a", icon:"package" },
-          { label:"Parts (Cross-ref)",value:partsCount,      sub:"Multi-machine parts",   accent:"#6b3a1a", icon:"settings-2" },
-          { label:"Low Stock",       value:lowStock.length,  sub:"At or below reorder",   accent:"#d97706", icon:"alert-triangle" },
-          { label:"Out of Stock",    value:outOfStock.length,sub:"Zero on hand",           accent:"#c0392b", icon:"circle-x" },
-          { label:"Est. Value",      value:fmt(totalValue),  sub:"At cost",               accent:"#1a3a5c", icon:"coin" },
-        ].map((k,i) => (
-          <div key={i} style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:"16px 18px", borderTop:`3px solid ${k.accent}` }}>
-            <div style={{ fontSize:11, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", color:"#888", marginBottom:6 }}>{k.label}</div>
-            <div style={{ fontSize:22, fontWeight:700, fontFamily:"monospace", color: k.accent }}>{k.value}</div>
-            <div style={{ fontSize:12, color:"#888", marginTop:4 }}>{k.sub}</div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:20 }}>
+        <KPICard label="Active Items"         value={items.filter(i=>i.active!==false).length} sub="In catalog"         accent="#1a5a3a" icon="package" />
+        <KPICard label="Est. Inventory Value" value={fmt(totalValue)}                           sub="FIFO remaining"    accent="#1a3a5c" icon="building-bank" />
+        <KPICard label="Open Batches"         value={batches.filter(b=>b.status==="open").length} sub="Across all locations" accent="#5a1a8a" icon="stack-2" />
+        <KPICard label="Pending Reconcile"    value={pendingReconcile}                          sub="Scale tickets"    accent={pendingReconcile>0?"#d97706":"#888"} icon="clock" />
+      </div>
+
+      {pendingReconcile > 0 && (
+        <div style={{ background:"#fef3cd", border:"1px solid #f0d080", borderRadius:8, padding:"12px 18px", marginBottom:16, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <div style={{ fontSize:13, color:"#7a4f00", fontWeight:600 }}>
+            ⚠️ {pendingReconcile} scale ticket batch{pendingReconcile!==1?"es":""} pending invoice reconciliation
           </div>
-        ))}
-      </div>
-
-      {/* Alerts */}
-      {(lowStock.length > 0 || outOfStock.length > 0) && (
-        <div style={{ marginBottom:20 }}>
-          {outOfStock.length > 0 && (
-            <div style={{ background:"#fdecea", border:"1px solid #f5c6c6", borderRadius:8, padding:"12px 18px", marginBottom:10, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-              <div style={{ fontSize:13, color:"#8c1b18", fontWeight:600 }}>🔴 {outOfStock.length} item{outOfStock.length!==1?"s":""} out of stock: {outOfStock.slice(0,3).map(i=>i.name).join(", ")}{outOfStock.length>3?"…":""}</div>
-              <button onClick={() => setView("lowstock")} style={{ ...btn.small, background:"#c0392b", fontSize:11 }}>View All</button>
-            </div>
-          )}
-          {lowStock.length > 0 && (
-            <div style={{ background:"#fef3cd", border:"1px solid #f0d080", borderRadius:8, padding:"12px 18px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-              <div style={{ fontSize:13, color:"#7a4f00", fontWeight:600 }}>⚠️ {lowStock.length} item{lowStock.length!==1?"s":""} low: {lowStock.slice(0,3).map(i=>i.name).join(", ")}{lowStock.length>3?"…":""}</div>
-              <button onClick={() => setView("lowstock")} style={{ ...btn.small, background:"#d97706", fontSize:11 }}>View All</button>
-            </div>
-          )}
+          <button onClick={()=>setView("scaletix")} style={{ ...btn.small, background:"#d97706", fontSize:11 }}>Review</button>
         </div>
       )}
 
-      {/* Items by type */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:20 }}>
-        {ITEM_TYPES.map(type => {
-          const typeItems = items.filter(i => i.type===type.value);
-          const low = typeItems.filter(i => i.reorderPoint>0 && totalOnHand(i)<=i.reorderPoint);
-          return (
-            <div key={type.value} style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:16, borderLeft:`4px solid ${type.color}` }}>
-              <div style={{ fontSize:20, marginBottom:6 }}>{type.icon}</div>
-              <div style={{ fontSize:13, fontWeight:700, color:"#1a1a1a" }}>{type.label}</div>
-              <div style={{ fontSize:22, fontWeight:700, fontFamily:"monospace", color:type.color, margin:"6px 0 2px" }}>{typeItems.length}</div>
-              {low.length > 0 && <div style={{ fontSize:11, color:"#d97706", fontWeight:600 }}>⚠️ {low.length} low stock</div>}
-            </div>
-          );
-        })}
-      </div>
+      {/* By commodity group */}
+      {byGroup.length > 0 && (
+        <SectionCard title="Stock by Commodity Group" style={{ marginBottom:20 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, padding:16 }}>
+            {byGroup.map(([group, data]) => (
+              <div key={group} style={{ background:"#fafaf8", border:"1px solid #eee", borderRadius:6, padding:12 }}>
+                <div style={{ fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em", color:"#888", marginBottom:4 }}>{group}</div>
+                <div style={{ fontSize:18, fontWeight:700, fontFamily:"monospace", color:"#1a5a3a" }}>{data.count}</div>
+                <div style={{ fontSize:11, color:"#aaa" }}>{fmtSm(data.value)}</div>
+              </div>
+            ))}
+          </div>
+        </SectionCard>
+      )}
 
       {/* Recent transactions */}
-      <SectionCard title="Recent Transactions" subtitle={`${(db.inventoryTransactions||[]).length} total`} icon="arrows-transfer-up">
+      <SectionCard title="Recent Transactions" subtitle={`${txs.length} total`}>
         <Table
-          headers={[{ label:"Date" },{ label:"Type" },{ label:"Item" },{ label:"Location" },{ label:"Shelf" },{ label:"Qty", right:true },{ label:"Reference" }]}
-          rows={recentTx.map(tx => {
-            const item = items.find(i=>i.id===tx.itemId);
-            const txType = TX_TYPES.find(t=>t.value===tx.type);
-            return [
-              <span style={{ fontFamily:"monospace", fontSize:12 }}>{tx.date}</span>,
-              <span style={{ background:txType?.color+"18", color:txType?.color, padding:"2px 7px", borderRadius:4, fontSize:11, fontWeight:600 }}>{txType?.label||tx.type}</span>,
-              <span style={{ fontWeight:600 }}>{item?.name||"Unknown"}</span>,
-              tx.location||"—",
-              <span style={{ fontFamily:"monospace", fontSize:12 }}>{tx.shelf||"—"}</span>,
-              <span style={{ fontFamily:"monospace", fontWeight:700, color: tx.type==="receive"?"#1a6b35": tx.type==="issue"?"#c0392b":"#1a3a5c" }}>
-                {tx.type==="receive"?"+":tx.type==="issue"?"-":""}{tx.quantity}
-              </span>,
-              <span style={{ fontSize:12, color:"#888" }}>{tx.reference||"—"}</span>,
-            ];
-          })}
-          emptyMessage="No transactions yet — use Issue / Receive to log inventory movement"
+          headers={[{ label:"Date" },{ label:"Type" },{ label:"Item" },{ label:"Qty" },{ label:"Location" },{ label:"Reference" }]}
+          rows={recentTx.map(t => [
+            <span style={{ fontFamily:"monospace", fontSize:12 }}>{fmtDate(t.date)}</span>,
+            <span style={{ background:"#f0f0ee", padding:"2px 7px", borderRadius:4, fontSize:11, fontWeight:600, textTransform:"capitalize" }}>{(t.type||"").replace(/_/g," ")}</span>,
+            <span style={{ fontWeight:600 }}>{t.itemName||"—"}</span>,
+            <span style={{ fontFamily:"monospace", fontWeight:600, color:t.type==="issue"?"#c0392b":t.type==="receive"||t.type==="crosswalk"?"#1a6b35":"#555" }}>
+              {t.type==="issue"?"-":t.type==="receive"||t.type==="crosswalk"?"+":""}{t.quantity||0}
+            </span>,
+            t.location||"—",
+            <span style={{ fontSize:12, color:"#888" }}>{t.referenceNumber||t.invoiceNumber||t.ticketNumber||"—"}</span>,
+          ])}
+          emptyMessage="No transactions yet — use Receive or Crosswalk to add stock"
         />
       </SectionCard>
     </div>
   );
 }
 
-// ── Helper: total on hand across all locations ────────────────────────────────
-function totalOnHand(item) {
-  return Object.values(item.locationStock||{}).reduce((s,v)=>s+v,0);
-}
-
-// ── Item List ─────────────────────────────────────────────────────────────────
+// ── Item List / Catalog ───────────────────────────────────────────────────────
 function ItemList({ db, dispatch }) {
-  const [search, setSearch]     = useState("");
-  const [typeFilter, setType]   = useState("all");
-  const [locFilter, setLoc]     = useState("all");
-  const [selected, setSelected] = useState(null);
-  const items = db.inventoryItems || [];
+  const [search, setSearch]       = useState("");
+  const [groupFilter, setGroupFilter] = useState("all");
+  const [editing, setEditing]     = useState(null);
+  const [showForm, setShowForm]   = useState(false);
+
+  const items   = db.inventoryItems   || [];
+  const batches = db.inventoryBatches || [];
+  const locations = db.storageLocations || [];
 
   const filtered = items.filter(i => {
-    if (typeFilter !== "all" && i.type !== typeFilter) return false;
-    if (locFilter !== "all" && !i.locationStock?.[locFilter]) return false;
-    if (search && !`${i.name} ${i.partNumber||""} ${i.description||""} ${(i.machineRefs||[]).join(" ")}`.toLowerCase().includes(search.toLowerCase())) return false;
+    if (groupFilter !== "all" && i.commodityGroup !== groupFilter) return false;
+    if (search && !`${i.name} ${i.legacyNumber} ${i.description}`.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
 
-  if (selected) {
-    return <ItemDetail item={selected} db={db} dispatch={dispatch} onBack={() => setSelected(null)} />;
+  if (showForm || editing) {
+    return (
+      <ItemForm
+        item={editing}
+        locations={locations}
+        onSave={payload => {
+          dispatch({ type: editing ? "UPDATE_INVENTORY_ITEM" : "ADD_INVENTORY_ITEM", payload });
+          setEditing(null); setShowForm(false);
+        }}
+        onCancel={() => { setEditing(null); setShowForm(false); }}
+      />
+    );
   }
 
   return (
     <div>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20, flexWrap:"wrap", gap:12 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", marginBottom:16, flexWrap:"wrap", gap:12 }}>
         <div>
-          <div style={{ fontSize:18, fontWeight:700, color:"#1a1a1a" }}>All Items ({filtered.length})</div>
-          <div style={{ fontSize:13, color:"#888", marginTop:3 }}>Click an item to view details, transactions, and machine cross-references</div>
+          <div style={{ fontSize:18, fontWeight:700 }}>Item Catalog</div>
+          <div style={{ fontSize:13, color:"#888", marginTop:2 }}>{items.length} items · FIFO cost tracking</div>
         </div>
-        <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name, part #, machine…" style={{ ...inp, width:220, margin:0 }} />
-          <div style={{ display:"flex", border:"1px solid #ccc", borderRadius:6, overflow:"hidden" }}>
-            {["all",...ITEM_TYPES.map(t=>t.value)].map(t => {
-              const type = ITEM_TYPES.find(x=>x.value===t);
+        <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name, legacy #…" style={{ ...inp, width:220, margin:0 }} />
+          <select value={groupFilter} onChange={e=>setGroupFilter(e.target.value)} style={{ ...inp, margin:0 }}>
+            <option value="all">All Groups</option>
+            {COMMODITY_GROUPS.map(g=><option key={g} value={g}>{g}</option>)}
+          </select>
+          <button onClick={()=>setShowForm(true)} style={btn.primary}>+ New Item</button>
+        </div>
+      </div>
+
+      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, overflow:"hidden" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+          <thead>
+            <tr style={{ background:"#f7f7f5" }}>
+              {["Inv #","Name","Group","Unit","Location","On Hand","FIFO Value","Actions"].map(h=>(
+                <th key={h} style={{ padding:"9px 14px", textAlign:["On Hand","FIFO Value"].includes(h)?"right":"left", fontWeight:600, fontSize:11, textTransform:"uppercase", letterSpacing:"0.05em", color:"#666", borderBottom:"1px solid #eee", whiteSpace:"nowrap" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length===0 && (
+              <tr><td colSpan={8} style={{ padding:32, textAlign:"center", color:"#aaa", fontSize:13 }}>
+                {items.length===0?"No items yet — click New Item to start.":"No items match your filter."}
+              </td></tr>
+            )}
+            {filtered.map((item,i) => {
+              const onHand = getOnHand(item.id, batches);
+              const value  = getItemValue(item.id, batches);
               return (
-                <button key={t} onClick={()=>setType(t)} style={{ padding:"7px 10px", fontSize:11, fontWeight:600, border:"none", cursor:"pointer", background: typeFilter===t?"#1a5a3a":"#fff", color: typeFilter===t?"#fff":"#555", textTransform:"capitalize" }}>
-                  {type ? type.icon+" "+type.label.split(" ")[0] : "All"}
-                </button>
+                <tr key={item.id} style={{ borderTop:"1px solid #eee", background:i%2===0?"#fff":"#fafaf8", opacity:item.active===false?0.45:1 }}>
+                  <td style={{ padding:"10px 14px", fontFamily:"monospace", fontSize:12, color:"#888" }}>{item.legacyNumber||"—"}</td>
+                  <td style={{ padding:"10px 14px", fontWeight:600, color:"#1a1a1a" }}>
+                    {item.name}
+                    {item.description && <div style={{ fontSize:11, color:"#888", fontWeight:400 }}>{item.description}</div>}
+                  </td>
+                  <td style={{ padding:"10px 14px", fontSize:12 }}>{item.commodityGroup||"—"}</td>
+                  <td style={{ padding:"10px 14px", fontFamily:"monospace", fontSize:12 }}>{item.unitOfMeasure||"—"}</td>
+                  <td style={{ padding:"10px 14px", fontSize:12, color:"#888" }}>{item.location||"—"}</td>
+                  <td style={{ padding:"10px 14px", textAlign:"right", fontFamily:"monospace", fontWeight:700, color:onHand===0?"#c0392b":onHand<=2?"#d97706":"#1a1a1a" }}>{onHand}</td>
+                  <td style={{ padding:"10px 14px", textAlign:"right", fontFamily:"monospace" }}>{value>0?fmtSm(value):"—"}</td>
+                  <td style={{ padding:"10px 14px" }}>
+                    <div style={{ display:"flex", gap:4 }}>
+                      <button onClick={()=>setEditing(item)} style={{ ...btn.small, background:"#1a3a5c", fontSize:10, padding:"4px 10px" }}>Edit</button>
+                      {item.active!==false
+                        ? <button onClick={()=>dispatch({ type:"DELETE_INVENTORY_ITEM", payload:item.id })} style={{ ...btn.small, background:"#c0392b", fontSize:10, padding:"4px 10px" }}>Deactivate</button>
+                        : <span style={{ fontSize:11, color:"#aaa" }}>Inactive</span>
+                      }
+                    </div>
+                  </td>
+                </tr>
               );
             })}
-          </div>
-        </div>
+          </tbody>
+        </table>
       </div>
-
-      <SectionCard title={`Items (${filtered.length})`}>
-        <Table
-          headers={[
-            { label:"Type" },{ label:"Name" },{ label:"Part #" },
-            { label:"Location / Shelf" },{ label:"On Hand", right:true },
-            { label:"Unit" },{ label:"Reorder At", right:true },
-            { label:"Est. Value", right:true },{ label:"Status" },
-          ]}
-          rows={filtered.map(item => {
-            const onHand   = totalOnHand(item);
-            const type     = ITEM_TYPES.find(t=>t.value===item.type);
-            const isLow    = item.reorderPoint>0 && onHand<=item.reorderPoint && onHand>0;
-            const isOut    = onHand===0;
-            const locSummary = Object.entries(item.locationStock||{})
-              .filter(([,q])=>q>0)
-              .map(([loc,q])=>{
-                const l = DEFAULT_LOCATIONS.find(x=>x.id===loc);
-                return `${l?.name||loc} (${q})`;
-              }).join(", ");
-            return [
-              <span style={{ fontSize:16 }}>{type?.icon}</span>,
-              <button onClick={()=>setSelected(item)} style={{ background:"none", border:"none", padding:0, color:"#1a3a5c", fontWeight:600, fontSize:13, cursor:"pointer", textAlign:"left" }}>{item.name}</button>,
-              <span style={{ fontFamily:"monospace", fontSize:12, color:"#888" }}>{item.partNumber||"—"}</span>,
-              <div>
-                <div style={{ fontSize:12, color:"#555" }}>{locSummary||"—"}</div>
-                {item.shelf && <div style={{ fontSize:11, color:"#888", fontFamily:"monospace" }}>Shelf {item.shelf}</div>}
-              </div>,
-              <span style={{ fontFamily:"monospace", fontWeight:700, color: isOut?"#c0392b":isLow?"#d97706":"#1a6b35", fontSize:15 }}>{onHand}</span>,
-              <span style={{ fontSize:12, color:"#888" }}>{item.unit||"—"}</span>,
-              <span style={{ fontFamily:"monospace", fontSize:12, color:"#888" }}>{item.reorderPoint||"—"}</span>,
-              <span style={{ fontFamily:"monospace", fontSize:12 }}>{item.unitCost>0?fmtSm(onHand*item.unitCost):"—"}</span>,
-              isOut ? <span style={{ background:"#fdecea", color:"#c0392b", padding:"2px 7px", borderRadius:4, fontSize:11, fontWeight:600 }}>Out of Stock</span>
-                : isLow ? <span style={{ background:"#fef3cd", color:"#7a4f00", padding:"2px 7px", borderRadius:4, fontSize:11, fontWeight:600 }}>Low Stock</span>
-                : <span style={{ background:"#e6f4ec", color:"#1a6b35", padding:"2px 7px", borderRadius:4, fontSize:11, fontWeight:600 }}>In Stock</span>,
-            ];
-          })}
-          emptyMessage="No items yet — click Add Item to get started"
-        />
-      </SectionCard>
     </div>
   );
 }
 
-// ── Item Detail ───────────────────────────────────────────────────────────────
-function ItemDetail({ item, db, dispatch, onBack }) {
-  const txHistory = (db.inventoryTransactions||[]).filter(t=>t.itemId===item.id).sort((a,b)=>new Date(b.date)-new Date(a.date));
-  const onHand    = totalOnHand(item);
-  const type      = ITEM_TYPES.find(t=>t.value===item.type);
-  const isLow     = item.reorderPoint>0 && onHand<=item.reorderPoint && onHand>0;
-  const isOut     = onHand===0;
+// ── Item Form (New / Edit) ────────────────────────────────────────────────────
+function ItemForm({ item, locations, onSave, onCancel }) {
+  const [form, setForm] = useState({
+    id:            item?.id            || `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+    legacyNumber:  item?.legacyNumber  || "",
+    name:          item?.name          || "",
+    description:   item?.description   || "",
+    commodityGroup:item?.commodityGroup || "",
+    glAccountCode: item?.glAccountCode || "",
+    unitOfMeasure: item?.unitOfMeasure || "EA",
+    location:      item?.location      || "",
+    shelfLocation: item?.shelfLocation || "",
+    fitsEquipment: item?.fitsEquipment || [],
+    standardCost:  item?.standardCost  || 0,
+    primaryVendor: item?.primaryVendor || "",
+    receivingMode: item?.receivingMode || "standard",
+    active:        item?.active !== false,
+    notes:         item?.notes         || "",
+    createdAt:     item?.createdAt     || new Date().toISOString(),
+  });
+  const set = (k,v) => setForm(f=>({ ...f,[k]:v }));
 
   return (
-    <div>
-      <button onClick={onBack} style={{ ...btn.ghost, marginBottom:20, fontSize:12, padding:"6px 14px" }}>← Back to items</button>
-
-      {/* Header */}
-      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:12 }}>
-          <div>
-            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:6 }}>
-              <span style={{ fontSize:24 }}>{type?.icon}</span>
-              <span style={{ fontSize:11, background:type?.color+"18", color:type?.color, padding:"2px 8px", borderRadius:4, fontWeight:600 }}>{type?.label}</span>
-              {item.partNumber && <span style={{ fontFamily:"monospace", fontSize:12, color:"#888", background:"#f0f0ee", padding:"2px 8px", borderRadius:4 }}>{item.partNumber}</span>}
-            </div>
-            <div style={{ fontSize:20, fontWeight:700, color:"#1a1a1a" }}>{item.name}</div>
-            {item.description && <div style={{ fontSize:13, color:"#555", marginTop:3 }}>{item.description}</div>}
-          </div>
-          <div style={{ textAlign:"right" }}>
-            <div style={{ fontSize:32, fontWeight:700, fontFamily:"monospace", color: isOut?"#c0392b":isLow?"#d97706":"#1a6b35" }}>{onHand}</div>
-            <div style={{ fontSize:12, color:"#888" }}>{item.unit} on hand</div>
-            {isOut && <div style={{ fontSize:12, color:"#c0392b", fontWeight:600 }}>OUT OF STOCK</div>}
-            {isLow && !isOut && <div style={{ fontSize:12, color:"#d97706", fontWeight:600 }}>LOW STOCK — reorder at {item.reorderPoint}</div>}
-          </div>
-        </div>
-
-        {/* Details grid */}
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14, marginTop:18 }}>
-          <div><div style={{ fontSize:11, color:"#888", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em" }}>Account Code</div><div style={{ fontSize:13, fontFamily:"monospace", color:"#1a3a5c", fontWeight:600, marginTop:3 }}>{item.accountCode||"—"}</div></div>
-          <div><div style={{ fontSize:11, color:"#888", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em" }}>Unit Cost</div><div style={{ fontSize:13, fontFamily:"monospace", marginTop:3 }}>{item.unitCost>0?fmtSm(item.unitCost):"—"}</div></div>
-          <div><div style={{ fontSize:11, color:"#888", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em" }}>Primary Vendor</div><div style={{ fontSize:13, marginTop:3 }}>{item.vendor||"—"}</div></div>
-          <div><div style={{ fontSize:11, color:"#888", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em" }}>Reorder Point</div><div style={{ fontSize:13, fontFamily:"monospace", marginTop:3 }}>{item.reorderPoint||"—"} {item.unit}</div></div>
-        </div>
-
-        {/* Location stock */}
-        {Object.keys(item.locationStock||{}).length > 0 && (
-          <div style={{ marginTop:16 }}>
-            <div style={{ fontSize:11, color:"#888", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:8 }}>Stock by Location</div>
-            <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
-              {Object.entries(item.locationStock||{}).map(([locId,qty]) => {
-                const loc = DEFAULT_LOCATIONS.find(l=>l.id===locId);
-                return (
-                  <div key={locId} style={{ background:"#f7f7f5", borderRadius:6, padding:"8px 14px", border:"1px solid #eee" }}>
-                    <div style={{ fontSize:11, color:"#888" }}>{loc?.name||locId}</div>
-                    <div style={{ fontSize:16, fontWeight:700, fontFamily:"monospace", color:"#1a5a3a" }}>{qty} <span style={{ fontSize:11, fontWeight:400 }}>{item.unit}</span></div>
-                    {item.shelf && <div style={{ fontSize:11, color:"#888", fontFamily:"monospace" }}>Shelf {item.shelf}</div>}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Machine cross-references */}
-        {item.type==="part" && (item.machineRefs||[]).length > 0 && (
-          <div style={{ marginTop:16 }}>
-            <div style={{ fontSize:11, color:"#888", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:8 }}>Compatible Equipment</div>
-            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-              {(item.machineRefs||[]).map((ref,i) => (
-                <span key={i} style={{ background:"#e8f0fb", color:"#1a4a8a", padding:"4px 12px", borderRadius:16, fontSize:12, fontWeight:600 }}>🚛 {ref}</span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Assigned asset location */}
-        {item.type==="assigned_asset" && item.assignedTo && (
-          <div style={{ marginTop:16, background:"#f3e8ff", borderRadius:6, padding:"10px 14px" }}>
-            <div style={{ fontSize:11, color:"#5a1a8a", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em" }}>Permanently Assigned To</div>
-            <div style={{ fontSize:14, fontWeight:700, color:"#5a1a8a", marginTop:3 }}>{item.assignedTo}</div>
-          </div>
-        )}
+    <div style={{ maxWidth:700 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:20 }}>
+        <button onClick={onCancel} style={{ ...btn.ghost, fontSize:12, padding:"6px 14px" }}>← Cancel</button>
+        <div style={{ fontSize:18, fontWeight:700 }}>{item?"Edit Item":"New Inventory Item"}</div>
       </div>
 
-      {/* Transaction history */}
-      <SectionCard title="Transaction History" subtitle={`${txHistory.length} transactions`}>
-        <Table
-          headers={[{ label:"Date" },{ label:"Type" },{ label:"Qty", right:true },{ label:"Location" },{ label:"Shelf" },{ label:"Project / Job" },{ label:"Reference" },{ label:"Notes" }]}
-          rows={txHistory.map(tx => {
-            const txType = TX_TYPES.find(t=>t.value===tx.type);
-            const loc    = DEFAULT_LOCATIONS.find(l=>l.id===tx.location);
-            return [
-              <span style={{ fontFamily:"monospace", fontSize:12 }}>{tx.date}</span>,
-              <span style={{ background:txType?.color+"18", color:txType?.color, padding:"2px 7px", borderRadius:4, fontSize:11, fontWeight:600 }}>{txType?.label}</span>,
-              <span style={{ fontFamily:"monospace", fontWeight:700, color: tx.type==="receive"?"#1a6b35":tx.type==="issue"?"#c0392b":"#1a3a5c" }}>
-                {tx.type==="receive"?"+":tx.type==="issue"?"-":""}{tx.quantity}
-              </span>,
-              loc?.name||tx.location||"—",
-              <span style={{ fontFamily:"monospace", fontSize:12 }}>{tx.shelf||"—"}</span>,
-              <span style={{ fontSize:12, color:"#555" }}>{tx.projectRef||"—"}</span>,
-              <span style={{ fontFamily:"monospace", fontSize:12, color:"#888" }}>{tx.reference||"—"}</span>,
-              <span style={{ fontSize:12, color:"#888" }}>{tx.notes||"—"}</span>,
-            ];
-          })}
-          emptyMessage="No transactions recorded for this item"
-        />
-      </SectionCard>
-    </div>
-  );
-}
-
-// ── Add Item Form ─────────────────────────────────────────────────────────────
-function AddItemForm({ db, dispatch, onDone }) {
-  const empty = {
-    name:"", type:"material", partNumber:"", description:"",
-    accountCode:"", unit:"EA", unitCost:"", reorderPoint:"",
-    vendor:"", shelf:"", assignedTo:"",
-    machineRefs:[], locationStock:{},
-  };
-  const [form, setForm]         = useState(empty);
-  const [machineInput, setMachineInput] = useState("");
-  const [saved, setSaved]       = useState(false);
-  const set = (k,v) => setForm(f => ({ ...f, [k]:v }));
-
-  const addMachineRef = () => {
-    if (!machineInput.trim()) return;
-    set("machineRefs", [...(form.machineRefs||[]), machineInput.trim()]);
-    setMachineInput("");
-  };
-
-  const removeMachineRef = (ref) => set("machineRefs", form.machineRefs.filter(r=>r!==ref));
-
-  const setLocationQty = (locId, qty) => set("locationStock", { ...form.locationStock, [locId]: parseInt(qty)||0 });
-
-  const matCodes = EXPENDITURE_CODES.filter(c => ["materials","equipment","other"].includes(c.category));
-
-  const handleSubmit = () => {
-    if (!form.name || !form.type) return;
-    dispatch({
-      type:"ADD_INVENTORY_ITEM",
-      payload:{ ...form, id:Date.now(), unitCost:parseFloat(form.unitCost)||0, reorderPoint:parseInt(form.reorderPoint)||0 },
-    });
-    setSaved(true);
-    setTimeout(() => { setSaved(false); onDone(); }, 1500);
-  };
-
-  return (
-    <div style={{ maxWidth:780 }}>
-      <div style={{ marginBottom:20 }}>
-        <div style={{ fontSize:18, fontWeight:700, color:"#1a1a1a" }}>Add Inventory Item</div>
-        <div style={{ fontSize:13, color:"#888", marginTop:3 }}>Materials, parts, tools, and assigned assets</div>
-      </div>
-
-      {saved && <div style={{ background:"#e6f4ec", border:"1px solid #a8d5b5", borderRadius:6, padding:"12px 16px", marginBottom:16, color:"#1a6b35", fontWeight:600, fontSize:13 }}>✓ Item added to inventory</div>}
-
-      {/* Type selector */}
       <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
-        <div style={{ fontWeight:700, fontSize:13, marginBottom:14 }}>Item Type</div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
-          {ITEM_TYPES.map(t => (
-            <button key={t.value} onClick={() => set("type",t.value)} style={{
-              background: form.type===t.value ? t.color : "#fff",
-              color: form.type===t.value ? "#fff" : "#333",
-              border: `1px solid ${form.type===t.value ? t.color : "#ddd"}`,
-              borderRadius:8, padding:"14px 10px", cursor:"pointer", textAlign:"center",
-            }}>
-              <div style={{ fontSize:22, marginBottom:6 }}>{t.icon}</div>
-              <div style={{ fontSize:12, fontWeight:600 }}>{t.label}</div>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Basic info */}
-      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
-        <div style={{ fontWeight:700, fontSize:13, marginBottom:14 }}>Item Details</div>
-        <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr", gap:16, marginBottom:16 }}>
-          <Field label="Item Name" required>
-            <input type="text" placeholder={form.type==="part"?"e.g. Oil Filter — Donaldson P551670":"e.g. 36in Concrete Culvert"} value={form.name} onChange={e=>set("name",e.target.value)} style={inp} />
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:16, marginBottom:16 }}>
+          <Field label="Legacy Inv #">
+            <input type="text" value={form.legacyNumber} onChange={e=>set("legacyNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="23-19…" />
           </Field>
-          <Field label="Part Number / SKU">
-            <input type="text" placeholder="e.g. P551670" value={form.partNumber} onChange={e=>set("partNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
+          <Field label="Item Name" required>
+            <input type="text" value={form.name} onChange={e=>set("name",e.target.value)} style={inp} placeholder="e.g. 2025 Gravel — Grade 2" />
           </Field>
         </div>
         <div style={{ marginBottom:16 }}>
           <Field label="Description">
-            <input type="text" placeholder="Additional details, specifications…" value={form.description} onChange={e=>set("description",e.target.value)} style={inp} />
+            <input type="text" value={form.description} onChange={e=>set("description",e.target.value)} style={inp} placeholder="Additional detail…" />
           </Field>
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:16, marginBottom:16 }}>
-          <Field label="Unit">
-            <select value={form.unit} onChange={e=>set("unit",e.target.value)} style={inp}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginBottom:16 }}>
+          <Field label="Commodity Group">
+            <select value={form.commodityGroup} onChange={e=>set("commodityGroup",e.target.value)} style={inp}>
+              <option value="">Select…</option>
+              {COMMODITY_GROUPS.map(g=><option key={g} value={g}>{g}</option>)}
+            </select>
+          </Field>
+          <Field label="Unit of Measure" required>
+            <select value={form.unitOfMeasure} onChange={e=>set("unitOfMeasure",e.target.value)} style={inp}>
               {UNITS.map(u=><option key={u} value={u}>{u}</option>)}
             </select>
           </Field>
-          <Field label="Unit Cost ($)">
-            <input type="number" min="0" step="0.01" placeholder="0.00" value={form.unitCost} onChange={e=>set("unitCost",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
-          </Field>
-          <Field label="Reorder Point">
-            <input type="number" min="0" step="1" placeholder="0" value={form.reorderPoint} onChange={e=>set("reorderPoint",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
-          </Field>
-          <Field label="Primary Vendor">
-            <input type="text" placeholder="Vendor name…" value={form.vendor} onChange={e=>set("vendor",e.target.value)} style={inp} />
+          <Field label="GL Account Code">
+            <input type="text" value={form.glAccountCode} onChange={e=>set("glAccountCode",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="302.xx" />
           </Field>
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
-          <Field label="Account Code">
-            <select value={form.accountCode} onChange={e=>set("accountCode",e.target.value)} style={{ ...inp, fontFamily:"monospace", fontSize:12 }}>
-              <option value="">Select account code…</option>
-              {matCodes.map(c=><option key={c.code} value={c.code}>{c.code} — {c.description}</option>)}
-            </select>
-          </Field>
-          <Field label="Default Shelf Location">
-            <input type="text" placeholder="e.g. A1, B3…" value={form.shelf} onChange={e=>set("shelf",e.target.value.toUpperCase())} style={{ ...inp, fontFamily:"monospace", textTransform:"uppercase" }} />
-          </Field>
-        </div>
-      </div>
-
-      {/* Machine cross-references — parts only */}
-      {form.type==="part" && (
-        <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
-          <div style={{ fontWeight:700, fontSize:13, marginBottom:6 }}>Compatible Equipment (Cross-Reference)</div>
-          <div style={{ fontSize:12, color:"#888", marginBottom:14 }}>Add every machine this part fits — unit number, description, or both</div>
-          <div style={{ display:"flex", gap:10, marginBottom:12 }}>
-            <input type="text" placeholder="e.g. Grader #1, Unit 142, Loader #3…" value={machineInput} onChange={e=>setMachineInput(e.target.value)}
-              onKeyDown={e=>e.key==="Enter"&&addMachineRef()} style={{ ...inp, flex:1 }} />
-            <button onClick={addMachineRef} style={{ ...btn.small, background:"#6b3a1a", padding:"9px 16px" }}>+ Add</button>
-          </div>
-          {(form.machineRefs||[]).length > 0 && (
-            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-              {form.machineRefs.map((ref,i) => (
-                <span key={i} style={{ background:"#e8f0fb", color:"#1a4a8a", padding:"5px 12px", borderRadius:16, fontSize:12, fontWeight:600, display:"flex", alignItems:"center", gap:6 }}>
-                  🚛 {ref}
-                  <button onClick={()=>removeMachineRef(ref)} style={{ background:"none", border:"none", color:"#1a4a8a", cursor:"pointer", padding:0, fontSize:14, lineHeight:1 }}>×</button>
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Assigned asset location */}
-      {form.type==="assigned_asset" && (
-        <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
-          <div style={{ fontWeight:700, fontSize:13, marginBottom:14 }}>Permanent Assignment</div>
-          <Field label="Assigned To (machine, location, or crew)">
-            <input type="text" placeholder="e.g. Grader #1, Shop Office, Crew Truck 4…" value={form.assignedTo} onChange={e=>set("assignedTo",e.target.value)} style={inp} />
-          </Field>
-        </div>
-      )}
-
-      {/* Initial stock by location */}
-      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:20 }}>
-        <div style={{ fontWeight:700, fontSize:13, marginBottom:6 }}>Initial Stock Quantity</div>
-        <div style={{ fontSize:12, color:"#888", marginBottom:14 }}>Enter current on-hand quantity per location (leave blank if none)</div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:16 }}>
-          {DEFAULT_LOCATIONS.map(loc => (
-            <Field key={loc.id} label={loc.name}>
-              <input type="number" min="0" step="1" placeholder="0"
-                value={form.locationStock?.[loc.id]||""}
-                onChange={e=>setLocationQty(loc.id,e.target.value)}
-                style={{ ...inp, fontFamily:"monospace" }} />
-            </Field>
-          ))}
-        </div>
-      </div>
-
-      <div style={{ display:"flex", gap:10 }}>
-        <button onClick={handleSubmit} style={{ ...btn.primary, background:"#1a5a3a" }}>Add to Inventory</button>
-        <button onClick={() => setForm(empty)} style={btn.ghost}>Clear</button>
-      </div>
-    </div>
-  );
-}
-
-// ── Issue / Receive / Transfer / Adjust ───────────────────────────────────────
-function TransactionForm({ db, dispatch, onDone }) {
-  const items = db.inventoryItems || [];
-  const [form, setForm] = useState({
-    type:"receive", itemId:"", date:"", quantity:"", location:"", shelf:"",
-    toLocation:"", projectRef:"", reference:"", notes:"",
-  });
-  const [saved, setSaved] = useState(false);
-  const set = (k,v) => setForm(f => ({ ...f, [k]:v }));
-
-  const selectedItem = items.find(i=>i.id===parseInt(form.itemId));
-  const onHand = selectedItem ? totalOnHand(selectedItem) : 0;
-  const locOnHand = selectedItem?.locationStock?.[form.location]||0;
-
-  const handleSubmit = () => {
-    if (!form.itemId || !form.date || !form.quantity || !form.location) return;
-    dispatch({
-      type:"ADD_INVENTORY_TRANSACTION",
-      payload:{ ...form, id:Date.now(), itemId:parseInt(form.itemId), quantity:parseInt(form.quantity)||0 },
-    });
-    setSaved(true);
-    setTimeout(() => { setSaved(false); onDone(); }, 1500);
-  };
-
-  const projects = [...(db.projects||[])].filter(p=>p.status==="active");
-
-  return (
-    <div style={{ maxWidth:700 }}>
-      <div style={{ marginBottom:20 }}>
-        <div style={{ fontSize:18, fontWeight:700, color:"#1a1a1a" }}>Issue / Receive / Transfer / Adjust</div>
-        <div style={{ fontSize:13, color:"#888", marginTop:3 }}>Log inventory movement — updates on-hand quantities automatically</div>
-      </div>
-
-      {saved && <div style={{ background:"#e6f4ec", border:"1px solid #a8d5b5", borderRadius:6, padding:"12px 16px", marginBottom:16, color:"#1a6b35", fontWeight:600, fontSize:13 }}>✓ Transaction recorded</div>}
-
-      {/* Transaction type */}
-      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
-        <div style={{ fontWeight:700, fontSize:13, marginBottom:14 }}>Transaction Type</div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10, marginBottom:16 }}>
-          {TX_TYPES.map(t => (
-            <button key={t.value} onClick={() => set("type",t.value)} style={{
-              background: form.type===t.value ? t.color : "#fff",
-              color: form.type===t.value ? "#fff" : "#333",
-              border: `1px solid ${form.type===t.value ? t.color : "#ddd"}`,
-              borderRadius:8, padding:"12px 8px", cursor:"pointer", textAlign:"center",
-              fontWeight:600, fontSize:13,
-            }}>
-              {t.label}
-              <div style={{ fontSize:10, marginTop:4, opacity:0.8 }}>
-                {t.value==="receive"?"Stock coming in":t.value==="issue"?"Stock going out":t.value==="transfer"?"Move between locations":"Quantity correction"}
-              </div>
-            </button>
-          ))}
-        </div>
-
-        {/* Item + date */}
-        <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr", gap:16, marginBottom:16 }}>
-          <Field label="Item" required>
-            <select value={form.itemId} onChange={e=>set("itemId",e.target.value)} style={inp}>
-              <option value="">Select item…</option>
-              {items.map(i=>(
-                <option key={i.id} value={i.id}>{ITEM_TYPES.find(t=>t.value===i.type)?.icon} {i.name}{i.partNumber?` (${i.partNumber})`:""} — {totalOnHand(i)} {i.unit} on hand</option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Date" required>
-            <input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} />
-          </Field>
-        </div>
-
-        {/* Selected item info */}
-        {selectedItem && (
-          <div style={{ background:"#f7f7f5", borderRadius:6, padding:"10px 14px", marginBottom:16, display:"flex", gap:20, fontSize:12 }}>
-            <span><strong>Total on hand:</strong> <span style={{ fontFamily:"monospace", fontWeight:700, color:"#1a5a3a" }}>{onHand} {selectedItem.unit}</span></span>
-            {selectedItem.partNumber && <span><strong>Part #:</strong> <span style={{ fontFamily:"monospace" }}>{selectedItem.partNumber}</span></span>}
-            {selectedItem.reorderPoint>0 && <span><strong>Reorder at:</strong> <span style={{ fontFamily:"monospace" }}>{selectedItem.reorderPoint}</span></span>}
-            {selectedItem.shelf && <span><strong>Default shelf:</strong> <span style={{ fontFamily:"monospace" }}>{selectedItem.shelf}</span></span>}
-          </div>
-        )}
-
-        {/* Location + shelf + quantity */}
-        <div style={{ display:"grid", gridTemplateColumns: form.type==="transfer" ? "1fr 1fr 1fr 1fr" : "1fr 1fr 1fr", gap:16, marginBottom:16 }}>
-          <Field label={form.type==="transfer"?"From Location":"Location"} required>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginBottom:16 }}>
+          <Field label="Usual Location">
             <select value={form.location} onChange={e=>set("location",e.target.value)} style={inp}>
-              <option value="">Select location…</option>
-              {DEFAULT_LOCATIONS.map(l=>(
-                <option key={l.id} value={l.id}>{l.name}{selectedItem?.locationStock?.[l.id]?` (${selectedItem.locationStock[l.id]} on hand)`:""}</option>
-              ))}
+              <option value="">Select…</option>
+              {(locations||[]).map(l=><option key={l.id} value={l.name}>{l.name}</option>)}
+              <option value="equipment">On Equipment Unit</option>
             </select>
           </Field>
-          {form.type==="transfer" && (
-            <Field label="To Location" required>
-              <select value={form.toLocation} onChange={e=>set("toLocation",e.target.value)} style={inp}>
-                <option value="">Select location…</option>
-                {DEFAULT_LOCATIONS.filter(l=>l.id!==form.location).map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
-              </select>
-            </Field>
-          )}
-          <Field label="Shelf">
-            <input type="text" placeholder="e.g. A1" value={form.shelf} onChange={e=>set("shelf",e.target.value.toUpperCase())} style={{ ...inp, fontFamily:"monospace", textTransform:"uppercase" }} />
+          <Field label="Shelf / Bin">
+            <input type="text" value={form.shelfLocation} onChange={e=>set("shelfLocation",e.target.value.toUpperCase())} style={{ ...inp, fontFamily:"monospace", textTransform:"uppercase" }} placeholder="A1…" />
           </Field>
-          <Field label="Quantity" required>
-            <input type="number" min="1" step="1" placeholder="0" value={form.quantity} onChange={e=>set("quantity",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
+          <Field label="Standard Cost ($/unit)">
+            <input type="number" min="0" step="0.01" value={form.standardCost} onChange={e=>set("standardCost",parseFloat(e.target.value)||0)} style={{ ...inp, fontFamily:"monospace" }} />
           </Field>
         </div>
-
-        {/* Issue — link to project */}
-        {form.type==="issue" && (
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
-            <Field label="Project / Job (optional)">
-              <select value={form.projectRef} onChange={e=>set("projectRef",e.target.value)} style={inp}>
-                <option value="">Not assigned to a project…</option>
-                {projects.map(p=><option key={p.id} value={p.projectNumber}>{p.projectNumber} — {p.name}</option>)}
-              </select>
-            </Field>
-            <Field label="Reference">
-              <input type="text" placeholder="Work order, PO, etc…" value={form.reference} onChange={e=>set("reference",e.target.value)} style={inp} />
-            </Field>
-          </div>
-        )}
-
-        {/* Receive — vendor reference */}
-        {form.type==="receive" && (
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
-            <Field label="Invoice / PO Number">
-              <input type="text" placeholder="Invoice or PO reference…" value={form.reference} onChange={e=>set("reference",e.target.value)} style={inp} />
-            </Field>
-          </div>
-        )}
-
-        {/* Adjust — reason required */}
-        {form.type==="adjust" && (
-          <div style={{ marginBottom:16 }}>
-            <div style={{ background:"#fef3cd", border:"1px solid #f0d080", borderRadius:6, padding:"10px 14px", fontSize:12, color:"#7a4f00", marginBottom:12 }}>
-              ⚠️ Adjustments add or subtract from current quantity. Use positive numbers to increase, negative to decrease (e.g. -5 to remove 5 from stock after damage or loss).
-            </div>
-          </div>
-        )}
-
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
+          <Field label="Primary Vendor">
+            <input type="text" value={form.primaryVendor} onChange={e=>set("primaryVendor",e.target.value)} style={inp} />
+          </Field>
+          <Field label="Receiving Mode">
+            <select value={form.receivingMode} onChange={e=>set("receivingMode",e.target.value)} style={inp}>
+              <option value="standard">Standard (invoice-based)</option>
+              <option value="scale_ticket_complex">Scale Ticket — Complex (Gravel)</option>
+              <option value="scale_ticket_simple">Scale Ticket — Simple (Asphalt / Cold Patch)</option>
+            </select>
+          </Field>
+        </div>
         <Field label="Notes">
-          <input type="text" placeholder="Additional notes…" value={form.notes} onChange={e=>set("notes",e.target.value)} style={inp} />
+          <textarea rows={2} value={form.notes} onChange={e=>set("notes",e.target.value)} style={{ ...inp, resize:"vertical" }} />
         </Field>
       </div>
 
       <div style={{ display:"flex", gap:10 }}>
-        <button onClick={handleSubmit} style={{ ...btn.primary, background: TX_TYPES.find(t=>t.value===form.type)?.color||"#1a3a5c" }}>
-          Record {TX_TYPES.find(t=>t.value===form.type)?.label}
-        </button>
-        <button onClick={() => setForm({ type:"receive", itemId:"", date:"", quantity:"", location:"", shelf:"", toLocation:"", projectRef:"", reference:"", notes:"" })} style={btn.ghost}>Clear</button>
+        <button onClick={()=>onSave(form)} style={btn.primary}>{item?"Save Changes":"Add Item"}</button>
+        <button onClick={onCancel} style={btn.ghost}>Cancel</button>
       </div>
     </div>
   );
 }
 
-// ── Locations & Shelves ───────────────────────────────────────────────────────
-function Locations({ db }) {
-  const items = db.inventoryItems || [];
+// ── Receive Form (standard invoice-based receiving) ───────────────────────────
+function ReceiveForm({ db, dispatch, onDone }) {
+  const items     = (db.inventoryItems || []).filter(i => i.active !== false && i.receivingMode === "standard");
+  const locations = db.storageLocations || [];
+  const today     = new Date().toISOString().split("T")[0];
+
+  const [form, setForm] = useState({
+    date:"", itemId:"", vendorName:"", invoiceNumber:"",
+    quantity:"", unitCost:"", location:"", notes:"",
+  });
+  const [saved, setSaved] = useState(false);
+  const set = (k,v) => setForm(f=>({ ...f,[k]:v }));
+
+  const selectedItem = items.find(i => i.id === form.itemId);
+  const totalCost    = (parseFloat(form.quantity)||0) * (parseFloat(form.unitCost)||0);
+
+  const handleSave = () => {
+    if (!form.date||!form.itemId||!form.quantity||!form.unitCost||!form.location) return;
+    const batchId = `${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+    const batch = {
+      id:                batchId,
+      itemId:            form.itemId,
+      itemName:          selectedItem?.name || "",
+      receiptDate:       form.date,
+      receiptRef:        form.invoiceNumber,
+      location:          form.location,
+      quantityReceived:  parseFloat(form.quantity),
+      quantityRemaining: parseFloat(form.quantity),
+      unitCost:          parseFloat(form.unitCost),
+      totalCost,
+      vendorName:        form.vendorName,
+      invoiceStatus:     "final",
+      invoiceRef:        form.invoiceNumber,
+      status:            "open",
+      notes:             form.notes,
+      createdAt:         new Date().toISOString(),
+    };
+    dispatch({
+      type: "ADD_INVENTORY_TRANSACTION",
+      payload: {
+        id:              `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+        type:            "receive",
+        date:            form.date,
+        itemId:          form.itemId,
+        itemName:        selectedItem?.name || "",
+        vendorName:      form.vendorName,
+        invoiceNumber:   form.invoiceNumber,
+        quantity:        parseFloat(form.quantity),
+        unitCost:        parseFloat(form.unitCost),
+        totalCost,
+        location:        form.location,
+        referenceNumber: form.invoiceNumber,
+        batch,
+        notes:           form.notes,
+        createdAt:       new Date().toISOString(),
+      },
+    });
+    setSaved(true);
+    setForm({ date:"", itemId:"", vendorName:"", invoiceNumber:"", quantity:"", unitCost:"", location:"", notes:"" });
+    setTimeout(()=>{ setSaved(false); onDone(); }, 1400);
+  };
 
   return (
-    <div>
-      <div style={{ marginBottom:20 }}>
-        <div style={{ fontSize:18, fontWeight:700, color:"#1a1a1a" }}>Locations & Shelves</div>
-        <div style={{ fontSize:13, color:"#888", marginTop:3 }}>Stock summary by location — {DEFAULT_LOCATIONS.length} locations configured</div>
+    <div style={{ maxWidth:700 }}>
+      <div style={{ fontSize:18, fontWeight:700, marginBottom:4 }}>Receive Stock</div>
+      <div style={{ fontSize:13, color:"#888", marginBottom:20 }}>Standard invoice-based receipt — creates a FIFO batch</div>
+
+      {saved && <div style={{ background:"#e6f4ec", border:"1px solid #a8d5b5", borderRadius:6, padding:"12px 16px", marginBottom:16, color:"#1a6b35", fontWeight:600, fontSize:13 }}>✓ Stock received and batch created</div>}
+
+      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginBottom:16 }}>
+          <Field label="Date" required>
+            <input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} />
+          </Field>
+          <Field label="Vendor">
+            <input type="text" value={form.vendorName} onChange={e=>set("vendorName",e.target.value)} style={inp} placeholder="Vendor name…" />
+          </Field>
+          <Field label="Invoice #">
+            <input type="text" value={form.invoiceNumber} onChange={e=>set("invoiceNumber",e.target.value)} style={inp} />
+          </Field>
+        </div>
+        <div style={{ marginBottom:16 }}>
+          <Field label="Item" required>
+            <select value={form.itemId} onChange={e=>set("itemId",e.target.value)} style={inp}>
+              <option value="">Select item…</option>
+              {items.map(i=><option key={i.id} value={i.id}>{i.name}{i.legacyNumber?` (${i.legacyNumber})`:""}</option>)}
+            </select>
+          </Field>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:16, marginBottom:16 }}>
+          <Field label={`Quantity (${selectedItem?.unitOfMeasure||"unit"})`} required>
+            <input type="number" min="0" step="any" value={form.quantity} onChange={e=>set("quantity",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
+          </Field>
+          <Field label="Unit Cost ($)" required>
+            <input type="number" min="0" step="0.01" value={form.unitCost} onChange={e=>set("unitCost",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
+          </Field>
+          <Field label="Receive to Location" required>
+            <select value={form.location} onChange={e=>set("location",e.target.value)} style={inp}>
+              <option value="">Select…</option>
+              {locations.map(l=><option key={l.id} value={l.name}>{l.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Total Cost">
+            <div style={{ ...inp, background:"#f7f7f5", fontFamily:"monospace", fontWeight:700, color:"#1a3a5c" }}>{fmtSm(totalCost)}</div>
+          </Field>
+        </div>
+        <Field label="Notes">
+          <input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={inp} placeholder="Optional note…" />
+        </Field>
       </div>
 
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:16 }}>
-        {DEFAULT_LOCATIONS.map(loc => {
-          const locItems = items.filter(i => (i.locationStock?.[loc.id]||0) > 0);
-          const locValue = locItems.reduce((s,i) => s + ((i.locationStock?.[loc.id]||0)*(i.unitCost||0)), 0);
+      <div style={{ display:"flex", gap:10 }}>
+        <button onClick={handleSave} style={btn.primary}>Receive into Stock</button>
+        <button onClick={onDone} style={btn.ghost}>Cancel</button>
+      </div>
+    </div>
+  );
+}
 
-          return (
-            <div key={loc.id} style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, overflow:"hidden" }}>
-              <div style={{ padding:"14px 18px", background:"#f7f7f5", borderBottom:"1px solid #eee" }}>
-                <div style={{ fontWeight:700, fontSize:15, color:"#1a1a1a" }}>{loc.name}</div>
-                <div style={{ fontSize:12, color:"#888", marginTop:2 }}>{locItems.length} items · Est. value {fmt(locValue)}</div>
-              </div>
+// ── Scale Ticket ──────────────────────────────────────────────────────────────
+function ScaleTicket({ db, dispatch, onDone }) {
+  const [mode, setMode] = useState("entry"); // entry | reconcile
+  const scaleItems = (db.inventoryItems||[]).filter(i => i.active!==false && (i.receivingMode==="scale_ticket_complex"||i.receivingMode==="scale_ticket_simple"));
+  const locations  = db.storageLocations || [];
+  const projects   = (db.projects||[]).filter(p => p.status==="active");
+  const townships  = db.townships || [];
+  const pendingBatches = (db.inventoryBatches||[]).filter(b => b.invoiceStatus==="pending_reconciliation");
 
-              {/* Shelves */}
-              <div style={{ padding:14 }}>
-                <div style={{ fontSize:11, color:"#888", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:10 }}>Shelves</div>
-                <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:14 }}>
-                  {loc.shelves.map(shelf => {
-                    const shelfItems = locItems.filter(i=>i.shelf===shelf);
-                    return (
-                      <div key={shelf} style={{ background: shelfItems.length>0?"#e8f0fb":"#f0f0ee", color: shelfItems.length>0?"#1a4a8a":"#aaa", padding:"4px 10px", borderRadius:6, fontSize:12, fontWeight:600, fontFamily:"monospace", border:`1px solid ${shelfItems.length>0?"#c0d4f0":"#e0e0e0"}` }}
-                        title={shelfItems.map(i=>i.name).join(", ")}>
-                        {shelf}
-                        {shelfItems.length>0 && <span style={{ fontSize:9, marginLeft:4, opacity:0.7 }}>{shelfItems.length}</span>}
-                      </div>
-                    );
-                  })}
+  const [form, setForm] = useState({
+    date:"", itemId:"", vendorName:"", ticketNumber:"",
+    quantity:"", unitOfMeasure:"CY",
+    haulType:"county_pickup", destinationType:"wanda_stockpile",
+    township:"", destinationLocation:"",
+    projectId:"", unitRate:"", notes:"",
+  });
+  const [saved, setSaved] = useState(false);
+  const set = (k,v) => setForm(f=>({ ...f,[k]:v }));
+
+  const selectedItem  = scaleItems.find(i => i.id === form.itemId);
+  const isComplex     = selectedItem?.receivingMode === "scale_ticket_complex";
+  const isRoadSegment = form.destinationType === "road_segment";
+  const totalCost     = (parseFloat(form.quantity)||0) * (parseFloat(form.unitRate)||0);
+
+  const destLocationName = form.destinationType === "wanda_stockpile"
+    ? "Wanda Stockpile"
+    : form.destinationType === "adams_central_stockpile"
+    ? "Adams Central Stockpile"
+    : form.destinationLocation;
+
+  const handleSave = () => {
+    if (!form.date||!form.itemId||!form.quantity||!form.unitRate) return;
+    const txId    = `${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+    const batchId = `${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+    const goesToStockpile = !isRoadSegment;
+
+    const tx = {
+      id:                txId,
+      type:              "scale_ticket",
+      mode:              isComplex ? "complex" : "simple",
+      date:              form.date,
+      itemId:            form.itemId,
+      itemName:          selectedItem?.name || "",
+      vendorName:        form.vendorName,
+      ticketNumber:      form.ticketNumber,
+      quantity:          parseFloat(form.quantity),
+      unitOfMeasure:     form.unitOfMeasure,
+      haulType:          isComplex ? form.haulType : null,
+      destinationType:   isComplex ? form.destinationType : "stockpile",
+      township:          form.township,
+      unitRate:          parseFloat(form.unitRate),
+      totalCost,
+      destinationLocation: destLocationName,
+      projectId:         isRoadSegment ? form.projectId : null,
+      invoiceStatus:     "pending_reconciliation",
+      invoiceRef:        "",
+      batchId:           goesToStockpile ? batchId : null,
+      notes:             form.notes,
+      createdAt:         new Date().toISOString(),
+    };
+
+    // Create a batch if going to stockpile
+    let batch = null;
+    if (goesToStockpile) {
+      batch = {
+        id:                batchId,
+        itemId:            form.itemId,
+        itemName:          selectedItem?.name || "",
+        receiptDate:       form.date,
+        receiptRef:        form.ticketNumber,
+        location:          destLocationName,
+        quantityReceived:  parseFloat(form.quantity),
+        quantityRemaining: parseFloat(form.quantity),
+        unitCost:          parseFloat(form.unitRate),
+        totalCost,
+        vendorName:        form.vendorName,
+        invoiceStatus:     "pending_reconciliation",
+        invoiceRef:        "",
+        status:            "open",
+        notes:             form.notes,
+        createdAt:         new Date().toISOString(),
+      };
+      tx.batch = batch;
+    }
+
+    dispatch({ type:"ADD_INVENTORY_TRANSACTION", payload: tx });
+    setSaved(true);
+    setForm({ date:"", itemId:"", vendorName:"", ticketNumber:"", quantity:"", unitOfMeasure:"CY", haulType:"county_pickup", destinationType:"wanda_stockpile", township:"", destinationLocation:"", projectId:"", unitRate:"", notes:"" });
+    setTimeout(()=>{ setSaved(false); }, 2000);
+  };
+
+  // Reconcile a batch (match to invoice)
+  const [reconBatchId, setReconBatchId] = useState("");
+  const [reconInvoice, setReconInvoice] = useState("");
+  const [reconRate, setReconRate]       = useState("");
+
+  const handleReconcile = () => {
+    const batch = pendingBatches.find(b => b.id === reconBatchId);
+    if (!batch||!reconInvoice) return;
+    const newUnitCost = parseFloat(reconRate)||batch.unitCost;
+    dispatch({
+      type: "ADD_INVENTORY_TRANSACTION",
+      payload: {
+        id:          `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+        type:        "reconcile",
+        date:        new Date().toISOString().split("T")[0],
+        itemId:      batch.itemId,
+        itemName:    batch.itemName,
+        batchId:     reconBatchId,
+        newUnitCost,
+        invoiceRef:  reconInvoice,
+        notes:       `Invoice reconciliation — ${reconInvoice}`,
+        createdAt:   new Date().toISOString(),
+      },
+    });
+    setReconBatchId(""); setReconInvoice(""); setReconRate("");
+  };
+
+  return (
+    <div style={{ maxWidth:780 }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
+        <div>
+          <div style={{ fontSize:18, fontWeight:700 }}>Scale Ticket</div>
+          <div style={{ fontSize:13, color:"#888", marginTop:2 }}>Gravel (complex) · Asphalt / Cold Patch (simple)</div>
+        </div>
+        <div style={{ display:"flex", border:"1px solid #ccc", borderRadius:6, overflow:"hidden" }}>
+          {[["entry","New Ticket"],["reconcile",`Reconcile (${pendingBatches.length})`]].map(([id,label])=>(
+            <button key={id} onClick={()=>setMode(id)} style={{ padding:"7px 14px", fontSize:12, fontWeight:600, border:"none", cursor:"pointer", background:mode===id?"#1a5a3a":"#fff", color:mode===id?"#fff":"#555" }}>{label}</button>
+          ))}
+        </div>
+      </div>
+
+      {mode==="entry" && (
+        <>
+          {saved && <div style={{ background:"#e6f4ec", border:"1px solid #a8d5b5", borderRadius:6, padding:"12px 16px", marginBottom:16, color:"#1a6b35", fontWeight:600, fontSize:13 }}>✓ Scale ticket saved — pending invoice reconciliation</div>}
+          <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginBottom:16 }}>
+              <Field label="Date" required>
+                <input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} />
+              </Field>
+              <Field label="Vendor">
+                <input type="text" value={form.vendorName} onChange={e=>set("vendorName",e.target.value)} style={inp} />
+              </Field>
+              <Field label="Ticket #">
+                <input type="text" value={form.ticketNumber} onChange={e=>set("ticketNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
+              </Field>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:16, marginBottom:16 }}>
+              <Field label="Material" required>
+                <select value={form.itemId} onChange={e=>set("itemId",e.target.value)} style={inp}>
+                  <option value="">Select material…</option>
+                  {scaleItems.map(i=><option key={i.id} value={i.id}>{i.name}</option>)}
+                </select>
+              </Field>
+              <Field label="Quantity" required>
+                <input type="number" min="0" step="any" value={form.quantity} onChange={e=>set("quantity",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
+              </Field>
+              <Field label="Unit">
+                <select value={form.unitOfMeasure} onChange={e=>set("unitOfMeasure",e.target.value)} style={inp}>
+                  {["CY","TON","LF"].map(u=><option key={u} value={u}>{u}</option>)}
+                </select>
+              </Field>
+            </div>
+
+            {isComplex && (
+              <>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
+                  <Field label="Haul Type" required>
+                    <select value={form.haulType} onChange={e=>set("haulType",e.target.value)} style={inp}>
+                      {HAUL_TYPES.map(h=><option key={h.value} value={h.value}>{h.label}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Destination" required>
+                    <select value={form.destinationType} onChange={e=>set("destinationType",e.target.value)} style={inp}>
+                      {DEST_TYPES.map(d=><option key={d.value} value={d.value}>{d.label}</option>)}
+                    </select>
+                  </Field>
                 </div>
-
-                {/* Items at this location */}
-                {locItems.length > 0 && (
-                  <div>
-                    <div style={{ fontSize:11, color:"#888", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:8 }}>Items on Hand</div>
-                    {locItems.slice(0,6).map(item => (
-                      <div key={item.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"5px 0", borderBottom:"1px solid #f0f0ee", fontSize:12 }}>
-                        <div>
-                          <span style={{ fontWeight:600, color:"#1a1a1a" }}>{item.name}</span>
-                          {item.shelf && <span style={{ fontFamily:"monospace", fontSize:10, color:"#888", marginLeft:6 }}>Shelf {item.shelf}</span>}
-                        </div>
-                        <span style={{ fontFamily:"monospace", fontWeight:700, color:"#1a5a3a" }}>{item.locationStock[loc.id]} {item.unit}</span>
-                      </div>
-                    ))}
-                    {locItems.length > 6 && <div style={{ fontSize:11, color:"#888", marginTop:6 }}>+{locItems.length-6} more items…</div>}
+                {isRoadSegment && (
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
+                    <Field label="Township (drives rate)">
+                      <select value={form.township} onChange={e=>set("township",e.target.value)} style={inp}>
+                        <option value="">Select township…</option>
+                        {townships.map(t=><option key={t.id} value={t.name}>{t.name}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Project">
+                      <select value={form.projectId} onChange={e=>set("projectId",e.target.value)} style={inp}>
+                        <option value="">Select project…</option>
+                        {projects.map(p=><option key={p.id} value={p.id}>{p.name||p.projectNumber}</option>)}
+                      </select>
+                    </Field>
                   </div>
                 )}
-              </div>
+              </>
+            )}
+
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginBottom:16 }}>
+              <Field label="Unit Rate ($/unit)" required>
+                <input type="number" min="0" step="0.0001" value={form.unitRate} onChange={e=>set("unitRate",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="From contract…" />
+              </Field>
+              <Field label="Total Cost">
+                <div style={{ ...inp, background:"#f7f7f5", fontFamily:"monospace", fontWeight:700, color:"#1a3a5c" }}>{fmtSm(totalCost)}</div>
+              </Field>
+              <Field label="Notes">
+                <input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={inp} />
+              </Field>
             </div>
-          );
-        })}
+
+            {!isRoadSegment && (
+              <div style={{ background:"#fef3cd", border:"1px solid #f0d080", borderRadius:6, padding:"10px 14px", fontSize:12, color:"#7a4f00" }}>
+                ⏳ Cost is <strong>pending reconciliation</strong> — stock will appear in inventory but the unit cost may be adjusted when the invoice arrives.
+              </div>
+            )}
+          </div>
+
+          <div style={{ display:"flex", gap:10 }}>
+            <button onClick={handleSave} style={btn.primary}>Save Scale Ticket</button>
+            <button onClick={onDone} style={btn.ghost}>Cancel</button>
+          </div>
+        </>
+      )}
+
+      {mode==="reconcile" && (
+        <div>
+          <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:20 }}>
+            <div style={{ fontWeight:700, fontSize:13, marginBottom:14 }}>Match Invoice to Scale Ticket Batches</div>
+            <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:16, marginBottom:16 }}>
+              <Field label="Scale Ticket Batch">
+                <select value={reconBatchId} onChange={e=>setReconBatchId(e.target.value)} style={inp}>
+                  <option value="">Select pending batch…</option>
+                  {pendingBatches.map(b=>(
+                    <option key={b.id} value={b.id}>{b.itemName} · {b.receiptDate} · {b.quantityRemaining} {b.unitCost!=null?`@ ${fmtSm(b.unitCost)}`:""}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Invoice #" required>
+                <input type="text" value={reconInvoice} onChange={e=>setReconInvoice(e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
+              </Field>
+              <Field label="Final Unit Cost (if different)">
+                <input type="number" min="0" step="0.0001" value={reconRate} onChange={e=>setReconRate(e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="Leave blank if same…" />
+              </Field>
+            </div>
+            <button onClick={handleReconcile} style={btn.primary}>Reconcile Batch</button>
+          </div>
+
+          <SectionCard title="Pending Reconciliation" subtitle={`${pendingBatches.length} batch${pendingBatches.length!==1?"es":""}`}>
+            <Table
+              headers={[{ label:"Item" },{ label:"Date" },{ label:"Location" },{ label:"Qty Remaining" },{ label:"Est. Unit Cost" },{ label:"Est. Total" }]}
+              rows={pendingBatches.map(b=>[
+                b.itemName||"—",
+                <span style={{ fontFamily:"monospace", fontSize:12 }}>{fmtDate(b.receiptDate)}</span>,
+                b.location||"—",
+                <span style={{ fontFamily:"monospace" }}>{b.quantityRemaining}</span>,
+                <span style={{ fontFamily:"monospace", color:"#d97706" }}>{fmtSm(b.unitCost||0)}</span>,
+                <span style={{ fontFamily:"monospace", fontWeight:600 }}>{fmtSm((b.quantityRemaining||0)*(b.unitCost||0))}</span>,
+              ])}
+              emptyMessage="No pending reconciliations"
+            />
+          </SectionCard>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Issue Form ────────────────────────────────────────────────────────────────
+function IssueForm({ db, dispatch, onDone }) {
+  const items    = (db.inventoryItems||[]).filter(i=>i.active!==false);
+  const batches  = db.inventoryBatches || [];
+  const projects = (db.projects||[]).filter(p=>p.status==="active"||p.status==="pending");
+  const locations= db.storageLocations || [];
+
+  const [form, setForm] = useState({
+    date:"", itemId:"", location:"all", quantity:"", projectId:"", notes:"",
+  });
+  const [preview, setPreview] = useState(null);
+  const [saved, setSaved]     = useState(false);
+  const set = (k,v) => { setForm(f=>({ ...f,[k]:v })); setPreview(null); }
+
+  const selectedItem    = items.find(i=>i.id===form.itemId);
+  const availableOnHand = selectedItem ? getOnHand(form.itemId, batches, form.location==="all"?null:form.location) : 0;
+
+  const handlePreview = () => {
+    if (!form.itemId||!form.quantity) return;
+    const result = buildFIFOLines(form.itemId, form.location, parseFloat(form.quantity)||0, batches);
+    setPreview(result);
+  };
+
+  const handleIssue = () => {
+    if (!preview||!form.date||!form.itemId||!form.quantity) return;
+    const selectedProject = projects.find(p=>p.id===form.projectId);
+    dispatch({
+      type: "ADD_INVENTORY_TRANSACTION",
+      payload: {
+        id:          `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+        type:        "issue",
+        date:        form.date,
+        itemId:      form.itemId,
+        itemName:    selectedItem?.name||"",
+        quantity:    parseFloat(form.quantity),
+        location:    form.location,
+        projectId:   form.projectId||null,
+        projectName: selectedProject?.name||selectedProject?.projectNumber||"",
+        batchLines:  preview.batchLines,
+        totalCost:   preview.totalCost,
+        notes:       form.notes,
+        createdAt:   new Date().toISOString(),
+      },
+    });
+    // Also add a material entry to the project if one was selected
+    if (form.projectId && selectedProject) {
+      dispatch({
+        type: "ADD_PROJECT_ENTRY",
+        payload: {
+          projectId: form.projectId,
+          entryType: "materialEntries",
+          entry: {
+            id:            `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+            date:          form.date,
+            itemId:        form.itemId,
+            itemName:      selectedItem?.name||"",
+            quantity:      parseFloat(form.quantity),
+            unitOfMeasure: selectedItem?.unitOfMeasure||"",
+            batchLines:    preview.batchLines,
+            totalCost:     preview.totalCost,
+            linkedAssets:  [],
+            notes:         form.notes,
+            createdAt:     new Date().toISOString(),
+          },
+        },
+      });
+    }
+    setSaved(true);
+    setForm({ date:"", itemId:"", location:"all", quantity:"", projectId:"", notes:"" });
+    setPreview(null);
+    setTimeout(()=>{ setSaved(false); onDone(); }, 1400);
+  };
+
+  return (
+    <div style={{ maxWidth:700 }}>
+      <div style={{ fontSize:18, fontWeight:700, marginBottom:4 }}>Issue to Project</div>
+      <div style={{ fontSize:13, color:"#888", marginBottom:20 }}>FIFO costing — oldest batches consumed first. Creates a material entry on the project.</div>
+
+      {saved && <div style={{ background:"#e6f4ec", border:"1px solid #a8d5b5", borderRadius:6, padding:"12px 16px", marginBottom:16, color:"#1a6b35", fontWeight:600, fontSize:13 }}>✓ Issued and cost entry added to project</div>}
+
+      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
+          <Field label="Date" required>
+            <input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} />
+          </Field>
+          <Field label="Project (optional)">
+            <select value={form.projectId} onChange={e=>set("projectId",e.target.value)} style={inp}>
+              <option value="">No project assignment…</option>
+              {projects.map(p=><option key={p.id} value={p.id}>{p.name||p.projectNumber}</option>)}
+            </select>
+          </Field>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:16, marginBottom:16 }}>
+          <Field label="Item" required>
+            <select value={form.itemId} onChange={e=>set("itemId",e.target.value)} style={inp}>
+              <option value="">Select item…</option>
+              {items.map(i=><option key={i.id} value={i.id}>{i.name}{i.legacyNumber?` (${i.legacyNumber})`:""} — {getOnHand(i.id,batches)} on hand</option>)}
+            </select>
+          </Field>
+          <Field label="From Location">
+            <select value={form.location} onChange={e=>set("location",e.target.value)} style={inp}>
+              <option value="all">Any (FIFO across all)</option>
+              {locations.map(l=><option key={l.id} value={l.name}>{l.name}</option>)}
+            </select>
+          </Field>
+          <Field label={`Quantity (on hand: ${availableOnHand})`} required>
+            <input type="number" min="0" step="any" value={form.quantity}
+              onChange={e=>set("quantity",e.target.value)}
+              style={{ ...inp, fontFamily:"monospace", borderColor:parseFloat(form.quantity)>availableOnHand?"#c0392b":"" }} />
+          </Field>
+        </div>
+        <Field label="Notes">
+          <input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={inp} placeholder="Road segment, structure, etc.…" />
+        </Field>
+
+        {form.itemId && form.quantity && !preview && (
+          <button onClick={handlePreview} style={{ ...btn.secondary, marginTop:14, fontSize:12 }}>Preview FIFO Cost →</button>
+        )}
+
+        {preview && (
+          <div style={{ marginTop:14, background:"#f0f8f4", border:"1px solid #a8d5b5", borderRadius:6, padding:14 }}>
+            <div style={{ fontWeight:700, fontSize:13, color:"#1a5a3a", marginBottom:10 }}>FIFO Cost Breakdown</div>
+            {!preview.canFulfill && (
+              <div style={{ background:"#fdecea", border:"1px solid #f5c6c6", borderRadius:4, padding:"8px 12px", marginBottom:10, fontSize:12, color:"#8c1b18", fontWeight:600 }}>
+                ⚠️ Insufficient stock to fulfill {form.quantity} {selectedItem?.unitOfMeasure||"units"} — only {availableOnHand} available
+              </div>
+            )}
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+              <thead>
+                <tr style={{ background:"#e6f4ec" }}>
+                  {["Batch Date / Vendor","Qty","Unit Cost","Line Total"].map(h=>(
+                    <th key={h} style={{ padding:"6px 10px", textAlign:["Qty","Unit Cost","Line Total"].includes(h)?"right":"left", fontWeight:600, color:"#1a5a3a" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {preview.batchLines.map((l,i)=>(
+                  <tr key={i} style={{ borderTop:"1px solid #c8e6d5" }}>
+                    <td style={{ padding:"6px 10px" }}>{l.batchRef}</td>
+                    <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:"monospace" }}>{l.quantity}</td>
+                    <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:"monospace" }}>{fmtSm(l.unitCost)}</td>
+                    <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:"monospace", fontWeight:600 }}>{fmtSm(l.totalCost)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ borderTop:"2px solid #a8d5b5", background:"#e6f4ec" }}>
+                  <td colSpan={3} style={{ padding:"7px 10px", textAlign:"right", fontWeight:700 }}>Total Cost to Project</td>
+                  <td style={{ padding:"7px 10px", textAlign:"right", fontFamily:"monospace", fontWeight:700, fontSize:14, color:"#1a5a3a" }}>{fmtSm(preview.totalCost)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div style={{ display:"flex", gap:10 }}>
+        <button onClick={handleIssue} disabled={!preview||!preview.canFulfill||!form.date} style={{ ...btn.primary, opacity:(!preview||!preview.canFulfill||!form.date)?0.4:1 }}>Confirm Issue</button>
+        <button onClick={onDone} style={btn.ghost}>Cancel</button>
       </div>
     </div>
   );
 }
 
-// ── Low Stock ─────────────────────────────────────────────────────────────────
-function LowStock({ db }) {
-  const items = db.inventoryItems || [];
-  const outOfStock = items.filter(i => totalOnHand(i)===0);
-  const lowStock   = items.filter(i => i.reorderPoint>0 && totalOnHand(i)>0 && totalOnHand(i)<=i.reorderPoint);
+// ── Transfer Form ─────────────────────────────────────────────────────────────
+function TransferForm({ db, dispatch, onDone }) {
+  const items    = (db.inventoryItems||[]).filter(i=>i.active!==false);
+  const batches  = db.inventoryBatches||[];
+  const locations= db.storageLocations||[];
+
+  const [form, setForm] = useState({ date:"", itemId:"", fromLocation:"", toLocation:"", quantity:"", notes:"" });
+  const [saved, setSaved] = useState(false);
+  const set = (k,v) => setForm(f=>({ ...f,[k]:v }));
+
+  const availableQty = form.itemId && form.fromLocation ? getOnHand(form.itemId, batches, form.fromLocation) : 0;
+
+  const handleSave = () => {
+    if (!form.date||!form.itemId||!form.fromLocation||!form.toLocation||!form.quantity) return;
+    const selectedItem = items.find(i=>i.id===form.itemId);
+    // For transfers, find the oldest open batch at the source and move it
+    const sourceBatches = batches
+      .filter(b=>b.itemId===form.itemId&&b.location===form.fromLocation&&b.status==="open")
+      .sort((a,b)=>a.receiptDate.localeCompare(b.receiptDate));
+    const batchId = sourceBatches[0]?.id || null;
+
+    dispatch({
+      type: "ADD_INVENTORY_TRANSACTION",
+      payload: {
+        id:           `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+        type:         "transfer",
+        date:         form.date,
+        itemId:       form.itemId,
+        itemName:     selectedItem?.name||"",
+        quantity:     parseFloat(form.quantity),
+        fromLocation: form.fromLocation,
+        toLocation:   form.toLocation,
+        location:     form.fromLocation,
+        batchId,
+        notes:        form.notes,
+        createdAt:    new Date().toISOString(),
+      },
+    });
+    setSaved(true);
+    setForm({ date:"", itemId:"", fromLocation:"", toLocation:"", quantity:"", notes:"" });
+    setTimeout(()=>{ setSaved(false); onDone(); }, 1400);
+  };
+
+  return (
+    <div style={{ maxWidth:600 }}>
+      <div style={{ fontSize:18, fontWeight:700, marginBottom:4 }}>Transfer Stock</div>
+      <div style={{ fontSize:13, color:"#888", marginBottom:20 }}>Move stock between storage locations</div>
+
+      {saved && <div style={{ background:"#e6f4ec", border:"1px solid #a8d5b5", borderRadius:6, padding:"12px 16px", marginBottom:16, color:"#1a6b35", fontWeight:600, fontSize:13 }}>✓ Transfer recorded</div>}
+
+      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginBottom:16 }}>
+          <Field label="Date" required>
+            <input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} />
+          </Field>
+          <Field label="From Location" required>
+            <select value={form.fromLocation} onChange={e=>set("fromLocation",e.target.value)} style={inp}>
+              <option value="">Select…</option>
+              {locations.map(l=><option key={l.id} value={l.name}>{l.name}</option>)}
+            </select>
+          </Field>
+          <Field label="To Location" required>
+            <select value={form.toLocation} onChange={e=>set("toLocation",e.target.value)} style={inp}>
+              <option value="">Select…</option>
+              {locations.filter(l=>l.name!==form.fromLocation).map(l=><option key={l.id} value={l.name}>{l.name}</option>)}
+            </select>
+          </Field>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr", gap:16, marginBottom:16 }}>
+          <Field label="Item" required>
+            <select value={form.itemId} onChange={e=>set("itemId",e.target.value)} style={inp}>
+              <option value="">Select item…</option>
+              {items.map(i=><option key={i.id} value={i.id}>{i.name} — {getOnHand(i.id,batches,form.fromLocation||null)} at {form.fromLocation||"selected loc"}</option>)}
+            </select>
+          </Field>
+          <Field label={`Quantity (available: ${availableQty})`} required>
+            <input type="number" min="0" step="any" value={form.quantity} onChange={e=>set("quantity",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
+          </Field>
+        </div>
+        <Field label="Notes">
+          <input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={inp} />
+        </Field>
+      </div>
+
+      <div style={{ display:"flex", gap:10 }}>
+        <button onClick={handleSave} style={btn.primary}>Record Transfer</button>
+        <button onClick={onDone} style={btn.ghost}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Adjust Form ───────────────────────────────────────────────────────────────
+function AdjustForm({ db, dispatch, onDone }) {
+  const items    = (db.inventoryItems||[]).filter(i=>i.active!==false);
+  const locations= db.storageLocations||[];
+  const batches  = db.inventoryBatches||[];
+
+  const [form, setForm] = useState({ date:"", itemId:"", location:"", quantityAdjustment:"", reason:"", notes:"" });
+  const [saved, setSaved] = useState(false);
+  const set = (k,v) => setForm(f=>({ ...f,[k]:v }));
+
+  const selectedItem  = items.find(i=>i.id===form.itemId);
+  const currentOnHand = form.itemId && form.location ? getOnHand(form.itemId, batches, form.location) : 0;
+  const adjustment    = parseFloat(form.quantityAdjustment)||0;
+  const newOnHand     = currentOnHand + adjustment;
+
+  const handleSave = () => {
+    if (!form.date||!form.itemId||!form.location||form.quantityAdjustment==="") return;
+    dispatch({
+      type: "ADD_INVENTORY_TRANSACTION",
+      payload: {
+        id:                 `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+        type:               "adjustment",
+        date:               form.date,
+        itemId:             form.itemId,
+        itemName:           selectedItem?.name||"",
+        location:           form.location,
+        quantityAdjustment: adjustment,
+        reason:             form.reason,
+        notes:              form.notes,
+        createdAt:          new Date().toISOString(),
+      },
+    });
+    setSaved(true);
+    setForm({ date:"", itemId:"", location:"", quantityAdjustment:"", reason:"", notes:"" });
+    setTimeout(()=>{ setSaved(false); onDone(); }, 1400);
+  };
+
+  return (
+    <div style={{ maxWidth:600 }}>
+      <div style={{ fontSize:18, fontWeight:700, marginBottom:4 }}>Quantity Adjustment</div>
+      <div style={{ fontSize:13, color:"#888", marginBottom:20 }}>Correct on-hand quantity — applied FIFO to oldest open batches first</div>
+
+      {saved && <div style={{ background:"#e6f4ec", border:"1px solid #a8d5b5", borderRadius:6, padding:"12px 16px", marginBottom:16, color:"#1a6b35", fontWeight:600, fontSize:13 }}>✓ Adjustment recorded</div>}
+
+      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
+          <Field label="Date" required>
+            <input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} />
+          </Field>
+          <Field label="Location" required>
+            <select value={form.location} onChange={e=>set("location",e.target.value)} style={inp}>
+              <option value="">Select…</option>
+              {locations.map(l=><option key={l.id} value={l.name}>{l.name}</option>)}
+            </select>
+          </Field>
+        </div>
+        <div style={{ marginBottom:16 }}>
+          <Field label="Item" required>
+            <select value={form.itemId} onChange={e=>set("itemId",e.target.value)} style={inp}>
+              <option value="">Select item…</option>
+              {items.map(i=><option key={i.id} value={i.id}>{i.name}</option>)}
+            </select>
+          </Field>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginBottom:16 }}>
+          <Field label="Adjustment (+ or −)" required>
+            <input type="number" step="any" value={form.quantityAdjustment} onChange={e=>set("quantityAdjustment",e.target.value)}
+              style={{ ...inp, fontFamily:"monospace", color:adjustment<0?"#c0392b":adjustment>0?"#1a6b35":"#1a1a1a" }}
+              placeholder="e.g. -2 or +5" />
+          </Field>
+          <Field label="Current On Hand">
+            <div style={{ ...inp, background:"#f7f7f5", fontFamily:"monospace" }}>{currentOnHand}</div>
+          </Field>
+          <Field label="New On Hand">
+            <div style={{ ...inp, background:"#f7f7f5", fontFamily:"monospace", fontWeight:700, color:newOnHand<0?"#c0392b":"#1a1a1a" }}>{newOnHand}</div>
+          </Field>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+          <Field label="Reason">
+            <select value={form.reason} onChange={e=>set("reason",e.target.value)} style={inp}>
+              <option value="">Select reason…</option>
+              <option value="annual_count">Annual count correction</option>
+              <option value="damaged">Damaged / waste</option>
+              <option value="returned">Returned to vendor</option>
+              <option value="found">Found — not previously recorded</option>
+              <option value="other">Other</option>
+            </select>
+          </Field>
+          <Field label="Notes">
+            <input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={inp} />
+          </Field>
+        </div>
+      </div>
+
+      <div style={{ display:"flex", gap:10 }}>
+        <button onClick={handleSave} style={btn.primary}>Record Adjustment</button>
+        <button onClick={onDone} style={btn.ghost}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Crosswalk Form (opening balance) ─────────────────────────────────────────
+function CrosswalkForm({ db, dispatch, onDone }) {
+  const items    = (db.inventoryItems||[]).filter(i=>i.active!==false);
+  const locations= db.storageLocations||[];
+
+  const [rows, setRows]   = useState([{ id:Date.now(), itemId:"", location:"", quantity:"", unitCost:"", notes:"" }]);
+  const [date, setDate]   = useState(new Date().toISOString().split("T")[0]);
+  const [saved, setSaved] = useState(false);
+
+  const addRow    = () => setRows(r=>[...r,{ id:Date.now()+Math.random(), itemId:"", location:"", quantity:"", unitCost:"", notes:"" }]);
+  const removeRow = id => setRows(r=>r.filter(x=>x.id!==id));
+  const setR = (id,k,v) => setRows(rs=>rs.map(r=>r.id===id?{ ...r,[k]:v }:r));
+
+  const handleSave = () => {
+    const valid = rows.filter(r=>r.itemId&&r.location&&r.quantity&&r.unitCost);
+    if (valid.length===0) return;
+    valid.forEach(r => {
+      const selectedItem = items.find(i=>i.id===r.itemId);
+      const batchId = `${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+      const qty     = parseFloat(r.quantity)||0;
+      const cost    = parseFloat(r.unitCost)||0;
+      const batch   = {
+        id:                batchId,
+        itemId:            r.itemId,
+        itemName:          selectedItem?.name||"",
+        receiptDate:       date,
+        receiptRef:        "CROSSWALK",
+        location:          r.location,
+        quantityReceived:  qty,
+        quantityRemaining: qty,
+        unitCost:          cost,
+        totalCost:         qty*cost,
+        vendorName:        "",
+        invoiceStatus:     "final",
+        status:            "open",
+        notes:             r.notes||"Opening balance crosswalk",
+        createdAt:         new Date().toISOString(),
+      };
+      dispatch({
+        type: "ADD_INVENTORY_TRANSACTION",
+        payload: {
+          id:          `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+          type:        "crosswalk",
+          date,
+          itemId:      r.itemId,
+          itemName:    selectedItem?.name||"",
+          location:    r.location,
+          quantity:    qty,
+          unitCost:    cost,
+          totalCost:   qty*cost,
+          batchId,
+          batch,
+          notes:       r.notes||"Opening balance crosswalk",
+          createdAt:   new Date().toISOString(),
+        },
+      });
+    });
+    setSaved(true);
+    setRows([{ id:Date.now(), itemId:"", location:"", quantity:"", unitCost:"", notes:"" }]);
+    setTimeout(()=>{ setSaved(false); onDone(); }, 1600);
+  };
 
   return (
     <div>
-      <div style={{ marginBottom:20 }}>
-        <div style={{ fontSize:18, fontWeight:700, color:"#1a1a1a" }}>Low Stock Alerts</div>
-        <div style={{ fontSize:13, color:"#888", marginTop:3 }}>{outOfStock.length} out of stock · {lowStock.length} below reorder point</div>
+      <div style={{ fontSize:18, fontWeight:700, marginBottom:4 }}>Initial Crosswalk</div>
+      <div style={{ fontSize:13, color:"#888", marginBottom:20 }}>Load opening balances from your existing system. Each row creates a FIFO batch dated today.</div>
+
+      {saved && <div style={{ background:"#e6f4ec", border:"1px solid #a8d5b5", borderRadius:6, padding:"12px 16px", marginBottom:16, color:"#1a6b35", fontWeight:600, fontSize:13 }}>✓ Opening balances loaded</div>}
+
+      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:16, marginBottom:16 }}>
+          <Field label="As-Of Date">
+            <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{ ...inp, width:160 }} />
+          </Field>
+          <div style={{ fontSize:12, color:"#888", paddingTop:20 }}>Each row becomes a FIFO batch at this date</div>
+        </div>
+
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, marginBottom:12 }}>
+          <thead>
+            <tr style={{ background:"#f7f7f5" }}>
+              {["Item","Location","Qty","Unit Cost ($)","Total","Notes",""].map(h=>(
+                <th key={h} style={{ padding:"8px 10px", textAlign:"left", fontWeight:600, fontSize:11, textTransform:"uppercase", color:"#666", borderBottom:"1px solid #eee" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r,i) => {
+              const total = (parseFloat(r.quantity)||0)*(parseFloat(r.unitCost)||0);
+              return (
+                <tr key={r.id} style={{ borderTop:"1px solid #eee" }}>
+                  <td style={{ padding:"8px 8px" }}>
+                    <select value={r.itemId} onChange={e=>setR(r.id,"itemId",e.target.value)} style={{ ...inp, margin:0, fontSize:12, minWidth:180 }}>
+                      <option value="">Select…</option>
+                      {items.map(i=><option key={i.id} value={i.id}>{i.name}</option>)}
+                    </select>
+                  </td>
+                  <td style={{ padding:"8px 6px" }}>
+                    <select value={r.location} onChange={e=>setR(r.id,"location",e.target.value)} style={{ ...inp, margin:0, fontSize:12, minWidth:140 }}>
+                      <option value="">Select…</option>
+                      {locations.map(l=><option key={l.id} value={l.name}>{l.name}</option>)}
+                    </select>
+                  </td>
+                  <td style={{ padding:"8px 6px" }}>
+                    <input type="number" min="0" step="any" value={r.quantity} onChange={e=>setR(r.id,"quantity",e.target.value)} style={{ ...inp, margin:0, width:80, fontFamily:"monospace" }} />
+                  </td>
+                  <td style={{ padding:"8px 6px" }}>
+                    <input type="number" min="0" step="0.01" value={r.unitCost} onChange={e=>setR(r.id,"unitCost",e.target.value)} style={{ ...inp, margin:0, width:90, fontFamily:"monospace" }} />
+                  </td>
+                  <td style={{ padding:"8px 6px", fontFamily:"monospace", fontSize:12, color:"#1a3a5c", fontWeight:600, whiteSpace:"nowrap" }}>
+                    {total>0?fmtSm(total):"—"}
+                  </td>
+                  <td style={{ padding:"8px 6px" }}>
+                    <input type="text" value={r.notes} onChange={e=>setR(r.id,"notes",e.target.value)} style={{ ...inp, margin:0, minWidth:120 }} placeholder="Optional…" />
+                  </td>
+                  <td style={{ padding:"8px 6px" }}>
+                    {rows.length>1 && <button onClick={()=>removeRow(r.id)} style={{ ...btn.danger, padding:"5px 10px", fontSize:14 }}>×</button>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <button onClick={addRow} style={{ ...btn.secondary, fontSize:12, padding:"6px 14px" }}>+ Add Row</button>
       </div>
 
-      {outOfStock.length > 0 && (
-        <SectionCard title="Out of Stock" subtitle="Zero quantity on hand — order immediately" icon="circle-x">
-          <Table
-            headers={[{ label:"Item" },{ label:"Type" },{ label:"Part #" },{ label:"Vendor" },{ label:"Account Code" },{ label:"Last Unit Cost", right:true }]}
-            rows={outOfStock.map(item => {
-              const type = ITEM_TYPES.find(t=>t.value===item.type);
-              return [
-                <span style={{ fontWeight:600, color:"#c0392b" }}>{type?.icon} {item.name}</span>,
-                <span style={{ fontSize:11, background:type?.color+"18", color:type?.color, padding:"2px 6px", borderRadius:4 }}>{type?.label}</span>,
-                <span style={{ fontFamily:"monospace", fontSize:12 }}>{item.partNumber||"—"}</span>,
-                item.vendor||"—",
-                <span style={{ fontFamily:"monospace", fontSize:12, color:"#1a3a5c" }}>{item.accountCode||"—"}</span>,
-                <span style={{ fontFamily:"monospace" }}>{item.unitCost>0?fmtSm(item.unitCost):"—"}</span>,
-              ];
-            })}
-            emptyMessage="No items out of stock"
-          />
-        </SectionCard>
-      )}
-
-      {lowStock.length > 0 && (
-        <SectionCard title="Low Stock" subtitle="At or below reorder point — order soon" icon="alert-triangle">
-          <Table
-            headers={[{ label:"Item" },{ label:"On Hand", right:true },{ label:"Reorder At", right:true },{ label:"Needed", right:true },{ label:"Vendor" },{ label:"Part #" },{ label:"Unit Cost", right:true }]}
-            rows={lowStock.map(item => {
-              const onHand = totalOnHand(item);
-              const type   = ITEM_TYPES.find(t=>t.value===item.type);
-              return [
-                <span style={{ fontWeight:600, color:"#d97706" }}>{type?.icon} {item.name}</span>,
-                <span style={{ fontFamily:"monospace", fontWeight:700, color:"#d97706" }}>{onHand} {item.unit}</span>,
-                <span style={{ fontFamily:"monospace" }}>{item.reorderPoint} {item.unit}</span>,
-                <span style={{ fontFamily:"monospace", color:"#c0392b", fontWeight:700 }}>{item.reorderPoint-onHand} {item.unit}</span>,
-                item.vendor||"—",
-                <span style={{ fontFamily:"monospace", fontSize:12 }}>{item.partNumber||"—"}</span>,
-                <span style={{ fontFamily:"monospace" }}>{item.unitCost>0?fmtSm(item.unitCost):"—"}</span>,
-              ];
-            })}
-            emptyMessage="Nothing below reorder point"
-          />
-        </SectionCard>
-      )}
-
-      {outOfStock.length===0 && lowStock.length===0 && (
-        <div style={{ background:"#e6f4ec", border:"1px solid #a8d5b5", borderRadius:8, padding:40, textAlign:"center" }}>
-          <div style={{ fontSize:32, marginBottom:12 }}>✅</div>
-          <div style={{ fontSize:15, fontWeight:700, color:"#1a6b35" }}>All items are sufficiently stocked</div>
-          <div style={{ fontSize:13, color:"#888", marginTop:6 }}>No items are at or below their reorder points</div>
-        </div>
-      )}
+      <div style={{ display:"flex", gap:10 }}>
+        <button onClick={handleSave} style={btn.primary}>Load Opening Balances</button>
+        <button onClick={onDone} style={btn.ghost}>Cancel</button>
+      </div>
     </div>
   );
 }

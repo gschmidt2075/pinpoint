@@ -1,726 +1,1050 @@
 import { useState, useMemo } from "react";
-import { Field, SectionCard, Table, StatusBadge, Icon, AlertBar, inp, btn, fmt, fmtSm, pct, ProgressBar } from "../components/shared.jsx";
+import { Icon, Field, SectionCard, Table, KPICard, StatusBadge, inp, btn, fmt, fmtSm, pct, ProgressBar } from "../components/shared.jsx";
+import { createProject } from "../data/schema.js";
+import { FISCAL_YEAR } from "../data/accountCodes.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const PROJECT_TYPES_CAPITAL = [
-  "Bridge Replacement","Bridge Repair","Culvert Replacement","Culvert Repair",
-  "Road Resurfacing / Overlay","Road Reconstruction","Road Grading",
-  "Drainage Improvement","Sign Installation","Traffic Safety",
+  "Bridge Replacement","Bridge Repair","Bridge Deck Overlay",
+  "Culvert Replacement","Culvert Repair","Culvert Extension",
+  "Road Resurfacing / Overlay","Road Reconstruction","Road Widening",
+  "Drainage Improvement","Ditch / Waterway","Grading",
+  "Sign Installation","Traffic Safety","Guardrail",
   "Structure Replacement","Structure Repair","Other Capital",
 ];
-
 const PROJECT_TYPES_MAINT = [
   "Culvert Replacement","Culvert Repair","Culvert Cleaning",
-  "Bridge Repair","Grading / Gravel Road","Ditching / Drainage",
-  "Crack Sealing","Mowing / Vegetation","Sign Installation",
-  "Sign Replacement","Patching / Pothole Repair","Snow Removal",
-  "Shoulder Work","Guardrail Repair","Other Maintenance",
+  "Bridge Repair","Gravel Road — Grading / Shaping","Ditching / Drainage",
+  "Crack Sealing","Chip Seal","Patching / Pothole Repair",
+  "Mowing / Vegetation Control","Snow Removal","Shoulder Work",
+  "Sign Installation","Sign Replacement","Guardrail Repair",
+  "Structure Repair","Other Maintenance",
 ];
-
-const DEFAULT_FUND = "Roads Fund";
-
+const FUNDING_SOURCES = [
+  "Roads Fund","NDOT / STP","NDOT / STBG","FEMA PA","FEMA BRIC",
+  "CDBG","Local Match","Bridge Program","County Bond","Other",
+];
 const ONE_SIX_YEARS = ["Year 1","Year 2","Year 3","Year 4","Year 5","Year 6"];
 
-const STATUS_FLOW = [
-  { value:"planned",  label:"Planned",   color:"#888" },
-  { value:"active",   label:"Active",    color:"#1a6b35" },
-  { value:"complete", label:"Complete",  color:"#1a4a8a" },
-  { value:"on_hold",  label:"On Hold",   color:"#d97706" },
-];
+const STATUS_META = {
+  planning: { label:"Planning",  color:"#888",    bg:"#f0f0ee" },
+  pending:  { label:"Pending",   color:"#d97706", bg:"#fef3cd" },
+  active:   { label:"Active",    color:"#1a6b35", bg:"#e6f4ec" },
+  complete: { label:"Complete",  color:"#1a3a5c", bg:"#e8f0f8" },
+  on_hold:  { label:"On Hold",   color:"#c0392b", bg:"#fdecea" },
+};
+function Chip({ status }) {
+  const m = STATUS_META[status] || { label: status, color:"#888", bg:"#f0f0f0" };
+  return <span style={{ background:m.bg, color:m.color, padding:"2px 9px", borderRadius:99, fontSize:11, fontWeight:700 }}>{m.label}</span>;
+}
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Cost totals helper ────────────────────────────────────────────────────────
+function projectTotals(p) {
+  const labor       = (p.laborEntries      ||[]).reduce((s,e)=>s+(e.totalCost||0),0);
+  const equipment   = (p.equipmentEntries  ||[]).reduce((s,e)=>s+(e.totalCost||0),0);
+  const materials   = (p.materialEntries   ||[]).reduce((s,e)=>s+(e.totalCost||0),0);
+  const contractor  = (p.contractorEntries ||[]).reduce((s,e)=>s+(e.totalAmount||0),0);
+  const engineering = (p.engineeringEntries||[]).reduce((s,e)=>s+(e.amount||0),0);
+  const total = labor + equipment + materials + contractor + engineering;
+  return { labor, equipment, materials, contractor, engineering, total };
+}
+
+function fmtDate(str) {
+  if (!str) return "—";
+  const [y,m,d] = str.split("-");
+  return d && m && y ? `${m}/${d}/${y}` : str;
+}
+
 function nextMaintNumber(projects) {
   const year = new Date().getFullYear();
-  const nums = (projects||[])
-    .filter(p => p.type==="maintenance" && p.projectNumber?.startsWith(`M-${year}-`))
-    .map(p => parseInt(p.projectNumber.split("-")[2])||0);
-  const next = nums.length > 0 ? Math.max(...nums) + 1 : 1;
-  return `M-${year}-${String(next).padStart(2,"0")}`;
+  const prefix = `M-${year}-`;
+  const existing = projects
+    .filter(p => p.projectNumber && p.projectNumber.startsWith(prefix))
+    .map(p => parseInt(p.projectNumber.replace(prefix,"")) || 0);
+  const max = existing.length > 0 ? Math.max(...existing) : 0;
+  return `${prefix}${String(max + 1).padStart(2,"0")}`;
 }
 
-function projectCostTotal(p, costEntries=[]) {
-  return costEntries
-    .filter(e => e.projectNumber===p.projectNumber)
-    .reduce((s,e) => s+(e.totalCost||0), 0);
-}
-
-function StatusChip({ status }) {
-  const s = STATUS_FLOW.find(x=>x.value===status)||STATUS_FLOW[0];
-  return <span style={{ background:s.color+"18", color:s.color, padding:"2px 8px", borderRadius:4, fontSize:11, fontWeight:600 }}>{s.label}</span>;
-}
-
-// ── Projects Module ───────────────────────────────────────────────────────────
+// ── Module Shell ──────────────────────────────────────────────────────────────
 export default function Projects({ db, dispatch }) {
-  const [view, setView] = useState("dashboard");
+  const [view, setView]             = useState("dashboard");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [statusFilter, setStatus]   = useState("active");
+  const [selectedId, setSelectedId] = useState(null);
+  const [showNew, setShowNew]       = useState(false);
+  const [newType, setNewType]       = useState("capital");
 
-  const capital  = (db.projects||[]).filter(p=>p.type==="capital");
-  const maint    = (db.projects||[]).filter(p=>p.type==="maintenance");
+  const projects = db.projects || [];
 
-  return (
-    <div>
-      <div style={{ display:"flex", gap:2, marginBottom:24, borderBottom:"1px solid #ddd", overflowX:"auto" }}>
-        {[
-          { id:"dashboard",  label:"Dashboard",        icon:"layout-dashboard" },
-          { id:"capital",    label:`Capital Projects (${capital.length})`, icon:"building-skyscraper" },
-          { id:"newCapital", label:"New Capital Project", icon:"plus" },
-          { id:"maintenance",label:`Maintenance Jobs (${maint.length})`, icon:"tools" },
-          { id:"newMaint",   label:"New Maintenance Job", icon:"plus" },
-        ].map(t => (
-          <button key={t.id} onClick={()=>setView(t.id)} style={{
-            background:"transparent", border:"none", padding:"8px 16px 10px", whiteSpace:"nowrap",
-            fontWeight: view===t.id?700:400, fontSize:13, cursor:"pointer",
-            color: view===t.id?"#5a1a8a":"#666",
-            borderBottom: view===t.id?"2px solid #5a1a8a":"2px solid transparent",
-            marginBottom:-1, display:"inline-flex", alignItems:"center", gap:6,
-          }}>{t.icon && <Icon name={t.icon} size={14} color={view===t.id?"#5a1a8a":"#888"} />}{t.label}</button>
-        ))}
-      </div>
-
-      {view==="dashboard"  && <ProjectDashboard db={db} setView={setView} />}
-      {view==="capital"    && <ProjectList db={db} dispatch={dispatch} type="capital" setView={setView} />}
-      {view==="newCapital" && <ProjectForm db={db} dispatch={dispatch} type="capital" onDone={()=>setView("capital")} />}
-      {view==="maintenance"&& <ProjectList db={db} dispatch={dispatch} type="maintenance" setView={setView} />}
-      {view==="newMaint"   && <ProjectForm db={db} dispatch={dispatch} type="maintenance" onDone={()=>setView("maintenance")} />}
-
-    </div>
-  );
-}
-
-// ── Dashboard ─────────────────────────────────────────────────────────────────
-function ProjectDashboard({ db, setView }) {
-  const all       = db.projects || [];
-  const capital   = all.filter(p=>p.type==="capital");
-  const maint     = all.filter(p=>p.type==="maintenance");
-  const active    = all.filter(p=>p.status==="active");
-  const planned   = all.filter(p=>p.status==="planned");
-  const complete  = all.filter(p=>p.status==="complete");
-  const fema      = all.filter(p=>p.isFEMA);
-
-  const totalBudget = capital.reduce((s,p)=>s+(parseFloat(p.estimatedCost)||0),0);
-
-  // Recent projects
-  const recent = [...all].sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0)).slice(0,6);
-
-  return (
-    <div>
-      <div style={{ marginBottom:20 }}>
-        <div style={{ fontSize:18, fontWeight:700, color:"#1a1a1a" }}>Projects</div>
-        <div style={{ fontSize:13, color:"#888", marginTop:3 }}>Capital Projects (C1-) · Maintenance Jobs (M-Year-#) · FEMA</div>
-      </div>
-
-      {/* KPIs */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12, marginBottom:20 }}>
-        {[
-          { label:"Active",          value:active.length,     sub:"Currently underway",     accent:"#1a6b35",  id:"capital",      icon:"player-play" },
-          { label:"Planned",         value:planned.length,    sub:"Not yet started",        accent:"#888",     id:"capital",      icon:"calendar-event" },
-          { label:"Capital Projects",value:capital.length,    sub:"C1- numbered",           accent:"#5a1a8a",  id:"capital",      icon:"building-skyscraper" },
-          { label:"Maintenance Jobs",value:maint.length,      sub:"M-Year-# numbered",      accent:"#6b3a1a",  id:"maintenance",  icon:"tools" },
-          { label:"FEMA Projects",   value:fema.length,       sub:"Disaster reimbursement", accent:"#c0392b",  id:"capital",      icon:"alert-octagon" },
-        ].map((k,i)=>(
-          <button key={i} onClick={()=>setView(k.id)} style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:"16px 18px", borderTop:`3px solid ${k.accent}`, textAlign:"left", cursor:"pointer" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
-              <div style={{ fontSize:11, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", color:"#888" }}>{k.label}</div>
-              {k.icon && <Icon name={k.icon} size={20} color={k.accent} style={{ opacity:0.35 }} />}
-            </div>
-            <div style={{ fontSize:24, fontWeight:700, fontFamily:"monospace", color:k.accent }}>{k.value}</div>
-            <div style={{ fontSize:12, color:"#888", marginTop:4 }}>{k.sub}</div>
-          </button>
-        ))}
-      </div>
-
-      {/* Status breakdown */}
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:20 }}>
-
-        {/* Active projects */}
-        <SectionCard title="Active Projects & Jobs" subtitle={`${active.length} underway`} icon="player-play">
-          {active.length===0 ? (
-            <div style={{ padding:"24px", textAlign:"center", color:"#aaa", fontSize:13 }}>No active projects</div>
-          ) : (
-            <Table
-              headers={[{ label:"#" },{ label:"Name" },{ label:"Type" },{ label:"Assets" },{ label:"Status" }]}
-              rows={active.map(p=>[
-                <span style={{ fontFamily:"monospace", fontWeight:700, color:"#5a1a8a", fontSize:12 }}>{p.projectNumber}</span>,
-                <span style={{ fontWeight:600, fontSize:13 }}>{p.projectType}</span>,
-                <span style={{ fontSize:11, background:"#f0f0ee", padding:"2px 6px", borderRadius:4 }}>{p.projectType}</span>,
-                <span style={{ fontSize:11, color:"#1a5a3a", fontFamily:"monospace" }}>{(p.linkedAssets||[]).slice(0,2).join(", ")}{(p.linkedAssets||[]).length>2?`+${(p.linkedAssets||[]).length-2}`:""}</span>,
-                <StatusChip status={p.status} />,
-              ])}
-              emptyMessage="No active projects"
-            />
-          )}
-        </SectionCard>
-
-        {/* Planned projects */}
-        <SectionCard title="Planned Projects & Jobs" subtitle={`${planned.length} upcoming`} icon="calendar-event">
-          {planned.length===0 ? (
-            <div style={{ padding:"24px", textAlign:"center", color:"#aaa", fontSize:13 }}>No planned projects</div>
-          ) : (
-            <Table
-              headers={[{ label:"#" },{ label:"Name" },{ label:"Fund" },{ label:"Budget", right:true }]}
-              rows={planned.map(p=>[
-                <span style={{ fontFamily:"monospace", fontWeight:700, color:"#5a1a8a", fontSize:12 }}>{p.projectNumber}</span>,
-                <span style={{ fontWeight:600, fontSize:13 }}>{p.projectType}</span>,
-                <span style={{ fontSize:11, color:"#888" }}>{p.fundingSource||"Roads Fund"}</span>,
-                p.estimatedCost>0 ? <span style={{ fontFamily:"monospace", fontSize:12 }}>{fmt(p.estimatedCost)}</span> : "—",
-              ])}
-              emptyMessage="No planned projects"
-            />
-          )}
-        </SectionCard>
-      </div>
-
-      {/* Recent */}
-      <SectionCard title="Recently Added" subtitle={`${all.length} total projects and jobs`} icon="clock">
-        <Table
-          headers={[{ label:"Project #" },{ label:"Name" },{ label:"Type" },{ label:"Status" },{ label:"Start" },{ label:"End" }]}
-          rows={recent.map(p=>[
-            <span style={{ fontFamily:"monospace", fontWeight:700, color:"#5a1a8a", fontSize:12 }}>{p.projectNumber}</span>,
-            <span style={{ fontWeight:600 }}>{p.name}</span>,
-            <span style={{ fontSize:11, background:"#f0f0ee", padding:"2px 6px", borderRadius:4 }}>{p.projectType}</span>,
-            <StatusChip status={p.status} />,
-            <span style={{ fontFamily:"monospace", fontSize:12, color:"#888" }}>{p.startDate||"—"}</span>,
-            <span style={{ fontFamily:"monospace", fontSize:12, color:"#888" }}>{p.endDate||"—"}</span>,
-          ])}
-          emptyMessage="No projects yet — click New Capital Project or New Maintenance Job to get started"
-        />
-      </SectionCard>
-    </div>
-  );
-}
-
-// ── Project List ──────────────────────────────────────────────────────────────
-function ProjectList({ db, dispatch, type, setView }) {
-  const [selected,   setSelected]  = useState(null);
-  const [search,     setSearch]    = useState("");
-  const [statusFilter, setStatus]  = useState("all");
-
-  const projects = (db.projects||[]).filter(p=>p.type===type);
-  const filtered = projects.filter(p => {
-    if (statusFilter!=="all" && p.status!==statusFilter) return false;
-    if (search && !`${p.projectNumber} ${p.projectType} ${p.workDescription||""} ${(p.linkedAssets||[]).join(" ")}`.toLowerCase().includes(search.toLowerCase())) return false;
+  const filtered = useMemo(() => projects.filter(p => {
+    if (typeFilter !== "all" && p.type !== typeFilter) return false;
+    if (statusFilter !== "all" && p.status !== statusFilter) return false;
     return true;
-  });
+  }), [projects, typeFilter, statusFilter]);
 
-  const label = type==="capital" ? "Capital Project" : "Maintenance Job";
+  const selected = projects.find(p => p.id === selectedId);
 
-  if (selected) return <ProjectDetail project={selected} db={db} dispatch={dispatch} onBack={()=>setSelected(null)} />;
+  if (showNew) {
+    return (
+      <ProjectForm
+        type={newType}
+        projects={projects}
+        assets={db.infrastructureAssets || []}
+        equipment={db.equipment || []}
+        onSave={payload => {
+          dispatch({ type:"ADD_PROJECT", payload });
+          setSelectedId(payload.id);
+          setShowNew(false);
+          setView("detail");
+        }}
+        onCancel={() => setShowNew(false)}
+      />
+    );
+  }
+
+  if (view === "detail" && selected) {
+    return (
+      <ProjectDetail
+        project={selected}
+        db={db}
+        dispatch={dispatch}
+        onBack={() => { setView("list"); setSelectedId(null); }}
+        onEdit={updated => dispatch({ type:"UPDATE_PROJECT", payload: updated })}
+      />
+    );
+  }
 
   return (
     <div>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20, flexWrap:"wrap", gap:12 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", marginBottom:20, flexWrap:"wrap", gap:12 }}>
         <div>
-          <div style={{ fontSize:18, fontWeight:700, color:"#1a1a1a" }}>{type==="capital"?"Capital Projects":"Maintenance Jobs"}</div>
-          <div style={{ fontSize:13, color:"#888", marginTop:3 }}>
-            {type==="capital" ? "C1- numbered · One and Six Year Plan" : "M-Year-# numbered · Own forces"}
-          </div>
+          <div style={{ fontSize:18, fontWeight:700 }}>Projects</div>
+          <div style={{ fontSize:13, color:"#888", marginTop:2 }}>{FISCAL_YEAR.label} · Capital · Maintenance · Miscellaneous</div>
         </div>
-        <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search…" style={{ ...inp, width:200, margin:0 }} />
-          <div style={{ display:"flex", border:"1px solid #ccc", borderRadius:6, overflow:"hidden" }}>
-            {["all","planned","active","on_hold","complete"].map(s=>(
-              <button key={s} onClick={()=>setStatus(s)} style={{ padding:"7px 10px", fontSize:11, fontWeight:600, border:"none", cursor:"pointer", background:statusFilter===s?"#5a1a8a":"#fff", color:statusFilter===s?"#fff":"#555", textTransform:"capitalize" }}>
-                {s.replace("_"," ")}
-              </button>
+        <div style={{ display:"flex", gap:8 }}>
+          {[["capital","Capital","#1a3a5c"],["maintenance","Maintenance","#1a5a3a"],["miscellaneous","Miscellaneous","#5a1a8a"]].map(([t,l,c])=>(
+            <button key={t} onClick={()=>{ setNewType(t); setShowNew(true); }}
+              style={{ ...btn.small, background:c, fontSize:11 }}>+ {l}</button>
+          ))}
+        </div>
+      </div>
+
+      <ProjectDashboard projects={projects} />
+
+      <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
+        <div style={{ display:"flex", border:"1px solid #ddd", borderRadius:6, overflow:"hidden" }}>
+          {[["all","All Types"],["capital","Capital"],["maintenance","Maintenance"],["miscellaneous","Misc"]].map(([v,l])=>(
+            <button key={v} onClick={()=>setTypeFilter(v)} style={{ padding:"6px 12px", fontSize:12, fontWeight:600, border:"none", cursor:"pointer", background:typeFilter===v?"#1a3a5c":"#fff", color:typeFilter===v?"#fff":"#555" }}>{l}</button>
+          ))}
+        </div>
+        <div style={{ display:"flex", border:"1px solid #ddd", borderRadius:6, overflow:"hidden" }}>
+          {[["all","All"],["planning","Planning"],["pending","Pending"],["active","Active"],["complete","Complete"],["on_hold","On Hold"]].map(([v,l])=>(
+            <button key={v} onClick={()=>setStatus(v)} style={{ padding:"6px 12px", fontSize:12, fontWeight:600, border:"none", cursor:"pointer", background:statusFilter===v?"#1a6b35":"#fff", color:statusFilter===v?"#fff":"#555" }}>{l}</button>
+          ))}
+        </div>
+        <span style={{ fontSize:12, color:"#888" }}>{filtered.length} project{filtered.length!==1?"s":""}</span>
+      </div>
+
+      {filtered.length === 0
+        ? <div style={{ background:"#f9f9f7", border:"1px dashed #ccc", borderRadius:8, padding:48, textAlign:"center", color:"#aaa", fontSize:14 }}>
+            No projects match this filter.
+          </div>
+        : <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(340px,1fr))", gap:14 }}>
+            {filtered.map(p => (
+              <ProjectCard key={p.id} project={p} onClick={()=>{ setSelectedId(p.id); setView("detail"); }} />
             ))}
           </div>
-          <button onClick={()=>setView(type==="capital"?"newCapital":"newMaint")} style={{ ...btn.primary, background:"#5a1a8a" }}>
-            + New {label}
-          </button>
+      }
+    </div>
+  );
+}
+
+// ── Dashboard KPIs ────────────────────────────────────────────────────────────
+function ProjectDashboard({ projects }) {
+  const capital     = projects.filter(p=>p.type==="capital"&&p.status==="active");
+  const maintenance = projects.filter(p=>p.type==="maintenance"&&p.status==="active");
+  const misc        = projects.filter(p=>p.type==="miscellaneous"&&p.status==="active");
+  const totalSpent  = projects.reduce((s,p)=>s+projectTotals(p).total,0);
+  const totalBudget = projects.filter(p=>p.type==="capital").reduce((s,p)=>s+(p.estimatedCost||0),0);
+
+  return (
+    <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12, marginBottom:20 }}>
+      <KPICard label="Active Capital"     value={capital.length}     sub="Projects"       accent="#1a3a5c" icon="building-bridge" />
+      <KPICard label="Active Maintenance" value={maintenance.length} sub="Projects"       accent="#1a5a3a" icon="tool" />
+      <KPICard label="Active Misc"        value={misc.length}        sub="Projects"       accent="#5a1a8a" icon="clipboard-list" />
+      <KPICard label="Total Expended"     value={fmtSm(totalSpent)}  sub="All projects"  accent="#1a1a1a" icon="coin" />
+      <KPICard label="Capital Budget"     value={fmt(totalBudget)}   sub="Est. cost"     accent="#888"    icon="chart-bar" />
+    </div>
+  );
+}
+
+// ── Project Card ──────────────────────────────────────────────────────────────
+function ProjectCard({ project: p, onClick }) {
+  const totals    = projectTotals(p);
+  const typeColor = p.type==="capital"?"#1a3a5c":p.type==="maintenance"?"#1a5a3a":"#5a1a8a";
+  const typeLabel = p.type==="capital"?"CAPITAL":p.type==="maintenance"?"MAINTENANCE":"MISC";
+  const budget    = p.estimatedCost || 0;
+
+  return (
+    <div onClick={onClick} style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:18, cursor:"pointer", display:"flex", flexDirection:"column", gap:10 }}
+      onMouseEnter={e=>e.currentTarget.style.boxShadow="0 2px 12px rgba(0,0,0,0.1)"}
+      onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+        <div>
+          <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.08em", color:typeColor, marginBottom:3 }}>{typeLabel}</div>
+          {p.projectNumber && <div style={{ fontSize:11, fontFamily:"monospace", color:"#888", marginBottom:3 }}>{p.projectNumber}</div>}
+          <div style={{ fontSize:14, fontWeight:700, color:"#1a1a1a", lineHeight:1.3 }}>{p.name || p.workDescription || "—"}</div>
         </div>
+        <Chip status={p.status} />
       </div>
 
-      <SectionCard title={`${label}s (${filtered.length})`}>
-        <Table
-          headers={[
-            { label:"Project #" },{ label:"Name" },{ label:"Type" },
-            { label:"Location / Assets" },
-            ...(type==="capital" ? [{ label:"Budget", right:true },{ label:"Fund" }] : []),
-            { label:"Start" },{ label:"End" },{ label:"Status" },
-            ...(type==="capital" ? [{ label:"FEMA" }] : []),
-          ]}
-          rows={filtered.map(p=>[
-            <button onClick={()=>setSelected(p)} style={{ background:"none", border:"none", padding:0, color:"#5a1a8a", fontWeight:700, fontSize:13, cursor:"pointer", fontFamily:"monospace" }}>{p.projectNumber}</button>,
-            <button onClick={()=>setSelected(p)} style={{ background:"none", border:"none", padding:0, color:"#1a3a5c", fontWeight:600, fontSize:13, cursor:"pointer", textAlign:"left" }}>{p.projectType}</button>,
-            <span style={{ fontSize:11, background:"#f0f0ee", padding:"2px 6px", borderRadius:4 }}>{p.projectType}</span>,
-            <div>
-              {p.roadName && <div style={{ fontSize:12, color:"#555" }}>{p.roadName}</div>}
-              {(p.linkedAssets||[]).length>0 && (
-                <div style={{ display:"flex", flexWrap:"wrap", gap:3, marginTop:2 }}>
-                  {(p.linkedAssets||[]).slice(0,3).map((a,i)=>(
-                    <span key={i} style={{ fontFamily:"monospace", fontSize:10, background:"#e6f4ec", color:"#1a5a3a", padding:"1px 5px", borderRadius:3, fontWeight:600 }}>{a}</span>
-                  ))}
-                  {(p.linkedAssets||[]).length>3 && <span style={{ fontSize:10, color:"#888" }}>+{(p.linkedAssets||[]).length-3}</span>}
-                </div>
-              )}
-            </div>,
-            ...(type==="capital" ? [
-              p.estimatedCost>0 ? <span style={{ fontFamily:"monospace", fontSize:12 }}>{fmt(p.estimatedCost)}</span> : "—",
-              <span style={{ fontSize:11, color:"#888" }}>{p.fundingSource||"Roads Fund"}</span>,
-            ] : []),
-            <span style={{ fontFamily:"monospace", fontSize:12, color:"#888" }}>{p.startDate||"—"}</span>,
-            <span style={{ fontFamily:"monospace", fontSize:12, color:"#888" }}>{p.endDate||"—"}</span>,
-            <StatusChip status={p.status} />,
-            ...(type==="capital" ? [
-              p.isFEMA ? <span style={{ fontSize:10, background:"#fdecea", color:"#c0392b", padding:"2px 6px", borderRadius:4, fontWeight:600 }}>FEMA</span> : "—",
-            ] : []),
-          ])}
-          emptyMessage={`No ${label.toLowerCase()}s yet`}
-        />
-      </SectionCard>
+      {p.roadName && (
+        <div style={{ fontSize:12, color:"#666" }}>
+          <Icon name="road" size={11} color="#aaa" /> {p.roadName}
+          {p.roadSegments && <span style={{ color:"#aaa" }}> · {p.roadSegments}</span>}
+        </div>
+      )}
+
+      <div style={{ display:"flex", gap:14, fontSize:12, color:"#888" }}>
+        {p.startDate && <span><Icon name="calendar" size={11} color="#aaa" /> {fmtDate(p.startDate)}</span>}
+        {(p.isFEMA||p.isNDOT) && <span style={{ fontWeight:600, color:"#d97706" }}>{p.isFEMA?"FEMA":"NDOT"}</span>}
+      </div>
+
+      <div style={{ borderTop:"1px solid #f0f0ee", paddingTop:10 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", fontSize:12, marginBottom:6 }}>
+          <span style={{ color:"#888" }}>Expended</span>
+          <div style={{ display:"flex", gap:12 }}>
+            <span style={{ fontFamily:"monospace", fontWeight:700 }}>{fmtSm(totals.total)}</span>
+            {budget > 0 && <span style={{ color:"#aaa" }}>of {fmt(budget)}</span>}
+          </div>
+        </div>
+        {budget > 0 && <ProgressBar value={pct(totals.total, budget)} />}
+        {budget === 0 && totals.total === 0 && <div style={{ fontSize:11, color:"#bbb", textAlign:"center" }}>No cost entries yet</div>}
+      </div>
+
+      {totals.total > 0 && (
+        <div style={{ display:"flex", gap:10, fontSize:11 }}>
+          {[["L",totals.labor,"#1a6b35"],["E",totals.equipment,"#1a3a5c"],["M",totals.materials,"#5a1a8a"],["C",totals.contractor,"#d97706"]].map(([abbr,val,color])=>
+            val > 0 ? <span key={abbr} style={{ color }}>{abbr}: {fmtSm(val)}</span> : null
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
 // ── Project Detail ────────────────────────────────────────────────────────────
-function ProjectDetail({ project, db, dispatch, onBack }) {
-  const [editing,     setEditing]    = useState(false);
-  const [statusForm,  setStatusForm] = useState({ status:project.status, completionNotes:"" });
+function ProjectDetail({ project, db, dispatch, onBack, onEdit }) {
+  const [tab, setTab]       = useState("overview");
+  const [editing, setEditing] = useState(false);
+  const totals = projectTotals(project);
 
-  const current = (db.projects||[]).find(p=>p.id===project.id)||project;
-  const label   = current.type==="capital" ? "Capital Project" : "Maintenance Job";
+  if (editing) {
+    return (
+      <ProjectForm
+        project={project}
+        projects={db.projects||[]}
+        assets={db.infrastructureAssets||[]}
+        equipment={db.equipment||[]}
+        onSave={updated => { onEdit(updated); setEditing(false); }}
+        onCancel={() => setEditing(false)}
+      />
+    );
+  }
 
-  // Pull cost entries from cost accounting that reference this project
-  const costEntries = (db.projects||[]).find(p=>p.id===current.id);
-  const laborTotal      = (current.laborEntries     ||[]).reduce((s,e)=>s+(e.totalCost||0),0);
-  const equipmentTotal  = (current.equipmentEntries ||[]).reduce((s,e)=>s+(e.totalCost||0),0);
-  const materialsTotal  = (current.materialEntries  ||[]).reduce((s,e)=>s+(e.totalCost||0),0);
-  const contractedTotal = (current.contractedEntries||[]).reduce((s,e)=>s+(parseFloat(e.amount)||0),0);
-  const grandTotal      = laborTotal+equipmentTotal+materialsTotal+contractedTotal;
-  const budget          = parseFloat(current.estimatedCost)||0;
+  const typeColor = project.type==="capital"?"#1a3a5c":project.type==="maintenance"?"#1a5a3a":"#5a1a8a";
+  const typeLabel = project.type==="capital"?"CAPITAL":project.type==="maintenance"?"MAINTENANCE":"MISCELLANEOUS";
 
-  // Linked infrastructure assets
-  const linkedRoads      = (db.roads      ||[]).filter(r=>(current.linkedAssets||[]).some(a=>a===r.name||a===r.altName));
-  const linkedBridges    = (db.bridges    ||[]).filter(b=>(current.linkedAssets||[]).includes(b.countyNumber));
-  const linkedStructures = (db.structures ||[]).filter(s=>(current.linkedAssets||[]).includes(s.assetId));
-
-  const updateStatus = () => {
-    dispatch({ type:"UPDATE_PROJECT", payload:{ ...current, status:statusForm.status, completionNotes: statusForm.completionNotes||current.completionNotes } });
-    setEditing(false);
-  };
+  const TABS = [
+    { id:"overview",    label:"Overview",     icon:"info-circle" },
+    { id:"labor",       label:"Labor",        icon:"user-check" },
+    { id:"equipment",   label:"Equipment",    icon:"tractor" },
+    { id:"materials",   label:"Materials",    icon:"package" },
+    { id:"contractor",  label:"Contractor",   icon:"building-factory-2" },
+    { id:"engineering", label:"Engineering",  icon:"ruler-2" },
+    { id:"summary",     label:"Cost Summary", icon:"chart-pie" },
+  ];
 
   return (
     <div>
-      <button onClick={onBack} style={{ ...btn.ghost, marginBottom:20, fontSize:12, padding:"6px 14px" }}>← Back to {label.toLowerCase()}s</button>
+      <button onClick={onBack} style={{ ...btn.ghost, fontSize:12, padding:"5px 12px", marginBottom:14 }}>← All Projects</button>
 
-      {/* Header */}
-      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:12, marginBottom:18 }}>
-          <div>
-            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:4 }}>
-              <span style={{ fontFamily:"monospace", fontSize:16, fontWeight:700, color:"#5a1a8a" }}>{current.projectNumber}</span>
-              <StatusChip status={current.status} />
-              {current.isFEMA && <span style={{ fontSize:11, background:"#fdecea", color:"#c0392b", padding:"2px 8px", borderRadius:4, fontWeight:600 }}>FEMA {current.disasterNumber}</span>}
-              {current.isOneSixYear && <span style={{ fontSize:11, background:"#e8f0fb", color:"#1a4a8a", padding:"2px 8px", borderRadius:4, fontWeight:600 }}>1&6 Year Plan · {current.oneSixYear}</span>}
-            </div>
-            <div style={{ fontSize:20, fontWeight:700, color:"#1a1a1a" }}>{current.projectType}</div>
-            <div style={{ fontSize:13, color:"#555", marginTop:2 }}>{current.projectType}</div>
-            {current.workDescription && <div style={{ fontSize:13, color:"#888", marginTop:2 }}>{current.workDescription}</div>}
-          </div>
-          <button onClick={()=>setEditing(!editing)} style={{ ...btn.primary, background:"#5a1a8a", fontSize:12 }}>Update Status</button>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:12, marginBottom:16 }}>
+        <div>
+          <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.08em", color:typeColor, marginBottom:3 }}>{typeLabel}</div>
+          {project.projectNumber && <div style={{ fontSize:12, fontFamily:"monospace", color:"#888", marginBottom:4 }}>{project.projectNumber}</div>}
+          <div style={{ fontSize:20, fontWeight:700 }}>{project.name || project.workDescription || "Untitled"}</div>
+          {project.roadName && <div style={{ fontSize:13, color:"#888", marginTop:3 }}>{project.roadName}{project.roadSegments?` · ${project.roadSegments}`:""}</div>}
         </div>
+        <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+          <Chip status={project.status} />
+          <StatusAdvanceButton project={project} dispatch={dispatch} />
+          <button onClick={()=>setEditing(true)} style={{ ...btn.small, background:"#1a3a5c" }}>Edit</button>
+        </div>
+      </div>
 
-        {editing && (
-          <div style={{ background:"#f3e8ff", border:"1px solid #c8a0e8", borderRadius:8, padding:16, marginBottom:16 }}>
-            <div style={{ fontWeight:700, fontSize:13, marginBottom:12 }}>Update Project Status</div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:12, marginBottom:12 }}>
-              <Field label="Status">
-                <select value={statusForm.status} onChange={e=>setStatusForm(s=>({...s,status:e.target.value}))} style={inp}>
-                  {STATUS_FLOW.map(s=><option key={s.value} value={s.value}>{s.label}</option>)}
-                </select>
-              </Field>
-              {statusForm.status==="complete" && (
-                <Field label="Completion Notes">
-                  <input type="text" placeholder="As-built notes, final quantities, warranty info…" value={statusForm.completionNotes} onChange={e=>setStatusForm(s=>({...s,completionNotes:e.target.value}))} style={inp} />
-                </Field>
-              )}
-            </div>
-            <div style={{ display:"flex", gap:8 }}>
-              <button onClick={updateStatus} style={{ ...btn.small, background:"#5a1a8a" }}>Save</button>
-              <button onClick={()=>setEditing(false)} style={{ ...btn.small, background:"#888" }}>Cancel</button>
-            </div>
-          </div>
-        )}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:10, marginBottom:20 }}>
+        <KPICard label="Labor"      value={fmtSm(totals.labor)}      sub="" accent="#1a6b35" icon="user-check" />
+        <KPICard label="Equipment"  value={fmtSm(totals.equipment)}  sub="" accent="#1a3a5c" icon="tractor" />
+        <KPICard label="Materials"  value={fmtSm(totals.materials)}  sub="" accent="#5a1a8a" icon="package" />
+        <KPICard label="Contractor" value={fmtSm(totals.contractor)} sub="" accent="#d97706" icon="building-factory-2" />
+        <KPICard label="Total"      value={fmtSm(totals.total)}      sub={project.estimatedCost?`of ${fmt(project.estimatedCost)} est.`:""} accent="#1a1a1a" icon="coin" />
+      </div>
 
-        {/* Cost summary — capital projects only */}
-        {current.type==="capital" && (
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12, marginTop:16 }}>
-            {[
-              { label:"Budget",      value:budget>0?fmt(budget):"—",  color:"#5a1a8a" },
-              { label:"Labor",       value:fmtSm(laborTotal),          color:"#1a3a5c" },
-              { label:"Equipment",   value:fmtSm(equipmentTotal),      color:"#6b3a1a" },
-              { label:"Materials",   value:fmtSm(materialsTotal),      color:"#1a6b35" },
-              { label:"Contracted",  value:fmtSm(contractedTotal),     color:"#1a5a8a" },
-            ].map((k,i)=>(
-              <div key={i} style={{ background:"#f7f7f5", borderRadius:8, padding:"10px 14px", borderTop:`3px solid ${k.color}` }}>
-                <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em", color:"#888", marginBottom:4 }}>{k.label}</div>
-                <div style={{ fontSize:16, fontWeight:700, fontFamily:"monospace", color:k.color }}>{k.value}</div>
-              </div>
-            ))}
-          </div>
-        )}
-        {budget>0 && grandTotal>0 && (
-          <div style={{ marginTop:12 }}>
-            <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, color:"#888", marginBottom:4 }}>
-              <span>Budget utilization</span>
-              <span>{fmt(grandTotal)} of {fmt(budget)} ({pct(grandTotal,budget)}%)</span>
-            </div>
-            <ProgressBar value={pct(grandTotal,budget)} />
-          </div>
-        )}
+      <div style={{ display:"flex", borderBottom:"1px solid #ddd", marginBottom:24, overflowX:"auto" }}>
+        {TABS.map(t => (
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{
+            background:"transparent", border:"none", padding:"8px 14px 10px",
+            fontWeight:tab===t.id?700:400, fontSize:13, cursor:"pointer",
+            color:tab===t.id?"#1a5a3a":"#666",
+            borderBottom:tab===t.id?"2px solid #1a5a3a":"2px solid transparent",
+            marginBottom:-1, whiteSpace:"nowrap", display:"inline-flex", alignItems:"center", gap:6,
+          }}>
+            <Icon name={t.icon} size={12} color={tab===t.id?"#1a5a3a":"#888"} />
+            {t.label}
+          </button>
+        ))}
+      </div>
 
-        {/* Project details */}
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:16, marginTop:18 }}>
+      {tab==="overview"   && <ProjectOverview project={project} totals={totals} />}
+      {tab==="labor"      && <LaborTab       project={project} db={db} dispatch={dispatch} />}
+      {tab==="equipment"  && <EquipmentTab   project={project} db={db} dispatch={dispatch} />}
+      {tab==="materials"  && <MaterialsTab   project={project} db={db} dispatch={dispatch} />}
+      {tab==="contractor" && <ContractorTab  project={project} dispatch={dispatch} />}
+      {tab==="engineering"&& <EngineeringTab project={project} dispatch={dispatch} />}
+      {tab==="summary"    && <CostSummaryTab project={project} totals={totals} />}
+    </div>
+  );
+}
+
+function StatusAdvanceButton({ project, dispatch }) {
+  const NEXT = { planning:"pending", pending:"active", active:"complete" };
+  const next = NEXT[project.status];
+  if (!next) return null;
+  const labels = { pending:"→ Pending", active:"→ Active", complete:"→ Complete" };
+  const colors = { pending:"#d97706", active:"#1a6b35", complete:"#1a3a5c" };
+  return (
+    <button onClick={()=>dispatch({ type:"UPDATE_PROJECT", payload:{ ...project, status:next, endDate:next==="complete"?new Date().toISOString().split("T")[0]:project.endDate } })}
+      style={{ ...btn.small, background:colors[next], fontSize:11 }}>
+      {labels[next]}
+    </button>
+  );
+}
+
+// ── Overview ──────────────────────────────────────────────────────────────────
+function ProjectOverview({ project: p, totals }) {
+  return (
+    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20 }}>
+      <SectionCard title="Project Details">
+        <div style={{ padding:"0 2px" }}>
           {[
-            { label:"Project Number",    value:current.projectNumber },
-            { label:"Project Type",      value:current.projectType },
-            { label:"Start Date",        value:current.startDate||"—" },
-            { label:"End Date",          value:current.endDate||"—" },
-            { label:"Funding Source",    value:current.fundingSource||"Roads Fund" },
-            ...(current.type==="capital"?[
-              { label:"NDOT Project #",  value:current.ndotNumber||"—" },
-              { label:"Contractor",      value:current.contractor||"—" },
-              { label:"Contract Amount", value:current.contractAmount>0?fmt(current.contractAmount):"—" },
-              { label:"Bid Date",        value:current.bidDate||"—" },
+            ["Type",       p.type.charAt(0).toUpperCase()+p.type.slice(1)],
+            ["Project #",  p.projectNumber||"—"],
+            ["Work Type",  p.projectType||"—"],
+            ["Funding",    p.fundingSource||"—"],
+            ["Start",      fmtDate(p.startDate)],
+            ["End",        fmtDate(p.endDate)],
+            ...(p.type==="capital"?[
+              ["Est. Cost",   fmt(p.estimatedCost||0)],
+              ["Contractor",  p.contractor||"—"],
+              ["Contract $",  p.contractAmount?fmt(p.contractAmount):"—"],
+              ["Bid Date",    fmtDate(p.bidDate)],
+              ["1–6 Year",    p.isOneSixYear?p.oneSixYear:"No"],
             ]:[]),
-            { label:"Road Name",         value:current.roadName||"—" },
-            { label:"Road Segment(s)",    value:current.roadSegments||"—" },
-            { label:"GPS",                value:current.gps||"—" },
-          ].map((f,i)=>(
-            <div key={i}>
-              <div style={{ fontSize:11, color:"#888", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:3 }}>{f.label}</div>
-              <div style={{ fontSize:13, color:"#1a1a1a", fontFamily: f.label.includes("#")||f.label.includes("Amount")||f.label.includes("GPS")?"monospace":"inherit" }}>{f.value}</div>
+            ...(p.type==="miscellaneous"?[["Calendar Year",String(p.calendarYear)]]:[]),
+          ].map(([label,val])=>(
+            <div key={label} style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:"1px solid #f0f0ee", fontSize:13 }}>
+              <span style={{ color:"#666" }}>{label}</span>
+              <span style={{ fontWeight:600 }}>{val}</span>
             </div>
           ))}
         </div>
+      </SectionCard>
 
-        {current.completionNotes && (
-          <div style={{ marginTop:14, padding:"10px 14px", background:"#e8f0fb", borderRadius:6, fontSize:13, color:"#1a4a8a" }}>
-            <strong>Completion Notes:</strong> {current.completionNotes}
+      <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+        <SectionCard title="Location">
+          <div style={{ padding:"10px 2px", fontSize:13 }}>
+            {p.roadName    && <div style={{ marginBottom:5 }}><strong>Road:</strong> {p.roadName}</div>}
+            {p.roadSegments&& <div style={{ marginBottom:5 }}><strong>Segment:</strong> {p.roadSegments}</div>}
+            {p.gps         && <div><strong>GPS:</strong> <span style={{ fontFamily:"monospace", fontSize:12 }}>{p.gps}</span></div>}
+            {!p.roadName&&!p.roadSegments&&!p.gps && <span style={{ color:"#aaa" }}>No location set</span>}
+          </div>
+        </SectionCard>
+
+        {(p.isFEMA||p.isNDOT) && (
+          <SectionCard title="Federal / State">
+            <div style={{ padding:"10px 2px", fontSize:13 }}>
+              {p.isFEMA && <div style={{ marginBottom:5 }}><strong>FEMA Disaster #:</strong> {p.disasterNumber||"—"}</div>}
+              {p.isNDOT && <div style={{ marginBottom:5 }}><strong>NDOT Project #:</strong> {p.ndotNumber||"—"}</div>}
+              <div style={{ background:"#fef3cd", border:"1px solid #f0d080", borderRadius:5, padding:"8px 12px", fontSize:12, color:"#7a4f00", marginTop:8 }}>
+                Force account documentation required — see Cost Summary tab.
+              </div>
+            </div>
+          </SectionCard>
+        )}
+
+        <SectionCard title="Work Description">
+          <div style={{ padding:"10px 2px", fontSize:13, color:p.workDescription?"#1a1a1a":"#aaa", lineHeight:1.6 }}>
+            {p.workDescription || "No description entered."}
+          </div>
+        </SectionCard>
+      </div>
+    </div>
+  );
+}
+
+// ── Labor tab ─────────────────────────────────────────────────────────────────
+function LaborTab({ project, db, dispatch }) {
+  const [showForm, setShowForm] = useState(false);
+  const [editEntry, setEditEntry] = useState(null);
+  const entries    = project.laborEntries || [];
+  const totalHours = entries.reduce((s,e)=>s+(e.hoursWorked||0),0);
+  const totalCost  = entries.reduce((s,e)=>s+(e.totalCost||0),0);
+  const femaTotal  = entries.reduce((s,e)=>s+(e.femaTotal||0),0);
+
+  if (showForm||editEntry) {
+    return <LaborEntryForm entry={editEntry} onSave={entry=>{ dispatch({ type:editEntry?"UPDATE_PROJECT_ENTRY":"ADD_PROJECT_ENTRY", payload:{ projectId:project.id, entryType:"laborEntries", entry } }); setShowForm(false); setEditEntry(null); }} onCancel={()=>{ setShowForm(false); setEditEntry(null); }} />;
+  }
+
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+        <div style={{ display:"flex", gap:20, fontSize:13 }}>
+          <span>Hours: <strong>{totalHours.toFixed(1)}</strong></span>
+          <span>Labor cost: <strong style={{ color:"#1a6b35" }}>{fmtSm(totalCost)}</strong></span>
+          {femaTotal>0 && <span>FEMA total: <strong style={{ color:"#d97706" }}>{fmtSm(femaTotal)}</strong></span>}
+        </div>
+        <button onClick={()=>setShowForm(true)} style={btn.primary}>+ Add Labor Entry</button>
+      </div>
+      <Table
+        headers={[{label:"Date"},{label:"Employee"},{label:"Hours"},{label:"Rate"},{label:"Labor Cost"},{label:"FEMA Rate"},{label:"FEMA Total"},{label:"Segment"},{label:""}]}
+        rows={entries.map(e=>[
+          <span style={{fontFamily:"monospace",fontSize:12}}>{fmtDate(e.date)}</span>,
+          e.employeeName||"—",
+          <span style={{fontFamily:"monospace"}}>{e.hoursWorked}</span>,
+          <span style={{fontFamily:"monospace"}}>{fmtSm(e.hourlyRate||0)}</span>,
+          <span style={{fontFamily:"monospace",fontWeight:600}}>{fmtSm(e.totalCost||0)}</span>,
+          <span style={{fontFamily:"monospace",color:"#d97706"}}>{e.femaRate?fmtSm(e.femaRate):"/hr —"}</span>,
+          <span style={{fontFamily:"monospace",color:"#d97706"}}>{e.femaTotal?fmtSm(e.femaTotal):"—"}</span>,
+          <span style={{fontSize:11,color:"#888"}}>{(e.linkedAssets||[]).join(", ")||"—"}</span>,
+          <button onClick={()=>setEditEntry(e)} style={{...btn.small,background:"#1a3a5c",fontSize:10,padding:"4px 10px"}}>Edit</button>,
+        ])}
+        emptyMessage="No labor entries yet"
+      />
+    </div>
+  );
+}
+
+function LaborEntryForm({ entry, onSave, onCancel }) {
+  const FEMA_OVH = 1.157;
+  const [form, setForm] = useState({
+    id:           entry?.id || `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+    date:         entry?.date || "",
+    employeeName: entry?.employeeName || "",
+    hoursWorked:  entry?.hoursWorked ?? "",
+    hourlyRate:   entry?.hourlyRate ?? "",
+    femaRate:     entry?.femaRate ?? "",
+    linkedAssets: entry?.linkedAssets || [],
+    notes:        entry?.notes || "",
+    createdAt:    entry?.createdAt || new Date().toISOString(),
+  });
+  const set = (k,v) => setForm(f=>({...f,[k]:v}));
+  const laborCost = (parseFloat(form.hoursWorked)||0) * (parseFloat(form.hourlyRate)||0);
+  const femaTotal = (parseFloat(form.hoursWorked)||0) * (parseFloat(form.femaRate)||0) * FEMA_OVH;
+
+  return (
+    <div style={{ maxWidth:680 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:18 }}>
+        <button onClick={onCancel} style={{ ...btn.ghost, fontSize:12, padding:"5px 12px" }}>← Cancel</button>
+        <div style={{ fontSize:16, fontWeight:700 }}>{entry?"Edit":"Add"} Labor Entry</div>
+      </div>
+      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:20, marginBottom:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr", gap:14, marginBottom:14 }}>
+          <Field label="Date" required><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} /></Field>
+          <Field label="Employee" required><input type="text" value={form.employeeName} onChange={e=>set("employeeName",e.target.value)} style={inp} /></Field>
+          <Field label="Hours" required><input type="number" min="0" step="0.25" value={form.hoursWorked} onChange={e=>set("hoursWorked",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:14, marginBottom:14 }}>
+          <Field label="Hourly Rate ($)" required><input type="number" min="0" step="0.01" value={form.hourlyRate} onChange={e=>set("hourlyRate",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
+          <Field label="Labor Cost"><div style={{ ...inp, background:"#f7f7f5", fontFamily:"monospace", fontWeight:700, color:"#1a6b35" }}>{fmtSm(laborCost)}</div></Field>
+          <Field label="FEMA ST Rate ($/hr)"><input type="number" min="0" step="0.01" value={form.femaRate} onChange={e=>set("femaRate",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="Schedule rate…" /></Field>
+          <Field label="FEMA Total (15.7% OVH)"><div style={{ ...inp, background:"#fef3cd", fontFamily:"monospace", fontWeight:700, color:"#d97706" }}>{parseFloat(form.femaRate)>0?fmtSm(femaTotal):"—"}</div></Field>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr", gap:14 }}>
+          <Field label="Road Segment / Asset"><input type="text" value={(form.linkedAssets||[]).join(", ")} onChange={e=>set("linkedAssets",e.target.value.split(",").map(s=>s.trim()).filter(Boolean))} style={inp} placeholder="Road 14 — MP 2.1 to 3.4…" /></Field>
+          <Field label="Notes"><input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={inp} /></Field>
+        </div>
+      </div>
+      <div style={{ display:"flex", gap:10 }}>
+        <button onClick={()=>onSave({ ...form, hoursWorked:parseFloat(form.hoursWorked)||0, hourlyRate:parseFloat(form.hourlyRate)||0, femaRate:parseFloat(form.femaRate)||0, totalCost:laborCost, femaTotal:parseFloat(form.femaRate)>0?femaTotal:0 })} style={btn.primary}>{entry?"Save":"Add Entry"}</button>
+        <button onClick={onCancel} style={btn.ghost}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Equipment tab ─────────────────────────────────────────────────────────────
+function EquipmentTab({ project, db, dispatch }) {
+  const [showForm, setShowForm] = useState(false);
+  const [editEntry, setEditEntry] = useState(null);
+  const entries  = project.equipmentEntries || [];
+  const units    = db.equipment || [];
+  const totalCost= entries.reduce((s,e)=>s+(e.totalCost||0),0);
+
+  if (showForm||editEntry) {
+    return <EquipmentEntryForm entry={editEntry} units={units} onSave={entry=>{ dispatch({ type:editEntry?"UPDATE_PROJECT_ENTRY":"ADD_PROJECT_ENTRY", payload:{ projectId:project.id, entryType:"equipmentEntries", entry } }); setShowForm(false); setEditEntry(null); }} onCancel={()=>{ setShowForm(false); setEditEntry(null); }} />;
+  }
+
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+        <div style={{ fontSize:13 }}>Total equipment cost: <strong style={{ color:"#1a3a5c" }}>{fmtSm(totalCost)}</strong></div>
+        <button onClick={()=>setShowForm(true)} style={btn.primary}>+ Add Equipment Entry</button>
+      </div>
+      <Table
+        headers={[{label:"Date"},{label:"Unit"},{label:"Hours"},{label:"FEMA Rate"},{label:"Total"},{label:"Operator"},{label:"Segment"},{label:""}]}
+        rows={entries.map(e=>[
+          <span style={{fontFamily:"monospace",fontSize:12}}>{fmtDate(e.date)}</span>,
+          e.equipmentName||"—",
+          <span style={{fontFamily:"monospace"}}>{e.hoursOperated}</span>,
+          <span style={{fontFamily:"monospace",color:"#d97706"}}>{e.femaRate?`${fmtSm(e.femaRate)}/hr`:"—"}</span>,
+          <span style={{fontFamily:"monospace",fontWeight:600}}>{fmtSm(e.totalCost||0)}</span>,
+          e.operatorName||"—",
+          <span style={{fontSize:11,color:"#888"}}>{(e.linkedAssets||[]).join(", ")||"—"}</span>,
+          <button onClick={()=>setEditEntry(e)} style={{...btn.small,background:"#1a3a5c",fontSize:10,padding:"4px 10px"}}>Edit</button>,
+        ])}
+        emptyMessage="No equipment entries yet"
+      />
+    </div>
+  );
+}
+
+function EquipmentEntryForm({ entry, units, onSave, onCancel }) {
+  const [form, setForm] = useState({
+    id:            entry?.id || `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+    date:          entry?.date || "",
+    equipmentId:   entry?.equipmentId || "",
+    equipmentName: entry?.equipmentName || "",
+    unitNumber:    entry?.unitNumber || "",
+    hoursOperated: entry?.hoursOperated ?? "",
+    femaRate:      entry?.femaRate ?? "",
+    operatorName:  entry?.operatorName || "",
+    linkedAssets:  entry?.linkedAssets || [],
+    notes:         entry?.notes || "",
+    createdAt:     entry?.createdAt || new Date().toISOString(),
+  });
+  const set = (k,v) => setForm(f=>({...f,[k]:v}));
+  const totalCost = (parseFloat(form.hoursOperated)||0) * (parseFloat(form.femaRate)||0);
+
+  const handleUnitSelect = uid => {
+    const u = units.find(u=>u.id===uid);
+    if (u) { set("equipmentId",u.id); set("equipmentName",`${u.year||""} ${u.make||""} ${u.model||""}`.trim()||u.unitNumber); set("unitNumber",u.unitNumber||""); set("femaRate",u.femaRate||""); }
+    else { set("equipmentId",uid); }
+  };
+
+  return (
+    <div style={{ maxWidth:680 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:18 }}>
+        <button onClick={onCancel} style={{ ...btn.ghost, fontSize:12, padding:"5px 12px" }}>← Cancel</button>
+        <div style={{ fontSize:16, fontWeight:700 }}>{entry?"Edit":"Add"} Equipment Entry</div>
+      </div>
+      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:20, marginBottom:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:14, marginBottom:14 }}>
+          <Field label="Date" required><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} /></Field>
+          <Field label="Equipment Unit" required>
+            <select value={form.equipmentId} onChange={e=>handleUnitSelect(e.target.value)} style={inp}>
+              <option value="">Select unit…</option>
+              {units.map(u=><option key={u.id} value={u.id}>{u.unitNumber?`${u.unitNumber} — `:""}{u.year||""} {u.make||""} {u.model||""}</option>)}
+              <option value="__manual__">Other / Manual entry</option>
+            </select>
+          </Field>
+        </div>
+        {form.equipmentId==="__manual__" && (
+          <div style={{ marginBottom:14 }}>
+            <Field label="Description"><input type="text" value={form.equipmentName} onChange={e=>set("equipmentName",e.target.value)} style={inp} placeholder="Year Make Model…" /></Field>
           </div>
         )}
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:14, marginBottom:14 }}>
+          <Field label="Hours" required><input type="number" min="0" step="0.25" value={form.hoursOperated} onChange={e=>set("hoursOperated",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
+          <Field label="FEMA Rate ($/hr)"><input type="number" min="0" step="0.01" value={form.femaRate} onChange={e=>set("femaRate",e.target.value)} style={{ ...inp, fontFamily:"monospace", color:"#d97706" }} /></Field>
+          <Field label="Total Cost"><div style={{ ...inp, background:"#f7f7f5", fontFamily:"monospace", fontWeight:700, color:"#1a3a5c" }}>{fmtSm(totalCost)}</div></Field>
+          <Field label="Operator"><input type="text" value={form.operatorName} onChange={e=>set("operatorName",e.target.value)} style={inp} /></Field>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr", gap:14 }}>
+          <Field label="Segment / Asset"><input type="text" value={(form.linkedAssets||[]).join(", ")} onChange={e=>set("linkedAssets",e.target.value.split(",").map(s=>s.trim()).filter(Boolean))} style={inp} placeholder="Road 14 — MP 2.1 to 3.4" /></Field>
+          <Field label="Notes"><input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={inp} /></Field>
+        </div>
+      </div>
+      <div style={{ display:"flex", gap:10 }}>
+        <button onClick={()=>onSave({ ...form, hoursOperated:parseFloat(form.hoursOperated)||0, femaRate:parseFloat(form.femaRate)||0, totalCost })} style={btn.primary}>{entry?"Save":"Add Entry"}</button>
+        <button onClick={onCancel} style={btn.ghost}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Materials tab ─────────────────────────────────────────────────────────────
+function MaterialsTab({ project, db, dispatch }) {
+  const [showForm, setShowForm] = useState(false);
+  const [editEntry, setEditEntry] = useState(null);
+  const entries   = project.materialEntries || [];
+  const totalCost = entries.reduce((s,e)=>s+(e.totalCost||0),0);
+  const invItems  = (db.inventoryItems||[]).filter(i=>i.active!==false);
+
+  if (showForm||editEntry) {
+    return <MaterialEntryForm entry={editEntry} invItems={invItems} onSave={entry=>{ dispatch({ type:editEntry?"UPDATE_PROJECT_ENTRY":"ADD_PROJECT_ENTRY", payload:{ projectId:project.id, entryType:"materialEntries", entry } }); setShowForm(false); setEditEntry(null); }} onCancel={()=>{ setShowForm(false); setEditEntry(null); }} />;
+  }
+
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+        <div style={{ fontSize:13 }}>Total materials: <strong style={{ color:"#5a1a8a" }}>{fmtSm(totalCost)}</strong></div>
+        <button onClick={()=>setShowForm(true)} style={btn.primary}>+ Add Material Entry</button>
+      </div>
+      <Table
+        headers={[{label:"Date"},{label:"Item"},{label:"Qty"},{label:"Cost"},{label:"Segment"},{label:"Source"},{label:""}]}
+        rows={entries.map(e=>[
+          <span style={{fontFamily:"monospace",fontSize:12}}>{fmtDate(e.date)}</span>,
+          <span style={{fontWeight:600}}>{e.itemName||"—"}</span>,
+          <span style={{fontFamily:"monospace"}}>{e.quantity} {e.unitOfMeasure||""}</span>,
+          <span style={{fontFamily:"monospace",fontWeight:600,color:"#5a1a8a"}}>{fmtSm(e.totalCost||0)}</span>,
+          <span style={{fontSize:11,color:"#888"}}>{(e.linkedAssets||[]).join(", ")||"—"}</span>,
+          <span style={{fontSize:11,color:"#aaa"}}>{(e.batchLines||[]).length>0?`FIFO (${e.batchLines.length})`:"Manual"}</span>,
+          <button onClick={()=>setEditEntry(e)} style={{...btn.small,background:"#5a1a8a",fontSize:10,padding:"4px 10px"}}>Edit</button>,
+        ])}
+        emptyMessage="No material entries — issue from Inventory to populate automatically, or add manually"
+      />
+    </div>
+  );
+}
+
+function MaterialEntryForm({ entry, invItems, onSave, onCancel }) {
+  const [form, setForm] = useState({
+    id:           entry?.id || `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+    date:         entry?.date || "",
+    itemId:       entry?.itemId || "",
+    itemName:     entry?.itemName || "",
+    quantity:     entry?.quantity ?? "",
+    unitOfMeasure:entry?.unitOfMeasure || "",
+    batchLines:   entry?.batchLines || [],
+    totalCost:    entry?.totalCost ?? "",
+    linkedAssets: entry?.linkedAssets || [],
+    notes:        entry?.notes || "",
+    createdAt:    entry?.createdAt || new Date().toISOString(),
+  });
+  const set = (k,v) => setForm(f=>({...f,[k]:v}));
+
+  const handleItemSelect = id => {
+    const item = invItems.find(i=>i.id===id);
+    set("itemId",id); set("itemName",item?.name||""); set("unitOfMeasure",item?.unitOfMeasure||"");
+  };
+
+  return (
+    <div style={{ maxWidth:640 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:18 }}>
+        <button onClick={onCancel} style={{ ...btn.ghost, fontSize:12, padding:"5px 12px" }}>← Cancel</button>
+        <div style={{ fontSize:16, fontWeight:700 }}>{entry?"Edit":"Add"} Material Entry</div>
+      </div>
+      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:20, marginBottom:16 }}>
+        <div style={{ fontSize:12, color:"#888", background:"#f7f7f5", borderRadius:5, padding:"8px 12px", marginBottom:14 }}>
+          💡 Materials issued from Inventory appear here automatically with FIFO cost. Use this form for contractor-supplied or other materials.
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:14, marginBottom:14 }}>
+          <Field label="Date" required><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} /></Field>
+          <Field label="Item (from catalog — optional)">
+            <select value={form.itemId} onChange={e=>handleItemSelect(e.target.value)} style={inp}>
+              <option value="">Manual / not in catalog</option>
+              {invItems.map(i=><option key={i.id} value={i.id}>{i.name}</option>)}
+            </select>
+          </Field>
+        </div>
+        {!form.itemId && (
+          <div style={{ marginBottom:14 }}>
+            <Field label="Material Description" required><input type="text" value={form.itemName} onChange={e=>set("itemName",e.target.value)} style={inp} /></Field>
+          </div>
+        )}
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14, marginBottom:14 }}>
+          <Field label="Quantity" required><input type="number" min="0" step="any" value={form.quantity} onChange={e=>set("quantity",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
+          <Field label="Unit"><input type="text" value={form.unitOfMeasure} onChange={e=>set("unitOfMeasure",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="TON, CY, LF…" /></Field>
+          <Field label="Total Cost ($)" required><input type="number" min="0" step="0.01" value={form.batchLines.length>0?form.totalCost:form.totalCost} onChange={e=>set("totalCost",e.target.value)} readOnly={form.batchLines.length>0} style={{ ...inp, fontFamily:"monospace", background:form.batchLines.length>0?"#f7f7f5":"" }} /></Field>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr", gap:14 }}>
+          <Field label="Segment / Asset"><input type="text" value={(form.linkedAssets||[]).join(", ")} onChange={e=>set("linkedAssets",e.target.value.split(",").map(s=>s.trim()).filter(Boolean))} style={inp} placeholder="Road 14 — MP 2.1 to 3.4" /></Field>
+          <Field label="Notes"><input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={inp} /></Field>
+        </div>
+      </div>
+      <div style={{ display:"flex", gap:10 }}>
+        <button onClick={()=>onSave({ ...form, quantity:parseFloat(form.quantity)||0, totalCost:parseFloat(form.totalCost)||0 })} style={btn.primary}>{entry?"Save":"Add Entry"}</button>
+        <button onClick={onCancel} style={btn.ghost}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Contractor tab ────────────────────────────────────────────────────────────
+function ContractorTab({ project, dispatch }) {
+  const [showForm, setShowForm] = useState(false);
+  const [editEntry, setEditEntry] = useState(null);
+  const entries   = project.contractorEntries || [];
+  const totalCost = entries.reduce((s,e)=>s+(e.totalAmount||0),0);
+
+  if (showForm||editEntry) {
+    return <ContractorEntryForm entry={editEntry} onSave={entry=>{ dispatch({ type:editEntry?"UPDATE_PROJECT_ENTRY":"ADD_PROJECT_ENTRY", payload:{ projectId:project.id, entryType:"contractorEntries", entry } }); setShowForm(false); setEditEntry(null); }} onCancel={()=>{ setShowForm(false); setEditEntry(null); }} />;
+  }
+
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+        <div style={{ fontSize:13 }}>Total contractor: <strong style={{ color:"#d97706" }}>{fmtSm(totalCost)}</strong></div>
+        <button onClick={()=>setShowForm(true)} style={btn.primary}>+ Add Contractor Invoice</button>
+      </div>
+      <Table
+        headers={[{label:"Date"},{label:"Contractor"},{label:"Description"},{label:"Invoice #"},{label:"Amount"},{label:"Status"},{label:""}]}
+        rows={entries.map(e=>[
+          <span style={{fontFamily:"monospace",fontSize:12}}>{fmtDate(e.date)}</span>,
+          e.contractorName||"—",
+          <span style={{fontSize:12}}>{e.description||"—"}</span>,
+          <span style={{fontFamily:"monospace",fontSize:12,color:"#888"}}>{e.invoiceNumber||"—"}</span>,
+          <span style={{fontFamily:"monospace",fontWeight:600}}>{fmtSm(e.totalAmount||0)}</span>,
+          <span style={{fontSize:11,fontWeight:600,color:e.paymentStatus==="paid"?"#1a6b35":"#d97706"}}>{e.paymentStatus==="paid"?"Paid":"Unpaid"}</span>,
+          <button onClick={()=>setEditEntry(e)} style={{...btn.small,background:"#d97706",fontSize:10,padding:"4px 10px"}}>Edit</button>,
+        ])}
+        emptyMessage="No contractor invoices yet"
+      />
+    </div>
+  );
+}
+
+function ContractorEntryForm({ entry, onSave, onCancel }) {
+  const [form, setForm] = useState({
+    id:             entry?.id || `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+    date:           entry?.date || "",
+    contractorName: entry?.contractorName || "",
+    description:    entry?.description || "",
+    invoiceNumber:  entry?.invoiceNumber || "",
+    totalAmount:    entry?.totalAmount ?? "",
+    retentionPct:   entry?.retentionPct ?? 0,
+    paymentStatus:  entry?.paymentStatus || "unpaid",
+    paymentDate:    entry?.paymentDate || "",
+    changeOrder:    entry?.changeOrder || false,
+    changeOrderRef: entry?.changeOrderRef || "",
+    linkedAssets:   entry?.linkedAssets || [],
+    notes:          entry?.notes || "",
+    createdAt:      entry?.createdAt || new Date().toISOString(),
+  });
+  const set = (k,v) => setForm(f=>({...f,[k]:v}));
+  const retention = (parseFloat(form.totalAmount)||0) * (parseFloat(form.retentionPct)||0) / 100;
+  const net       = (parseFloat(form.totalAmount)||0) - retention;
+
+  return (
+    <div style={{ maxWidth:700 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:18 }}>
+        <button onClick={onCancel} style={{ ...btn.ghost, fontSize:12, padding:"5px 12px" }}>← Cancel</button>
+        <div style={{ fontSize:16, fontWeight:700 }}>{entry?"Edit":"Add"} Contractor Invoice</div>
+      </div>
+      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:20, marginBottom:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr", gap:14, marginBottom:14 }}>
+          <Field label="Date" required><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} /></Field>
+          <Field label="Contractor" required><input type="text" value={form.contractorName} onChange={e=>set("contractorName",e.target.value)} style={inp} /></Field>
+          <Field label="Invoice #"><input type="text" value={form.invoiceNumber} onChange={e=>set("invoiceNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
+        </div>
+        <div style={{ marginBottom:14 }}>
+          <Field label="Description"><input type="text" value={form.description} onChange={e=>set("description",e.target.value)} style={inp} /></Field>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:14, marginBottom:14 }}>
+          <Field label="Invoice Amount ($)" required><input type="number" min="0" step="0.01" value={form.totalAmount} onChange={e=>set("totalAmount",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
+          <Field label="Retention (%)"><input type="number" min="0" max="100" step="0.5" value={form.retentionPct} onChange={e=>set("retentionPct",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
+          <Field label="Net Payable"><div style={{ ...inp, background:"#f7f7f5", fontFamily:"monospace", fontWeight:700 }}>{fmtSm(net)}</div></Field>
+          <Field label="Payment Status">
+            <select value={form.paymentStatus} onChange={e=>set("paymentStatus",e.target.value)} style={inp}>
+              <option value="unpaid">Unpaid</option>
+              <option value="paid">Paid</option>
+              <option value="disputed">Disputed</option>
+            </select>
+          </Field>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 2fr", gap:14, marginBottom:14 }}>
+          {form.paymentStatus==="paid" && <Field label="Payment Date"><input type="date" value={form.paymentDate} onChange={e=>set("paymentDate",e.target.value)} style={inp} /></Field>}
+          <Field label="Change Order">
+            <div style={{ display:"flex", gap:8, alignItems:"center", paddingTop:8 }}>
+              <label style={{ display:"flex", gap:6, alignItems:"center", fontSize:13, cursor:"pointer" }}>
+                <input type="checkbox" checked={form.changeOrder} onChange={e=>set("changeOrder",e.target.checked)} /> CO
+              </label>
+              {form.changeOrder && <input type="text" value={form.changeOrderRef} onChange={e=>set("changeOrderRef",e.target.value)} style={{ ...inp, margin:0, fontSize:12 }} placeholder="CO #…" />}
+            </div>
+          </Field>
+          <Field label="Segment / Asset"><input type="text" value={(form.linkedAssets||[]).join(", ")} onChange={e=>set("linkedAssets",e.target.value.split(",").map(s=>s.trim()).filter(Boolean))} style={inp} /></Field>
+        </div>
+        <Field label="Notes"><input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={inp} /></Field>
+      </div>
+      <div style={{ display:"flex", gap:10 }}>
+        <button onClick={()=>onSave({ ...form, totalAmount:parseFloat(form.totalAmount)||0, retentionPct:parseFloat(form.retentionPct)||0 })} style={btn.primary}>{entry?"Save":"Add Invoice"}</button>
+        <button onClick={onCancel} style={btn.ghost}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Engineering tab ───────────────────────────────────────────────────────────
+function EngineeringTab({ project, dispatch }) {
+  const [showForm, setShowForm] = useState(false);
+  const [editEntry, setEditEntry] = useState(null);
+  const entries   = project.engineeringEntries || [];
+  const totalCost = entries.reduce((s,e)=>s+(e.amount||0),0);
+
+  if (showForm||editEntry) {
+    return <EngineeringEntryForm entry={editEntry} onSave={entry=>{ dispatch({ type:editEntry?"UPDATE_PROJECT_ENTRY":"ADD_PROJECT_ENTRY", payload:{ projectId:project.id, entryType:"engineeringEntries", entry } }); setShowForm(false); setEditEntry(null); }} onCancel={()=>{ setShowForm(false); setEditEntry(null); }} />;
+  }
+
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+        <div style={{ fontSize:13 }}>Total engineering: <strong>{fmtSm(totalCost)}</strong></div>
+        <button onClick={()=>setShowForm(true)} style={btn.primary}>+ Add Engineering Invoice</button>
+      </div>
+      <Table
+        headers={[{label:"Date"},{label:"Firm"},{label:"Service"},{label:"Invoice #"},{label:"Amount"},{label:"Phase"},{label:""}]}
+        rows={entries.map(e=>[
+          <span style={{fontFamily:"monospace",fontSize:12}}>{fmtDate(e.date)}</span>,
+          e.firmName||"—",
+          <span style={{fontSize:12}}>{e.serviceType||"—"}</span>,
+          <span style={{fontFamily:"monospace",fontSize:12,color:"#888"}}>{e.invoiceNumber||"—"}</span>,
+          <span style={{fontFamily:"monospace",fontWeight:600}}>{fmtSm(e.amount||0)}</span>,
+          <span style={{fontSize:11,color:"#888"}}>{e.phase||"—"}</span>,
+          <button onClick={()=>setEditEntry(e)} style={{...btn.small,background:"#888",fontSize:10,padding:"4px 10px"}}>Edit</button>,
+        ])}
+        emptyMessage="No engineering invoices yet"
+      />
+    </div>
+  );
+}
+
+function EngineeringEntryForm({ entry, onSave, onCancel }) {
+  const [form, setForm] = useState({
+    id:           entry?.id || `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+    date:         entry?.date || "",
+    firmName:     entry?.firmName || "",
+    serviceType:  entry?.serviceType || "Design",
+    invoiceNumber:entry?.invoiceNumber || "",
+    amount:       entry?.amount ?? "",
+    phase:        entry?.phase || "",
+    notes:        entry?.notes || "",
+    createdAt:    entry?.createdAt || new Date().toISOString(),
+  });
+  const set = (k,v) => setForm(f=>({...f,[k]:v}));
+
+  return (
+    <div style={{ maxWidth:620 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:18 }}>
+        <button onClick={onCancel} style={{ ...btn.ghost, fontSize:12, padding:"5px 12px" }}>← Cancel</button>
+        <div style={{ fontSize:16, fontWeight:700 }}>{entry?"Edit":"Add"} Engineering Invoice</div>
+      </div>
+      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:20, marginBottom:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr", gap:14, marginBottom:14 }}>
+          <Field label="Date" required><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} /></Field>
+          <Field label="Engineering Firm" required><input type="text" value={form.firmName} onChange={e=>set("firmName",e.target.value)} style={inp} /></Field>
+          <Field label="Invoice #"><input type="text" value={form.invoiceNumber} onChange={e=>set("invoiceNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:14 }}>
+          <Field label="Service Type">
+            <select value={form.serviceType} onChange={e=>set("serviceType",e.target.value)} style={inp}>
+              {["Design","Survey","Inspection","Geotechnical","Environmental","Construction Mgmt","Other"].map(s=><option key={s} value={s}>{s}</option>)}
+            </select>
+          </Field>
+          <Field label="Phase"><input type="text" value={form.phase} onChange={e=>set("phase",e.target.value)} style={inp} placeholder="Preliminary, Final…" /></Field>
+          <Field label="Amount ($)" required><input type="number" min="0" step="0.01" value={form.amount} onChange={e=>set("amount",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
+          <Field label="Notes"><input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={inp} /></Field>
+        </div>
+      </div>
+      <div style={{ display:"flex", gap:10 }}>
+        <button onClick={()=>onSave({ ...form, amount:parseFloat(form.amount)||0 })} style={btn.primary}>{entry?"Save":"Add Invoice"}</button>
+        <button onClick={onCancel} style={btn.ghost}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Cost Summary ──────────────────────────────────────────────────────────────
+function CostSummaryTab({ project, totals }) {
+  return (
+    <div style={{ maxWidth:680 }}>
+      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, overflow:"hidden", marginBottom:20 }}>
+        <div style={{ background:"#f7f7f5", padding:"12px 18px", fontWeight:700, fontSize:13, borderBottom:"1px solid #eee" }}>
+          Cost Summary — {project.name || project.projectNumber || "Project"}
+        </div>
+        <div style={{ padding:"0 18px" }}>
+          {[
+            ["Force Account — Labor",     totals.labor,       "#1a6b35"],
+            ["Force Account — Equipment", totals.equipment,   "#1a3a5c"],
+            ["Force Account — Materials", totals.materials,   "#5a1a8a"],
+            ["Contractor / Subcont.",     totals.contractor,  "#d97706"],
+            ["Engineering Fees",          totals.engineering, "#888"],
+          ].map(([label,val,color])=>(
+            <div key={label} style={{ display:"flex", justifyContent:"space-between", padding:"12px 0", borderBottom:"1px solid #f0f0ee", fontSize:14 }}>
+              <span style={{ color:"#555" }}>{label}</span>
+              <span style={{ fontFamily:"monospace", fontWeight:700, color }}>{fmtSm(val)}</span>
+            </div>
+          ))}
+          <div style={{ display:"flex", justifyContent:"space-between", padding:"14px 0", fontSize:15, fontWeight:700 }}>
+            <span>Total Project Cost</span>
+            <span style={{ fontFamily:"monospace", fontSize:17 }}>{fmtSm(totals.total)}</span>
+          </div>
+          {project.estimatedCost > 0 && (
+            <div style={{ paddingBottom:14 }}>
+              <div style={{ fontSize:13, color:"#888", marginBottom:6 }}>{pct(totals.total, project.estimatedCost)}% of {fmt(project.estimatedCost)} estimated</div>
+              <ProgressBar value={pct(totals.total, project.estimatedCost)} />
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Linked assets */}
-      {(current.linkedAssets||[]).length>0 && (
-        <SectionCard title="Linked Infrastructure Assets" subtitle={`${(current.linkedAssets||[]).length} assets`} icon="link">
-          <div style={{ display:"flex", flexWrap:"wrap", gap:8, padding:"12px 18px" }}>
-            {(current.linkedAssets||[]).map((a,i)=>{
-              const bridge = (db.bridges||[]).find(b=>b.countyNumber===a);
-              const struct = (db.structures||[]).find(s=>s.assetId===a);
-              const road   = (db.roads||[]).find(r=>r.name===a||r.altName===a);
-              const assetType = bridge?"Bridge":struct?struct.assetClass==="structure"?"Structure":"Culvert":road?"Road":"Asset";
-              const assetColor = bridge?"#6b3a1a":struct?"#1a5a3a":road?"#1a3a5c":"#888";
-              return (
-                <div key={i} style={{ background:assetColor+"12", border:`1px solid ${assetColor}30`, borderRadius:8, padding:"8px 14px", minWidth:120 }}>
-                  <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:assetColor, marginBottom:3 }}>{assetType}</div>
-                  <div style={{ fontFamily:"monospace", fontWeight:700, color:assetColor, fontSize:14 }}>{a}</div>
-                  {bridge && <div style={{ fontSize:11, color:"#888", marginTop:2 }}>{bridge.road}</div>}
-                  {struct && <div style={{ fontSize:11, color:"#888", marginTop:2 }}>{struct.road}</div>}
-                  {road   && <div style={{ fontSize:11, color:"#888", marginTop:2 }}>{road.surfType}</div>}
-                </div>
-              );
-            })}
+      {(project.isFEMA||project.isNDOT) && (
+        <div style={{ background:"#fef3cd", border:"1px solid #f0d080", borderRadius:8, padding:18 }}>
+          <div style={{ fontWeight:700, fontSize:13, marginBottom:8, color:"#7a4f00" }}>
+            Force Account Documentation — {project.isFEMA?"FEMA PA":"NDOT"}
           </div>
-        </SectionCard>
-      )}
-
-      {/* Completion notes if done */}
-      {current.status==="complete" && current.completionNotes && (
-        <SectionCard title="As-Built / Completion Notes">
-          <div style={{ padding:"12px 18px", fontSize:13, color:"#555" }}>{current.completionNotes}</div>
-        </SectionCard>
+          <div style={{ fontSize:12, color:"#7a4f00", lineHeight:1.7, marginBottom:10 }}>
+            {project.isFEMA && <>FEMA Disaster #: <strong>{project.disasterNumber||"—"}</strong>. </>}
+            {project.isNDOT && <>NDOT Project #: <strong>{project.ndotNumber||"—"}</strong>. </>}
+            All labor, equipment, and material costs above are eligible for force account documentation.
+          </div>
+          <button style={{ ...btn.small, background:"#d97706" }}>Export Force Account Report ↓</button>
+        </div>
       )}
     </div>
   );
 }
 
 // ── Project Form ──────────────────────────────────────────────────────────────
-function ProjectForm({ db, dispatch, type, onDone, existing }) {
-  const isCapital = type==="capital";
-  const label     = isCapital ? "Capital Project" : "Maintenance Job";
-  const funds     = [DEFAULT_FUND, ...(db.customFunds||[])];
-
-  const empty = {
-    projectType:"", workDescription:"",
-    projectNumber: isCapital ? "C1-" : nextMaintNumber(db.projects),
-    status:"planned", fundingSource:"Roads Fund",
-    startDate:"", endDate:"",
-    gps:"", linkedAssets:[], roadName:"", roadSegments:"",
-    isFEMA:false, disasterNumber:"",
-    // Capital only
-    estimatedCost:"", ndotNumber:"", isOneSixYear:false, oneSixYear:"Year 1",
-    contractor:"", contractAmount:"", bidDate:"",
-    completionNotes:"",
-  };
-
-  const [form,         setForm]        = useState(existing||empty);
-  const [assetInput,   setAssetInput]  = useState("");
-  const [saved,        setSaved]       = useState(false);
+function ProjectForm({ type: initialType, project, projects, assets, equipment, onSave, onCancel }) {
+  const isEdit = !!project;
+  const [form, setForm] = useState(() => {
+    if (project) return { ...project };
+    const t = initialType || "capital";
+    const base = createProject({ type: t });
+    if (t === "maintenance") base.projectNumber = nextMaintNumber(projects);
+    if (t === "miscellaneous") { base.status = "active"; base.projectNumber = ""; }
+    return base;
+  });
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
-  const addAsset = () => {
-    if (!assetInput.trim()) return;
-    set("linkedAssets", [...(form.linkedAssets||[]), assetInput.trim()]);
-    setAssetInput("");
-  };
-
-  const removeAsset = (a) => set("linkedAssets", form.linkedAssets.filter(x=>x!==a));
-
-  // Asset suggestions from db
-  const allAssetIds = [
-    ...(db.bridges||[]).map(b=>({ id:b.countyNumber, label:`Bridge · ${b.countyNumber} · ${b.road}` })),
-    ...(db.structures||[]).map(s=>({ id:s.assetId, label:`${s.assetClass==="structure"?"Structure":"Culvert"} · ${s.assetId} · ${s.road||""}` })),
-    ...(db.roads||[]).map(r=>({ id:r.name, label:`Road · ${r.name}` })),
-  ].filter(a=>!form.linkedAssets?.includes(a.id)&&a.id.toLowerCase().includes(assetInput.toLowerCase()));
-
-  const projectTypes = isCapital ? PROJECT_TYPES_CAPITAL : PROJECT_TYPES_MAINT;
-
-  const handleSubmit = () => {
-    if (!form.projectNumber || !form.projectType) return;
-    dispatch({
-      type: existing?"UPDATE_PROJECT":"ADD_PROJECT",
-      payload:{
-        ...form, id:existing?.id||Date.now(),
-        type,
-        estimatedCost: parseFloat(form.estimatedCost)||0,
-        contractAmount: parseFloat(form.contractAmount)||0,
-        createdAt: existing?.createdAt||new Date().toISOString(),
-        laborEntries:     existing?.laborEntries     ||[],
-        equipmentEntries: existing?.equipmentEntries ||[],
-        materialEntries:  existing?.materialEntries  ||[],
-        contractedEntries:existing?.contractedEntries||[],
-      },
-    });
-    setSaved(true);
-    setTimeout(()=>{ setSaved(false); onDone(); },1500);
-  };
+  const isCapital = form.type==="capital";
+  const isMaint   = form.type==="maintenance";
+  const isMisc    = form.type==="miscellaneous";
+  const typeColor = isCapital?"#1a3a5c":isMaint?"#1a5a3a":"#5a1a8a";
+  const typeLabel = isCapital?"CAPITAL":isMaint?"MAINTENANCE":"MISCELLANEOUS";
+  const statusOptions = isMisc
+    ? [["active","Active"],["complete","Complete"]]
+    : [["planning","Planning"],["pending","Pending"],["active","Active"],["complete","Complete"],["on_hold","On Hold"]];
 
   return (
-    <div style={{ maxWidth:800 }}>
-      <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:20 }}>
-        <button onClick={onDone} style={{ ...btn.ghost, fontSize:12, padding:"6px 14px" }}>← Cancel</button>
+    <div style={{ maxWidth:780 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:22 }}>
+        <button onClick={onCancel} style={{ ...btn.ghost, fontSize:12, padding:"6px 14px" }}>← Cancel</button>
         <div>
-          <div style={{ fontSize:18, fontWeight:700, color:"#1a1a1a" }}>{existing?`Edit ${label}`:`New ${label}`}</div>
-          {!isCapital && <div style={{ fontSize:13, color:"#888", marginTop:2 }}>Auto-numbered: {form.projectNumber}</div>}
+          <span style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.08em", color:typeColor, marginRight:10 }}>{typeLabel}</span>
+          <span style={{ fontSize:18, fontWeight:700 }}>{isEdit?"Edit Project":"New Project"}</span>
         </div>
       </div>
-      {saved && <div style={{ background:"#e6f4ec", border:"1px solid #a8d5b5", borderRadius:6, padding:"12px 16px", marginBottom:16, color:"#1a6b35", fontWeight:600, fontSize:13 }}>✓ {label} saved — redirecting…</div>}
 
-      {/* Basic info */}
-      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
-        <div style={{ fontWeight:700, fontSize:13, marginBottom:14, display:"flex", alignItems:"center", gap:8 }}><Icon name={isCapital?"building-skyscraper":"tools"} size={16} color="#5a1a8a" />Project Information</div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
-          <Field label={isCapital ? "C1 Number" : "Job Number"} required>
-            <input type="text" value={form.projectNumber} onChange={e=>set("projectNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace", background:isCapital?"#fff":"#f7f7f5" }} readOnly={!isCapital} />
+      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:14 }}>
+        <div style={{ fontWeight:700, fontSize:11, textTransform:"uppercase", letterSpacing:"0.06em", color:"#888", marginBottom:14 }}>Basic Info</div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr", gap:16, marginBottom:16 }}>
+          {(isCapital||isMaint) && (
+            <Field label={isCapital?"Project # (C1-###)":"Project # (M-YYYY-##)"}>
+              <input type="text" value={form.projectNumber||""} onChange={e=>set("projectNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder={isCapital?"C1-5##":"M-2026-01"} />
+            </Field>
+          )}
+          <Field label="Name / Short Description" required>
+            <input type="text" value={form.name} onChange={e=>set("name",e.target.value)} style={inp} placeholder={isMisc?"e.g. 2026 Mowing":"e.g. Road 14 Bridge Replacement"} />
           </Field>
           <Field label="Status">
             <select value={form.status} onChange={e=>set("status",e.target.value)} style={inp}>
-              {STATUS_FLOW.map(s=><option key={s.value} value={s.value}>{s.label}</option>)}
+              {statusOptions.map(([v,l])=><option key={v} value={v}>{l}</option>)}
             </select>
           </Field>
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
-          <Field label="Project Type" required>
+        <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:16, marginBottom:16 }}>
+          <Field label="Work Type">
             <select value={form.projectType} onChange={e=>set("projectType",e.target.value)} style={inp}>
-              <option value="">Select type…</option>
-              {projectTypes.map(t=><option key={t} value={t}>{t}</option>)}
+              <option value="">Select…</option>
+              {(isCapital?PROJECT_TYPES_CAPITAL:isMaint?PROJECT_TYPES_MAINT:[]).map(t=><option key={t} value={t}>{t}</option>)}
             </select>
           </Field>
-          <Field label="Funding Source">
-            <select value={form.fundingSource} onChange={e=>set("fundingSource",e.target.value)} style={inp}>
-              {funds.map(f=><option key={f} value={f}>{f}</option>)}
-            </select>
-          </Field>
+          <Field label="Start Date"><input type="date" value={form.startDate} onChange={e=>set("startDate",e.target.value)} style={inp} /></Field>
+          <Field label="End / Target Date"><input type="date" value={form.endDate} onChange={e=>set("endDate",e.target.value)} style={inp} /></Field>
         </div>
         <div style={{ marginBottom:16 }}>
           <Field label="Work Description">
-            <textarea rows={2} placeholder="Describe the scope of work — what specifically is being done…" value={form.workDescription} onChange={e=>set("workDescription",e.target.value)} style={{ ...inp, resize:"vertical" }} />
+            <textarea rows={3} value={form.workDescription} onChange={e=>set("workDescription",e.target.value)} style={{ ...inp, resize:"vertical", lineHeight:1.6 }} placeholder="Scope of work…" />
           </Field>
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16 }}>
-          <Field label="Start Date"><input type="date" value={form.startDate} onChange={e=>set("startDate",e.target.value)} style={inp} /></Field>
-          <Field label="End Date"><input type="date" value={form.endDate} onChange={e=>set("endDate",e.target.value)} style={inp} /></Field>
-          <Field label="GPS Coordinates"><input type="text" placeholder="40.350352, -98.614899" value={form.gps} onChange={e=>set("gps",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+          <Field label="Funding Source">
+            <select value={form.fundingSource} onChange={e=>set("fundingSource",e.target.value)} style={inp}>
+              {FUNDING_SOURCES.map(f=><option key={f} value={f}>{f}</option>)}
+            </select>
+          </Field>
+          {isMisc && <Field label="Calendar Year"><input type="number" value={form.calendarYear} onChange={e=>set("calendarYear",parseInt(e.target.value)||new Date().getFullYear())} style={{ ...inp, fontFamily:"monospace" }} /></Field>}
         </div>
       </div>
 
-      {/* Capital-only fields */}
+      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:14 }}>
+        <div style={{ fontWeight:700, fontSize:11, textTransform:"uppercase", letterSpacing:"0.06em", color:"#888", marginBottom:14 }}>Location</div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16 }}>
+          <Field label="Road Name"><input type="text" value={form.roadName} onChange={e=>set("roadName",e.target.value)} style={inp} placeholder="Road 14, County Rd G" /></Field>
+          <Field label="Mile Posts / Segment"><input type="text" value={form.roadSegments} onChange={e=>set("roadSegments",e.target.value)} style={inp} placeholder="MP 2.1 to MP 3.4" /></Field>
+          <Field label="GPS"><input type="text" value={form.gps} onChange={e=>set("gps",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="40.6501, -98.1234" /></Field>
+        </div>
+      </div>
+
       {isCapital && (
-        <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
-          <div style={{ fontWeight:700, fontSize:13, marginBottom:14, display:"flex", alignItems:"center", gap:8 }}><Icon name="file-dollar" size={16} color="#5a1a8a" />Capital Project Details</div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginBottom:16 }}>
-            <Field label="Estimated Budget ($)">
-              <input type="number" min="0" step="0.01" placeholder="0.00" value={form.estimatedCost} onChange={e=>set("estimatedCost",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
-            </Field>
-            <Field label="NDOT Project Number">
-              <input type="text" placeholder="NDOT assigned #…" value={form.ndotNumber} onChange={e=>set("ndotNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
-            </Field>
-            <div style={{ display:"flex", flexDirection:"column", justifyContent:"flex-end", paddingBottom:2 }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
-                <input type="checkbox" id="oneSix" checked={form.isOneSixYear} onChange={e=>set("isOneSixYear",e.target.checked)} style={{ width:14,height:14 }} />
-                <label htmlFor="oneSix" style={{ fontSize:13, fontWeight:600, color:"#444", cursor:"pointer" }}>On One and Six Year Plan</label>
-              </div>
-              {form.isOneSixYear && (
-                <select value={form.oneSixYear} onChange={e=>set("oneSixYear",e.target.value)} style={inp}>
-                  {ONE_SIX_YEARS.map(y=><option key={y} value={y}>{y}</option>)}
-                </select>
-              )}
-            </div>
+        <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:14 }}>
+          <div style={{ fontWeight:700, fontSize:11, textTransform:"uppercase", letterSpacing:"0.06em", color:"#888", marginBottom:14 }}>Capital Details</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:16, marginBottom:14 }}>
+            <Field label="Estimated Cost ($)"><input type="number" min="0" step="1000" value={form.estimatedCost||""} onChange={e=>set("estimatedCost",parseFloat(e.target.value)||0)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
+            <Field label="Contractor"><input type="text" value={form.contractor||""} onChange={e=>set("contractor",e.target.value)} style={inp} /></Field>
+            <Field label="Contract Amount ($)"><input type="number" min="0" step="1000" value={form.contractAmount||""} onChange={e=>set("contractAmount",parseFloat(e.target.value)||0)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
+            <Field label="Bid Date"><input type="date" value={form.bidDate||""} onChange={e=>set("bidDate",e.target.value)} style={inp} /></Field>
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16 }}>
-            <Field label="Contractor">
-              <input type="text" placeholder="Contractor name…" value={form.contractor} onChange={e=>set("contractor",e.target.value)} style={inp} />
-            </Field>
-            <Field label="Contract Amount ($)">
-              <input type="number" min="0" step="0.01" placeholder="0.00" value={form.contractAmount} onChange={e=>set("contractAmount",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
-            </Field>
-            <Field label="Bid Date">
-              <input type="date" value={form.bidDate} onChange={e=>set("bidDate",e.target.value)} style={inp} />
-            </Field>
+          <div style={{ display:"flex", gap:16, alignItems:"center" }}>
+            <label style={{ display:"flex", gap:8, alignItems:"center", fontSize:13, cursor:"pointer" }}>
+              <input type="checkbox" checked={!!form.isOneSixYear} onChange={e=>set("isOneSixYear",e.target.checked)} />
+              On 1–6 Year Plan
+            </label>
+            {form.isOneSixYear && (
+              <select value={form.oneSixYear||"Year 1"} onChange={e=>set("oneSixYear",e.target.value)} style={{ ...inp, margin:0, width:120 }}>
+                {ONE_SIX_YEARS.map(y=><option key={y} value={y}>{y}</option>)}
+              </select>
+            )}
           </div>
         </div>
       )}
 
-      {/* Infrastructure asset links */}
-      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
-        <div style={{ fontWeight:700, fontSize:13, marginBottom:6, display:"flex", alignItems:"center", gap:8 }}><Icon name="link" size={16} color="#1a5a3a" />Linked Infrastructure Assets</div>
-        <div style={{ fontSize:12, color:"#888", marginBottom:14 }}>Link this project to specific roads, bridges, structures, or culverts by their asset ID</div>
-        <div style={{ position:"relative", marginBottom:12 }}>
-          <div style={{ display:"flex", gap:10 }}>
-            <input
-              type="text"
-              placeholder="Type asset ID or name… (e.g. N 36.1, A 1.2, County Road 14)"
-              value={assetInput}
-              onChange={e=>setAssetInput(e.target.value)}
-              onKeyDown={e=>e.key==="Enter"&&addAsset()}
-              style={{ ...inp, flex:1 }}
-            />
-            <button onClick={addAsset} style={{ ...btn.small, background:"#5a1a8a", padding:"9px 16px" }}>+ Add</button>
+      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:20 }}>
+        <div style={{ fontWeight:700, fontSize:11, textTransform:"uppercase", letterSpacing:"0.06em", color:"#888", marginBottom:14 }}>Federal / State</div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20 }}>
+          <div>
+            <label style={{ display:"flex", gap:8, alignItems:"center", fontSize:13, cursor:"pointer", marginBottom:10 }}>
+              <input type="checkbox" checked={!!form.isFEMA} onChange={e=>set("isFEMA",e.target.checked)} />
+              FEMA Public Assistance project
+            </label>
+            {form.isFEMA && <Field label="FEMA Disaster #"><input type="text" value={form.disasterNumber||""} onChange={e=>set("disasterNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="DR-####-NE" /></Field>}
           </div>
-          {/* Suggestions dropdown */}
-          {assetInput.length>0 && allAssetIds.length>0 && (
-            <div style={{ position:"absolute", top:"100%", left:0, right:60, background:"#fff", border:"1px solid #ddd", borderRadius:6, boxShadow:"0 4px 12px rgba(0,0,0,0.1)", zIndex:100, maxHeight:200, overflowY:"auto" }}>
-              {allAssetIds.slice(0,8).map((a,i)=>(
-                <button key={i} onClick={()=>{ set("linkedAssets",[...(form.linkedAssets||[]),a.id]); setAssetInput(""); }} style={{ display:"block", width:"100%", padding:"9px 14px", background:"none", border:"none", textAlign:"left", cursor:"pointer", fontSize:12, borderBottom:"1px solid #f0f0ee" }}>
-                  <span style={{ fontFamily:"monospace", fontWeight:700, color:"#1a5a3a" }}>{a.id}</span>
-                  <span style={{ color:"#888", marginLeft:8 }}>{a.label.split("·").slice(1).join("·")}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-        {(form.linkedAssets||[]).length>0 && (
-          <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
-            {form.linkedAssets.map((a,i)=>(
-              <span key={i} style={{ background:"#e6f4ec", color:"#1a5a3a", padding:"5px 12px", borderRadius:16, fontSize:12, fontWeight:600, fontFamily:"monospace", display:"flex", alignItems:"center", gap:6 }}>
-                {a}
-                <button onClick={()=>removeAsset(a)} style={{ background:"none", border:"none", color:"#1a5a3a", cursor:"pointer", padding:0, fontSize:14, lineHeight:1 }}>×</button>
-              </span>
-            ))}
+          <div>
+            <label style={{ display:"flex", gap:8, alignItems:"center", fontSize:13, cursor:"pointer", marginBottom:10 }}>
+              <input type="checkbox" checked={!!form.isNDOT} onChange={e=>set("isNDOT",e.target.checked)} />
+              NDOT project
+            </label>
+            {form.isNDOT && <Field label="NDOT Project #"><input type="text" value={form.ndotNumber||""} onChange={e=>set("ndotNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="C1-5##" /></Field>}
           </div>
-        )}
-        {(form.linkedAssets||[]).length===0 && (
-          <div style={{ fontSize:12, color:"#aaa", fontStyle:"italic" }}>No assets linked yet — type an ID above or leave blank for general projects</div>
-        )}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginTop:14 }}>
-          <Field label="Primary Road Name">
-            <input type="text" placeholder="e.g. County Road 14, 100 E. 26th Street…" value={form.roadName} onChange={e=>set("roadName",e.target.value)} style={inp} />
-          </Field>
-          <Field label="Road Segment(s)">
-            <input type="text" placeholder="e.g. Mile 0.0 to 2.3, CR14 Section 3…" value={form.roadSegments||""} onChange={e=>set("roadSegments",e.target.value)} style={inp} />
-          </Field>
         </div>
-      </div>
-
-      {/* FEMA */}
-      <div style={{ background: form.isFEMA?"#fef8f5":"#fff", border:`1px solid ${form.isFEMA?"#e8c4a8":"#ddd"}`, borderRadius:8, padding:22, marginBottom:20 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:form.isFEMA?14:0 }}>
-          <input type="checkbox" id="fema" checked={form.isFEMA} onChange={e=>set("isFEMA",e.target.checked)} style={{ width:16,height:16 }} />
-          <label htmlFor="fema" style={{ fontSize:13, fontWeight:700, color:form.isFEMA?"#c0392b":"#444", cursor:"pointer" }}>
-  <Icon name="alert-octagon" size={14} color={form.isFEMA?"#c0392b":"#444"} /> FEMA Disaster Project — activate force account record tracking
-          </label>
-        </div>
-        {form.isFEMA && (
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
-            <Field label="FEMA Disaster Declaration Number">
-              <input type="text" placeholder="e.g. DR-4567-NE" value={form.disasterNumber} onChange={e=>set("disasterNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
-            </Field>
-            <div style={{ background:"#fdecea", borderRadius:6, padding:"10px 14px", fontSize:12, color:"#8c1b18" }}>
-              ⚠️ FEMA mode — all labor, equipment, and material entries will be formatted as force account records
-            </div>
-          </div>
-        )}
       </div>
 
       <div style={{ display:"flex", gap:10 }}>
-        <button onClick={handleSubmit} style={{ ...btn.primary, background:"#5a1a8a" }}>Save {label}</button>
-        <button onClick={onDone} style={btn.ghost}>Cancel</button>
+        <button onClick={()=>onSave(form)} style={btn.primary}>{isEdit?"Save Changes":"Create Project"}</button>
+        <button onClick={onCancel} style={btn.ghost}>Cancel</button>
       </div>
-    </div>
-  );
-}
-
-// ── Manage Funds ──────────────────────────────────────────────────────────────
-function ManageFunds({ db, dispatch }) {
-  const [newFund, setNewFund] = useState("");
-  const customFunds = db.customFunds || [];
-
-  const addFund = () => {
-    if (!newFund.trim()) return;
-    dispatch({ type:"ADD_CUSTOM_FUND", payload:newFund.trim() });
-    setNewFund("");
-  };
-
-  return (
-    <div style={{ maxWidth:600 }}>
-      <div style={{ marginBottom:20 }}>
-        <div style={{ fontSize:18, fontWeight:700, color:"#1a1a1a" }}>Manage Funds</div>
-        <div style={{ fontSize:13, color:"#888", marginTop:3 }}>Add custom fund names that appear across Fund Accounting and Projects</div>
-      </div>
-
-      {/* Default funds */}
-      <SectionCard title="Default Funds" subtitle="Built-in fund options">
-        <div style={{ padding:"12px 18px" }}>
-          {DEFAULT_FUNDS.map((f,i)=>(
-            <div key={i} style={{ padding:"7px 0", borderBottom:"1px solid #f0f0ee", fontSize:13, color:"#555", display:"flex", alignItems:"center", gap:8 }}>
-              <span style={{ width:8, height:8, borderRadius:"50%", background:"#1a3a5c", display:"inline-block", flexShrink:0 }}></span>
-              {f}
-            </div>
-          ))}
-        </div>
-      </SectionCard>
-
-      {/* Add custom fund */}
-      <SectionCard title="Custom Funds" subtitle={`${customFunds.length} added`}>
-        <div style={{ padding:"16px 18px", borderBottom:"1px solid #eee" }}>
-          <div style={{ display:"flex", gap:10 }}>
-            <input
-              type="text"
-              placeholder="e.g. NDOT Enhancement Grant 2027, RAISE Grant, Centennial Rd Fund…"
-              value={newFund}
-              onChange={e=>setNewFund(e.target.value)}
-              onKeyDown={e=>e.key==="Enter"&&addFund()}
-              style={{ ...inp, flex:1 }}
-            />
-            <button onClick={addFund} style={{ ...btn.primary, background:"#5a1a8a" }}>Add Fund</button>
-          </div>
-        </div>
-        {customFunds.length===0 ? (
-          <div style={{ padding:"24px 18px", textAlign:"center", color:"#aaa", fontSize:13 }}>No custom funds yet — type a name above and click Add Fund</div>
-        ) : (
-          <div style={{ padding:"12px 18px" }}>
-            {customFunds.map((f,i)=>(
-              <div key={i} style={{ padding:"7px 0", borderBottom:"1px solid #f0f0ee", fontSize:13, color:"#1a1a1a", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                  <span style={{ width:8, height:8, borderRadius:"50%", background:"#5a1a8a", display:"inline-block", flexShrink:0 }}></span>
-                  {f}
-                </div>
-                <button onClick={()=>dispatch({ type:"REMOVE_CUSTOM_FUND", payload:f })} style={{ ...btn.small, background:"#c0392b", fontSize:10, padding:"3px 8px" }}>Remove</button>
-              </div>
-            ))}
-          </div>
-        )}
-      </SectionCard>
     </div>
   );
 }
