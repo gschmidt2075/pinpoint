@@ -1,4 +1,4 @@
-import { useReducer, useState } from "react";
+import { useReducer, useState, useEffect } from "react";
 import FundAccounting from "./modules/FundAccounting.jsx";
 import CostAccounting from "./modules/CostAccounting.jsx";
 import Inventory from "./modules/Inventory.jsx";
@@ -452,12 +452,42 @@ function ComingSoon({ tab }) {
   );
 }
 
+// ── Persistence ───────────────────────────────────────────────────────────────
+// Saves state to the browser so work survives a refresh. This is a stopgap for
+// testing — replaced by a real database later.
+const STORAGE_KEY = "pinpoint.db.v1";
+
+function loadPersisted() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return initialState;
+    const saved = JSON.parse(raw);
+    // Merge over initialState so any newly-added keys aren't missing
+    return { ...initialState, ...saved };
+  } catch (err) {
+    console.warn("Could not load saved data — starting fresh.", err);
+    return initialState;
+  }
+}
+
 // ── App Shell ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [activeTab, setActiveTab] = useState("fund");
   const [role, setRole] = useState("superintendent"); // superintendent | staff
-  const [db, dispatch]  = useReducer(reducer, initialState);
+  const [db, dispatch]  = useReducer(reducer, undefined, loadPersisted);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  // Persist on every change (debounced so large states don't thrash)
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+      } catch (err) {
+        console.warn("Could not save — storage may be full.", err);
+      }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [db]);
 
   const currentTab = ALL_TABS.find(t => t.id === activeTab);
 
@@ -487,6 +517,20 @@ export default function App() {
               ))}
             </div>
           </div>
+          {role === "superintendent" && (
+            <button
+              onClick={() => {
+                if (window.confirm("Reset all data back to the starting inventory?\n\nThis erases everything entered since — work orders, projects, receipts, all of it. Cannot be undone.")) {
+                  localStorage.removeItem(STORAGE_KEY);
+                  window.location.reload();
+                }
+              }}
+              title="Clear test data and reload the starting inventory"
+              style={{ background:"rgba(255,255,255,0.12)", border:"1px solid rgba(255,255,255,0.2)", color:"rgba(255,255,255,0.75)", borderRadius:5, padding:"5px 11px", fontSize:11, cursor:"pointer" }}
+            >
+              Reset Data
+            </button>
+          )}
           <div style={{ width:30, height:30, background:"rgba(255,255,255,0.15)", borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center" }}>
             <i className="ti ti-user" style={{ fontSize:15, color:"#fff" }} />
           </div>

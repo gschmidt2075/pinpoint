@@ -283,10 +283,14 @@ function UnitDetail({ unit, workOrders, pmLogs, dispensing, invItems, invBatches
   const openWOs    = workOrders.filter(w=>w.status==="open");
   const totalWOCost= workOrders.reduce((s,w)=>s+(w.totalCost||0),0);
 
+  // Inventory items tagged as fitting this unit
+  const fitParts = (invItems||[]).filter(i => (i.fitsEquipment||[]).includes(unit.id));
+
   const TABS = [
     { id:"overview",  label:"Overview",    icon:"info-circle" },
     { id:"workorders",label:"Work Orders", icon:"clipboard-check" },
     { id:"pm",        label:"PM",          icon:"tool" },
+    { id:"parts",     label:`Parts${fitParts.length?` (${fitParts.length})`:""}`, icon:"package" },
     { id:"fuel",      label:"Fuel Log",    icon:"droplet" },
   ];
 
@@ -337,7 +341,80 @@ function UnitDetail({ unit, workOrders, pmLogs, dispensing, invItems, invBatches
       {tab==="overview"   && <UnitOverview unit={unit} />}
       {tab==="workorders" && <UnitWorkOrders unit={unit} workOrders={workOrders} dispatch={dispatch} onOpen={onOpenWO} />}
       {tab==="pm"         && <UnitPM unit={unit} pmLogs={pmLogs} dispatch={dispatch} />}
+      {tab==="parts"      && <UnitParts parts={fitParts} batches={invBatches} />}
       {tab==="fuel"       && <UnitFuelLog dispensing={dispensing} />}
+    </div>
+  );
+}
+
+// ── Parts that fit this unit ──────────────────────────────────────────────────
+function UnitParts({ parts, batches }) {
+  const onHandFor = (itemId) => (batches||[])
+    .filter(b => b.itemId === itemId && b.status === "open")
+    .reduce((s,b) => s + (b.quantityRemaining||0), 0);
+
+  const valueFor = (itemId) => (batches||[])
+    .filter(b => b.itemId === itemId && b.status === "open")
+    .reduce((s,b) => s + (b.quantityRemaining||0)*(b.unitCost||0), 0);
+
+  if (!parts.length) {
+    return (
+      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:36, textAlign:"center" }}>
+        <div style={{ fontSize:14, fontWeight:600, color:"#555", marginBottom:6 }}>No parts tagged to this unit yet</div>
+        <div style={{ fontSize:12, color:"#888" }}>
+          In the Inventory module, edit a part and check this unit under <strong>Fits Equipment</strong>. It will show up here with live stock levels.
+        </div>
+      </div>
+    );
+  }
+
+  const inStock  = parts.filter(p => onHandFor(p.id) > 0);
+  const outStock = parts.filter(p => onHandFor(p.id) === 0);
+
+  return (
+    <div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, marginBottom:16 }}>
+        <KPICard label="Parts Tagged"  value={parts.length}   sub="Fit this unit"  accent="#1a3a5c" icon="package" />
+        <KPICard label="In Stock"      value={inStock.length}  sub="Available now"  accent="#1a6b35" icon="check" />
+        <KPICard label="Out of Stock"  value={outStock.length} sub="Need to order"  accent={outStock.length?"#c0392b":"#888"} icon="alert-triangle" />
+      </div>
+
+      <SectionCard title="Parts for This Unit" subtitle="Live stock from inventory">
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+          <thead>
+            <tr style={{ background:"#f7f7f5" }}>
+              {["Part #","Item","Group","Unit","On Hand","Value"].map(h=>(
+                <th key={h} style={{ padding:"8px 14px", textAlign:["On Hand","Value"].includes(h)?"right":"left", fontWeight:600, fontSize:11, textTransform:"uppercase", letterSpacing:"0.05em", color:"#666", borderBottom:"1px solid #eee" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {parts.map((p,i) => {
+              const oh  = onHandFor(p.id);
+              const val = valueFor(p.id);
+              const min = p.trackStockLevel ? (parseFloat(p.minimumQuantity)||0) : 0;
+              const low = min > 0 && oh < min;
+              return (
+                <tr key={p.id} style={{ borderTop:"1px solid #eee", background:i%2===0?"#fff":"#fafaf8" }}>
+                  <td style={{ padding:"9px 14px" }}>
+                    <span style={{ fontFamily:"monospace", fontSize:12, fontWeight:700, background:"#f0f4ff", color:"#1a3a5c", padding:"2px 7px", borderRadius:4 }}>{p.legacyNumber||"—"}</span>
+                  </td>
+                  <td style={{ padding:"9px 14px", fontWeight:600 }}>{p.name}</td>
+                  <td style={{ padding:"9px 14px", fontSize:12, color:"#555" }}>
+                    {p.commodityGroupCode ? `${p.commodityGroupCode} — ${p.commodityGroup}` : (p.commodityGroup||"—")}
+                  </td>
+                  <td style={{ padding:"9px 14px", fontFamily:"monospace", fontSize:12 }}>{p.unitOfMeasure||"—"}</td>
+                  <td style={{ padding:"9px 14px", textAlign:"right", fontFamily:"monospace", fontWeight:700, color:oh===0?"#c0392b":low?"#d97706":"#1a6b35" }}>
+                    {oh === 0 ? "OUT" : oh}
+                    {low && oh>0 && <div style={{ fontSize:10, color:"#d97706", fontWeight:600 }}>⚠ min {min}</div>}
+                  </td>
+                  <td style={{ padding:"9px 14px", textAlign:"right", fontFamily:"monospace" }}>{val>0?fmtSm(val):"—"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </SectionCard>
     </div>
   );
 }
