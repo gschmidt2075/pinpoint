@@ -183,6 +183,12 @@ Not forgotten — waiting on something.
 | Real database + API | Data model stability, then a county server |
 | Azure AD authentication | The database move |
 | Mobile field app (Flutter) | Everything above |
+| Inter-departmental fuel billing | Staff answer — see below |
+
+**Discovered 2026-07-26:** other county departments (Sheriff, Weed Control,
+others) fuel their vehicles at the highway shop. This was not in the design at
+all. If those departments are billed, it's a revenue stream and belongs in Fund
+Accounting, not just the fuel log. Questions are on the Equipment form.
 
 ---
 

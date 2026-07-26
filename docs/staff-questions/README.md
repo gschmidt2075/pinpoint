@@ -11,6 +11,10 @@ Question forms for staff to fill in, and the log of what's been answered.
 | `Vendor-Questions.docx` | 28 questions on vendor setup, insurance, contract rates |
 | `Settings-Questions.docx` | 38 questions on editable lists, permissions, fiscal year |
 | `Infrastructure-Questions.docx` | 38 questions on roads, bridges, culverts, signs |
+| `Equipment-Questions.docx` | 47 questions on fleet, PM, work orders, fuel |
+| `Projects-Questions.docx` | 36 questions on numbering, scope, closeout, FEMA |
+| `CostAccounting-Questions.docx` | 24 questions on rates, township billing, FEMA claims |
+| `Reports-Questions.docx` | 27 questions on every printed output |
 
 ## How to use
 
@@ -21,6 +25,9 @@ Question forms for staff to fill in, and the log of what's been answered.
    and written into `QUESTION-LOG.md`
 
 Partial answers are fine. Anything left blank stays on the open list.
+
+**Don't hand out all seven at once.** That's how you get nothing back. Give staff
+the form matching whatever they're testing that week.
 
 ## Answering
 

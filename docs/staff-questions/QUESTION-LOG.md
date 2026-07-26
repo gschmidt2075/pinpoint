@@ -17,11 +17,19 @@ the answers, records them below, and builds against them.
 | Vendors | `Vendor-Questions.docx` | 28 | **Awaiting answers** |
 | Settings & Administration | `Settings-Questions.docx` | 38 | **Awaiting answers** |
 | Infrastructure | `Infrastructure-Questions.docx` | 38 | **Awaiting answers** |
+| Equipment & Fleet | `Equipment-Questions.docx` | 47 | **Awaiting answers** |
+| Projects | `Projects-Questions.docx` | 36 | **Awaiting answers** |
+| Cost Accounting | `CostAccounting-Questions.docx` | 24 | **Awaiting answers** |
+| Reports & Printed Documents | `Reports-Questions.docx` | 27 | **Awaiting answers** |
 | Fund Accounting — claim flow | *(asked in chat)* | 4 | **Awaiting answers** |
 | Inventory | *(answered in chat)* | — | ✅ Complete |
 
-**141 questions outstanding.** Don't hand all four forms over at once — pick the
-one matching whatever the staff are testing that week.
+**275 questions outstanding across 7 forms.** Do not hand these out all at once —
+that's a good way to get nothing back. Give staff the one form matching whatever
+they're testing that week.
+
+**Suggested order:** Settings first (smallest change, immediate payoff), then
+whichever module staff complain about most.
 
 ---
 
@@ -147,16 +155,83 @@ Sections: Roads · Bridges · Culverts & structures · Signs · Across all asset
 
 ---
 
-## Not yet asked
+## Equipment & Fleet
 
-Modules that will need their own round:
+Form issued 2026-07-26 → `Equipment-Questions.docx` (47 questions, 7 sections).
 
-- **Equipment** — PM schedules and intervals, work order approval, warranty,
-  meter readings, replacement planning, disposal
-- **Projects** — numbering rules, approval workflow, close-out, carryover
-  between fiscal years, linking to assets
-- **Cost Accounting** — overhead allocation, FEMA report formats, what the Board
-  actually sees, township billing
-- **Reports & printing** *(cross-cutting)* — every printed output anyone needs,
-  who receives it, how often. Worth doing as one form across all modules rather
-  than module by module.
+Sections: The fleet · Meters & usage · Preventive maintenance · Work orders ·
+Fuel & tanks · **Fuelling for other departments** · Cost & replacement
+
+**New requirement discovered while writing this form:** other county departments
+(Sheriff, Weed Control, and others) fuel their vehicles at the highway shop. This
+was not in the design at all. It's likely a billing relationship, not just a fuel
+log entry — see Q40, which asks whether it should flow through fund accounting as
+revenue. If yes, this touches Fund Accounting as well as Equipment.
+
+**Load-bearing questions:**
+
+- **Q4** — when a unit is replaced, does the new one inherit the number?
+  *(Decides whether history follows the number or the machine.)*
+- **Q11** — what happens when a meter is replaced? Systems that assume meters
+  only increase break badly here.
+- **Q13** — how PM intervals are set (hours / miles / calendar / whichever first).
+- **Q40** — should inter-departmental fuel be revenue in fund accounting?
+
+---
+
+## Projects
+
+Form issued 2026-07-26 → `Projects-Questions.docx` (36 questions, 6 sections).
+
+Sections: Starting a project · Scope & planning · While the project runs ·
+Contractors & engineering · Closing out · FEMA projects
+
+**Load-bearing questions:**
+
+- **Q3/Q4** — do project numbers reset each fiscal year or run continuously?
+- **Q21** — can costs be moved between projects, and should that be recorded?
+- **Q29** — do projects carry across fiscal years keeping their number?
+- **Q36** — what has FEMA rejected before? Failure modes tell us what to capture.
+
+---
+
+## Cost Accounting
+
+Form issued 2026-07-26 → `CostAccounting-Questions.docx` (24 questions, 5
+sections).
+
+Sections: What gets costed · Rates · Township & outside billing · FEMA claims ·
+Reporting
+
+Currently unusable in practice — labour can't be entered because employees don't
+exist yet. These questions cover everything beyond that gap.
+
+**Load-bearing questions:**
+
+- **Q8** — should old cost entries keep the rate that applied at entry time?
+  *(Same rate-history decision as payroll. Answer both the same way.)*
+- **Q15** — the full FEMA claim walkthrough. Highest-value answer on the form.
+- **Q18** — is the 15.7% labour overhead still current, and where does it come
+  from? It's hardcoded as `FEMA_OVH = 1.157` in two modules.
+
+---
+
+## Reports & Printed Documents
+
+Form issued 2026-07-26 → `Reports-Questions.docx` (27 questions, 6 sections).
+
+Cuts across every module. Reports are where systems usually disappoint —
+everything works until someone needs a specific piece of paper for the Board, the
+state, or an auditor.
+
+Sections: What you produce today · The Board · State & federal · Auditors ·
+Day to day · What you wish you had
+
+**Load-bearing questions:**
+
+- **Q1** — list every report produced in a year. Most valuable single answer
+  across all seven forms.
+- **Q16** — are any filings in a specific file format? Fixed-width or XML upload
+  requirements are easy to miss and expensive to retrofit.
+- **Q27** — anything kept in a side spreadsheet? A side spreadsheet almost always
+  means the main system is missing something.
