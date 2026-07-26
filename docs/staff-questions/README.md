@@ -9,6 +9,8 @@ Question forms for staff to fill in, and the log of what's been answered.
 | `QUESTION-LOG.md` | Running register — every question, its status, and the answer |
 | `Payroll-Questions.docx` | 37 questions on employees, time entry, rates |
 | `Vendor-Questions.docx` | 28 questions on vendor setup, insurance, contract rates |
+| `Settings-Questions.docx` | 38 questions on editable lists, permissions, fiscal year |
+| `Infrastructure-Questions.docx` | 38 questions on roads, bridges, culverts, signs |
 
 ## How to use
 

@@ -15,8 +15,13 @@ the answers, records them below, and builds against them.
 |---|---|---|---|
 | Payroll & Employees | `Payroll-Questions.docx` | 37 | **Awaiting answers** |
 | Vendors | `Vendor-Questions.docx` | 28 | **Awaiting answers** |
+| Settings & Administration | `Settings-Questions.docx` | 38 | **Awaiting answers** |
+| Infrastructure | `Infrastructure-Questions.docx` | 38 | **Awaiting answers** |
 | Fund Accounting — claim flow | *(asked in chat)* | 4 | **Awaiting answers** |
 | Inventory | *(answered in chat)* | — | ✅ Complete |
+
+**141 questions outstanding.** Don't hand all four forms over at once — pick the
+one matching whatever the staff are testing that week.
 
 ---
 
@@ -97,12 +102,61 @@ Resolved in conversation 2026-07-25.
 
 ---
 
+## Settings & Administration
+
+Form issued 2026-07-26 → `Settings-Questions.docx` (38 questions, 7 sections).
+
+**Why it matters:** dropdown lists are hardcoded in module files today, so
+correcting "2Nd Floor" to "2nd Floor" requires a code change. Everything that
+varies between counties — or just changes over time — should be data, not code.
+
+Sections: Editable lists · Account codes & budget · Fiscal year rollover ·
+Printed documents · Users, roles & approvals · Defaults · Continuity
+
+**Load-bearing questions:**
+
+- **Q3** — when a list value is renamed, do existing records follow?
+  *(Decides whether records store the value itself or a reference to it. Very
+  hard to change later.)*
+- **Q4** — what happens when deleting a value that records still use?
+- **Q13/Q14** — fiscal year rollover behaviour and prior-year access.
+- **Q26** — is an audit trail needed? Adds a column to every table if so.
+
+---
+
+## Infrastructure
+
+Form issued 2026-07-26 → `Infrastructure-Questions.docx` (38 questions, 5
+sections).
+
+**Why it matters:** the module was built on assumptions rather than on how the
+department actually works — the same problem inventory had. Much of this is also
+driven by state and federal reporting that we shouldn't guess at.
+
+Sections: Roads · Bridges · Culverts & structures · Signs · Across all assets
+
+**Load-bearing questions:**
+
+- **Q1** — one record per road, or per segment? Changes the whole road data shape.
+- **Q11** — are NBIS inspection results entered here or just referenced?
+  *(Entering means duplicate work; referencing means less detail available.)*
+- **Q22** — which MUTCD retroreflectivity method is used? Determines what has to
+  be tracked to stay compliant.
+- **Q32** — should assets store GPS coordinates? Needed for the future field app;
+  cheap to add now, tedious to backfill later.
+
+---
+
 ## Not yet asked
 
-Modules that will need their own round when we get to them:
+Modules that will need their own round:
 
-- **Equipment** — PM schedules, work order approval, warranty tracking, meter readings
-- **Projects** — numbering rules, approval workflow, close-out, carryover between fiscal years
-- **Cost Accounting** — overhead allocation, FEMA report formats, what the Board sees
-- **Infrastructure** — inspection cycles, NBIS workflow, sign retroreflectivity, HSIP reporting
-- **Settings / permissions** — who can do what, approval limits, audit trail
+- **Equipment** — PM schedules and intervals, work order approval, warranty,
+  meter readings, replacement planning, disposal
+- **Projects** — numbering rules, approval workflow, close-out, carryover
+  between fiscal years, linking to assets
+- **Cost Accounting** — overhead allocation, FEMA report formats, what the Board
+  actually sees, township billing
+- **Reports & printing** *(cross-cutting)* — every printed output anyone needs,
+  who receives it, how often. Worth doing as one form across all modules rather
+  than module by module.
