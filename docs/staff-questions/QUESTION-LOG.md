@@ -79,15 +79,37 @@ cycle at once; there is no per-claim denial.
 - **Per-claim status is needed:** entered → on sheet → signed → submitted →
   approved / **denied**.
 
-### Still open
+### Denial handling — answered 2026-07-26
 
-- **Q1 clarification:** does "keep it manual" mean just the segmented
-  `0300-0705-00-0` boxes, or the whole Accounting Information block? If Pinpoint
-  already knows the code and amount, it could fill that section and leave the
-  prefix as a Settings value.
-- **Denial handling:** when the Board denies a claim, what happens next? Does it
-  come back for correction and go on a later cycle, get dropped, or something
-  else? Does the vendor get told?
+**A denied claim comes back for correction and goes on a later cycle.**
+
+Consequences for the build:
+
+- Claim status is per-claim, not per-cycle. `APPROVE_CLAIM_CYCLE` currently
+  approves an entire cycle at once and cannot express a single denial.
+- A claim must be able to **move to a different cycle** after being denied.
+- Denial history should persist — a claim that was denied once and later approved
+  should show that, not silently appear as approved.
+- Required statuses: `entered` → `on_sheet` → `signed` → `submitted` →
+  `approved` | `denied`, with `denied` → corrected → reassigned to a later cycle.
+
+### Still open — Q1, awaiting an example
+
+The remaining unknown is presentation, not structure. When a single invoice item
+carries more than one code — a repair part code plus a shipping code — the
+Clerk's office wants it noted a particular way in the **Description of items**
+block, and that convention doesn't line up neatly with how the **Accounting
+Information** block sums.
+
+**Greg is providing a filled-in example.** Until it arrives, don't design the
+export layout — the convention matters more than any assumption about it.
+
+What the example should settle:
+
+- How a split-code item is written in the description column
+- How those pieces relate to rows in the Accounting Information block
+- Whether Pinpoint should fill the accounting block at all, or export vendor and
+  invoice lines only and leave coding to be written in by hand
 
 ---
 
