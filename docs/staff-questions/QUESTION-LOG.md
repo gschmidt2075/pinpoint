@@ -108,6 +108,38 @@ Resolved in conversation 2026-07-25.
 | Scale tickets | Need Source, Hauler, and Destination. One invoice often covers many tickets — reconcile in bulk. |
 | Year-end count | Print one sheet per group for physical reconciliation. |
 
+### Scale ticket workflow — confirmed with staff 2026-07-26
+
+Greg walked the flow through with the office. Their description:
+
+1. Gravel arrives — **delivered to a stockpile or picked up by county forces**
+2. Either way it is **entered into inventory** first
+3. If it's placed on a road segment, it is then **costed out to that road**
+4. Price is already known from the contract, so they enter at that rate
+5. Scale tickets are matched to invoices as the invoices arrive
+
+**Everything enters inventory. Nothing bypasses it.**
+
+**Two bugs this exposes in the current build:**
+
+1. `ScaleTicket.handleSave()` only creates a batch when
+   `goesToStockpile === true`. A road-segment destination creates **no batch**,
+   so that gravel never enters inventory at all.
+2. The handler dispatches only `ADD_INVENTORY_TRANSACTION`. There is no
+   `ADD_PROJECT_ENTRY`, so despite the ticket carrying a `projectId`, **the cost
+   never lands on the project.** Direct-to-road gravel currently disappears
+   entirely — absent from both inventory and project costs.
+
+**Fix:** always create a batch on receipt. When the destination is a road
+segment, immediately issue it out against that project, producing both the
+inventory movement and the project material entry.
+
+**Open design question:** if a direct-to-road batch is consumed the moment it's
+created, and the invoice later comes in at a different rate, the correction has
+to ripple through to the project's material entry as well as the batch. Staff say
+the contract price is usually right, so this should be rare — but the system
+needs to handle it rather than silently leaving the project cost wrong.
+
 ---
 
 ## Settings & Administration

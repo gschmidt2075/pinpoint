@@ -124,6 +124,13 @@ Reconcile tab matches it — **one invoice often covers many tickets**, so
 reconcile supports multi-select. One contractor emails tickets individually;
 another mails them in a batch. Both flow through the same queue.
 
+*Confirmed with staff 2026-07-26:* **all gravel enters inventory first**, whether
+delivered to a stockpile or picked up by county forces. If it's then placed on a
+road, it's costed out to that road segment. Nothing bypasses inventory. The
+current code violates this — a road-segment destination creates no batch and
+dispatches no project entry, so that gravel is lost from both inventory and
+project costs. **Known bug, needs fixing.** See `QUESTION-LOG.md`.
+
 **NBIS bridge ratings** — 0–9 scale. ≥7 good (green), 5–6 fair (amber), ≤4 poor
 (red). Structures and signs use a separate 1–5 condition scale.
 
