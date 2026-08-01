@@ -387,8 +387,13 @@ function ExpenditureForm({ db, dispatch, onDone, initialData = null }) {
   const today         = toDateStr(new Date());
   const openCycles    = CLAIM_CYCLES.filter(c => c.date >= today).slice(0, 8);
 
+  // A line flagged for inventory receipt must name a real catalog item and a quantity.
+  // Standing rule (confirmed with staff): nothing is received that isn't already in the catalog.
+  const badInvLines = lines.filter(l => l.invReceive && (!l.invItemId || !l.invQty || parseFloat(l.invQty) <= 0));
+
   const handleSubmit = () => {
     if (!header.date || !header.vendorName || !header.claimCycleId || lines.some(l => !l.code || !l.amount)) return;
+    if (badInvLines.length) return;
     const cycle = CLAIM_CYCLES.find(c => c.id === header.claimCycleId);
     const payload = {
       id:              initialData?.id || Date.now(),
@@ -419,15 +424,18 @@ function ExpenditureForm({ db, dispatch, onDone, initialData = null }) {
 
     // Dispatch inventory receipts for lines marked as inventory (only on new entry, not edits)
     if (!isEdit) {
-      lines.filter(l => l.invReceive && l.invQty && (l.invItemId || l.invItemName)).forEach(l => {
+      lines.filter(l => l.invReceive && l.invQty && l.invItemId).forEach(l => {
         const qty      = parseFloat(l.invQty) || 0;
         const lineAmt  = parseFloat(l.amount) || 0;
         const unitCost = qty > 0 ? lineAmt / qty : lineAmt;
         const batchId  = Date.now() + Math.random();
+        // Item is guaranteed to exist — the form blocks saving otherwise.
+        const catalogItem = (db.inventoryItems||[]).find(i => i.id === l.invItemId);
+        const itemName    = catalogItem?.name || l.invItemName;
         const batch = {
           id:                batchId,
-          itemId:            l.invItemId || null,
-          itemName:          l.invItemName || l.description,
+          itemId:            l.invItemId,
+          itemName,
           receiptDate:       header.date,
           quantityReceived:  qty,
           quantityRemaining: qty,
@@ -449,8 +457,8 @@ function ExpenditureForm({ db, dispatch, onDone, initialData = null }) {
             id:            Date.now() + Math.random(),
             type:          "receive",
             date:          header.date,
-            itemId:        l.invItemId || null,
-            itemName:      l.invItemName || l.description,
+            itemId:        l.invItemId,
+            itemName,
             vendorName:    header.vendorName,
             quantity:      qty,
             unitCost,
@@ -640,31 +648,26 @@ function ExpenditureForm({ db, dispatch, onDone, initialData = null }) {
                         Inventory Receipt — creates a FIFO batch
                       </div>
                       <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:10 }}>
-                        <Field label="Inventory Item">
-                          {(db.inventoryItems||[]).filter(i=>i.active!==false).length > 0 ? (
-                            <select
-                              value={line.invItemId}
-                              onChange={e => {
-                                const item = (db.inventoryItems||[]).find(i=>i.id===e.target.value);
-                                setL(line.id,"invItemId",e.target.value);
-                                setL(line.id,"invItemName",item?.name||"");
-                              }}
-                              style={{ ...inp, fontSize:12 }}
-                            >
-                              <option value="">Select item…</option>
-                              {(db.inventoryItems||[]).filter(i=>i.active!==false).map(i=>(
-                                <option key={i.id} value={i.id}>{i.name}{i.legacyNumber?` (${i.legacyNumber})`:""}</option>
+                        <Field label="Inventory Item" required>
+                          <select
+                            value={line.invItemId}
+                            onChange={e => {
+                              const item = (db.inventoryItems||[]).find(i=>i.id===e.target.value);
+                              setL(line.id,"invItemId",e.target.value);
+                              setL(line.id,"invItemName",item?.name||"");
+                            }}
+                            style={{ ...inp, fontSize:12, borderColor: line.invItemId ? "" : "#c0392b" }}
+                          >
+                            <option value="">Select catalog item…</option>
+                            {(db.inventoryItems||[])
+                              .filter(i=>i.active!==false)
+                              .sort((a,b)=>(a.name||"").localeCompare(b.name||""))
+                              .map(i=>(
+                                <option key={i.id} value={i.id}>
+                                  {i.legacyNumber?`[${i.legacyNumber}] `:""}{i.name}
+                                </option>
                               ))}
-                            </select>
-                          ) : (
-                            <input
-                              type="text"
-                              placeholder="Item name (add items in Inventory first)…"
-                              value={line.invItemName}
-                              onChange={e=>setL(line.id,"invItemName",e.target.value)}
-                              style={inp}
-                            />
-                          )}
+                          </select>
                         </Field>
                         <Field label="Quantity">
                           <input
@@ -687,7 +690,13 @@ function ExpenditureForm({ db, dispatch, onDone, initialData = null }) {
                           </select>
                         </Field>
                       </div>
-                      {line.invQty && parseFloat(line.invQty) > 0 && parseFloat(line.amount) > 0 && (
+                      {!line.invItemId && (
+                        <div style={{ background:"#fdecea", border:"1px solid #f5c6c6", borderRadius:4, padding:"8px 11px", marginTop:8, fontSize:11, color:"#8c1b18" }}>
+                          <strong>An item must exist in the catalog before it can be received.</strong>{" "}
+                          If it isn't in the list, add it in the Inventory module first, then come back to this claim.
+                        </div>
+                      )}
+                      {line.invItemId && line.invQty && parseFloat(line.invQty) > 0 && parseFloat(line.amount) > 0 && (
                         <div style={{ fontSize:11, color:"#1a5a3a", marginTop:8 }}>
                           Unit cost: <strong>{fmtSm((parseFloat(line.amount)||0)/(parseFloat(line.invQty)||1))}</strong> per unit · Batch will post when expenditure is saved
                         </div>
@@ -715,8 +724,20 @@ function ExpenditureForm({ db, dispatch, onDone, initialData = null }) {
         </div>
       </div>
 
+      {badInvLines.length > 0 && (
+        <div style={{ background:"#fdecea", border:"1px solid #f5c6c6", borderRadius:6, padding:"11px 15px", marginBottom:12, fontSize:12, color:"#8c1b18", fontWeight:600 }}>
+          {badInvLines.length} line{badInvLines.length!==1?"s are":" is"} marked for inventory receipt but {badInvLines.length!==1?"are":"is"} missing a catalog item or quantity. Fix {badInvLines.length!==1?"them":"it"} — or switch off "Receive into Inventory" — before saving.
+        </div>
+      )}
+
       <div style={{ display:"flex", gap:10 }}>
-        <button onClick={handleSubmit} style={btn.primary}>{isEdit?"Save Changes":"Save to Claim Cycle"}</button>
+        <button
+          onClick={handleSubmit}
+          disabled={badInvLines.length > 0}
+          style={{ ...btn.primary, opacity: badInvLines.length > 0 ? 0.4 : 1, cursor: badInvLines.length > 0 ? "not-allowed" : "pointer" }}
+        >
+          {isEdit?"Save Changes":"Save to Claim Cycle"}
+        </button>
         {!isEdit && (
           <button onClick={()=>{ setHeader({date:"",vendorName:"",type:"invoice",reference:"",claimCycleId:""}); setLines([emptyLine()]); }} style={btn.ghost}>Clear</button>
         )}

@@ -39,15 +39,55 @@ Asked 2026-07-25. Greg copied these to run past staff. Source document:
 `Blank Claim Form.xls` — 16 invoice rows, 8 accounting distribution rows,
 validation formula checking the two totals match.
 
+**Answered 2026-07-26.**
+
 | # | Question | Answer |
 |---|---|---|
-| 1 | The account boxes pre-fill `0300 - 0705 - 00 - 0 -` then a blank "Expenditure Line". Does a code like `302.02` go in that blank with a fixed prefix, or does the prefix vary by code? | *pending* |
-| 2 | Inventory receiving on expenditures — remove it entirely, require picking a real catalog item, or flag the line for the shop to receive later? | *pending* |
-| 3 | Export format — Excel matching the template, print-ready PDF, or both? | *pending* |
-| 4 | Does the office manager both enter invoices and assign expenditure codes, or is coding a separate job? | *pending* |
+| 1 | Account code boxes — fixed prefix or varies? | Possibly keep manual / outside Pinpoint. **Key detail:** a single invoice item can carry two codes — e.g. a repair part code *and* a shipping code. That's noted in the description row beneath the item, then everything totals in the Accounting Information block. *Needs one clarification — see below.* |
+| 2 | Inventory receiving on expenditures | **Keep it, but force selection of a real catalog item.** No free-text. New standing rule: anything received must exist as an inventory item first. |
+| 3 | Export format | **Excel.** |
+| 4 | Who does what | See workflow below. |
 
-**Blocked work:** restructuring `ExpenditureForm` into two sections (invoice
-lines + accounting distribution with balance validation), and claim sheet export.
+### The actual claim workflow
+
+1. **Office manager or parts manager** enters invoices — either can
+2. **Office manager** reviews all invoices for the cycle, then builds the claim
+   sheet in Excel: vendor info, invoice info, and assigns all expenditure codes
+3. She prints it and gives it to **Greg for review and a wet signature**
+4. If something's wrong she corrects it, reprints, and he signs the new copy
+5. Signed sheets go to the **Clerk's office** for entry
+6. The **Board reviews** and approves or denies
+
+**The Board sometimes denies an individual claim.** Rare, but it happens — and
+the current model can't represent it. `APPROVE_CLAIM_CYCLE` approves an entire
+cycle at once; there is no per-claim denial.
+
+### What this means for the build
+
+- **Two entry roles.** Both office manager and parts manager enter invoices.
+- **Claim assembly is its own step**, done later by the office manager — not a
+  by-product of entering an expenditure. The app needs a "build claim sheet"
+  action that groups a cycle's invoices by vendor.
+- **This confirms the multi-invoice design.** Several invoices from one vendor in
+  one cycle belong on one sheet.
+- **Invoice lines and account codes are many-to-many.** One invoice line can
+  split across two codes; several invoices can roll into one code. The two
+  sections are genuinely independent lists that must total the same — exactly what
+  the paper form's balance formula enforces.
+- **A wet signature is legally required**, so the export is the real artifact.
+  The app supports the process; it doesn't replace the paper.
+- **Per-claim status is needed:** entered → on sheet → signed → submitted →
+  approved / **denied**.
+
+### Still open
+
+- **Q1 clarification:** does "keep it manual" mean just the segmented
+  `0300-0705-00-0` boxes, or the whole Accounting Information block? If Pinpoint
+  already knows the code and amount, it could fill that section and leave the
+  prefix as a Settings value.
+- **Denial handling:** when the Board denies a claim, what happens next? Does it
+  come back for correction and go on a later cycle, get dropped, or something
+  else? Does the vendor get told?
 
 ---
 
