@@ -93,23 +93,70 @@ Consequences for the build:
 - Required statuses: `entered` → `on_sheet` → `signed` → `submitted` →
   `approved` | `denied`, with `denied` → corrected → reassigned to a later cycle.
 
-### Still open — Q1, awaiting an example
+### Q1 resolved 2026-07-26 — claim sheet layout decoded
 
-The remaining unknown is presentation, not structure. When a single invoice item
-carries more than one code — a repair part code plus a shipping code — the
-Clerk's office wants it noted a particular way in the **Description of items**
-block, and that convention doesn't line up neatly with how the **Accounting
-Information** block sums.
+Source: `Claim Sheet Example.xlsx`. **The convention is fully derivable, so
+Pinpoint can generate the entire sheet.** Greg's concern — that split codes
+wouldn't sum cleanly — only applies when a human transcribes between the two
+blocks. Generated from one dataset, they agree by construction.
 
-**Greg is providing a filled-in example.** Until it arrives, don't design the
-export layout — the convention matters more than any assumption about it.
+#### Invoice block (rows 7–22)
 
-What the example should settle:
+| Column | Contents |
+|---|---|
+| A–B | Date |
+| C–J | Invoice number |
+| L–AA | Description of item |
+| **AB** | **Expenditure code — only when the item has exactly one code.** This is the unlabeled column. |
+| AC | Invoice total |
 
-- How a split-code item is written in the description column
-- How those pieces relate to rows in the Accounting Information block
-- Whether Pinpoint should fill the accounting block at all, or export vendor and
-  invoice lines only and leave coding to be written in by hand
+**Item with one code** — code goes in AB on the item's own row:
+
+```
+8/1/2026 | LU58425 | Mechanics Wire        [301.06] | 35.22
+```
+
+**Item with several codes** — AB blank, and a continuation row underneath
+carries the split as free text in the description column:
+
+```
+7/31/2026 | KI657541 | Specialty oil filter          | 562.32
+         |          | 214.00 = $500.00  201.00 = $62.32 |
+```
+
+The continuation row has no date, no invoice number, no total.
+
+#### Accounting block (rows 24–31)
+
+One row per distinct code/amount pair. Prefix is **constant on every row** —
+`0300 - 0705 - 00 - 0 -` — so it belongs in Settings, not in a per-code mapping.
+
+**Expenditure Line (columns T–X) is the account code with the decimal removed,**
+one digit per cell:
+
+| Code | T–X | Amount (Y–AA) |
+|---|---|---|
+| 214.00 | `2 1 4 0 0` | 500.00 |
+| 201.00 | `2 0 1 0 0` | 62.32 |
+| 301.06 | `3 0 1 0 6` | 35.22 |
+
+Rule: split on `.`, pad the decimal part to two digits, concatenate.
+`105.0` → `10500`. `301.06` → `30106`.
+
+#### Balance
+
+- `Y32 = SUM(Y24:Y31)` — accounting total
+- `AC32 = SUM(AC7:AC31)` — invoice total
+- `AB24` holds `=IF(Y32=AC32,"","Not Equal to Account Detail")`
+
+Example balances at 597.54 both ways.
+
+#### To confirm before building
+
+1. Is AB always the code when there's exactly one? Only one example seen.
+2. Is `CODE = $AMOUNT` separated by two spaces a fixed format, or does the office
+   manager write it however reads best?
+3. Codes like `105.0` — render as `10500`? Assumed yes.
 
 ---
 
