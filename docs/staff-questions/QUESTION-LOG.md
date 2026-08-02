@@ -151,12 +151,30 @@ Rule: split on `.`, pad the decimal part to two digits, concatenate.
 
 Example balances at 597.54 both ways.
 
-#### To confirm before building
+#### Confirmed 2026-07-26
 
-1. Is AB always the code when there's exactly one? Only one example seen.
-2. Is `CODE = $AMOUNT` separated by two spaces a fixed format, or does the office
-   manager write it however reads best?
-3. Codes like `105.0` — render as `10500`? Assumed yes.
+1. **AB always holds the code when an item has exactly one.** ✅
+2. **The breakdown line has no fixed format** — written however reads best. So
+   Pinpoint can choose a clean, consistent rendering rather than mimicking a
+   convention. Suggested: `214.00 = $500.00   201.00 = $62.32`
+3. **`105.0` renders as `10500`.** ✅ Split on `.`, pad decimals to two, join.
+
+#### Claim size limit — new constraint
+
+**Maximum 15 lines per claim.** Beyond that it becomes a *separate claim*, not a
+continuation page. Pinpoint must split automatically and produce multiple sheets.
+
+Two open details before the split logic can be written:
+
+- **Do continuation rows count toward the 15?** An item with several codes takes
+  two rows — the item, then the breakdown. Does that item consume 1 or 2?
+- **Is the 8-row accounting block also a hard limit?** It may bind before the 15
+  does: fifteen items with distinct codes would need fifteen accounting rows and
+  there are eight. If so, a claim splits when *either* limit is reached.
+
+Note: `ExpenditureForm` already caps line items at 15 (`if (lines.length < 15)`),
+which lines up — though that limit is per expenditure, and a claim sheet groups
+several expenditures from one vendor, so the cap needs to move up to the sheet.
 
 ---
 
