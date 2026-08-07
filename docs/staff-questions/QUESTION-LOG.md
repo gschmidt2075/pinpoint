@@ -16,7 +16,7 @@ the answers, records them below, and builds against them.
 | Payroll & Employees | `Payroll-Questions.docx` | 37 | **Awaiting answers** |
 | Vendors | `Vendor-Questions.docx` | 28 | **Awaiting answers** |
 | Settings & Administration | `Settings-Questions.docx` | 38 | **Awaiting answers** |
-| Infrastructure | `Infrastructure-Questions.docx` | 38 | ✅ **Answered** — 5 follow-ups |
+| Infrastructure | `Infrastructure-Questions.docx` | 38 | ✅ **Answered** — 2 follow-ups open |
 | Equipment & Fleet | `Equipment-Questions.docx` | 47 | **Awaiting answers** |
 | Projects | `Projects-Questions.docx` | 36 | **Awaiting answers** |
 | Cost Accounting | `CostAccounting-Questions.docx` | 24 | **Awaiting answers** |
@@ -414,8 +414,9 @@ a single shape/size/material on the structure record.
 3. **Sign posts and faces** — ✅ **Answered.** See below.
 4. **What is a "sign report"?** — ✅ **Answered.** See below.
 5. **Barrels** — practical maximum, and are they numbered within a site? *Open.*
-6. **What scale do signs use, and what are its criteria?** *Open — the rating
-   codes document covers culverts and structures only.*
+6. **What scale do signs use?** ✅ **Answered 2026-07-26** — Excellent, Good,
+   Fair, Poor, Critical. Five levels, **no 0**. Signs don't have the exception
+   state that culverts and structures do.
 
 ---
 
@@ -572,3 +573,41 @@ Day to day · What you wish you had
   requirements are easy to miss and expensive to retrofit.
 - **Q27** — anything kept in a side spreadsheet? A side spreadsheet almost always
   means the main system is missing something.
+
+
+---
+
+## Infrastructure — build status 2026-07-26
+
+**Built:**
+
+- Culvert/structure 0–5 rating with the department's criteria, 0 rendered as an
+  exception state rather than the bottom of the scale
+- Barrels as sub-records with an Add Barrel button and live summary
+- Culvert form trimmed — status, feature intersected, drainage, FAS number and
+  route removed; FAS number and route moved to bridges
+- Sign rating fixed to 5–1, no 0
+- Road surface history — last graveled, bladed, sealed, shown on the list as
+  "1 yr 2 mo ago" rather than a bare date
+- Road segment length plus mileage-by-surface totals on the KPI cards
+- Bridge load posting, load limit, scour critical, fracture critical, with flags
+  in the list
+- Bridge NBIS reduced to reference-only: a single current rating plus inspection
+  date, framed as a copy from the state database. Legacy per-component ratings
+  still display on records that have them
+- Dropdown lists moved into `db.lookups`, editable under Settings
+
+**Still open:**
+
+- **Grid address format** for road segments — Greg is getting an example
+- **Barrel numbering within a site** — probably moot, since barrels are specs
+  rather than individually identified assets
+
+**Deferred with reason:**
+
+- **Photos.** Answered yes, and `photos` exists on every asset, but there's no UI
+  and shouldn't be until there's a backend. Browser storage caps around 5–10 MB;
+  photos across 3,500 signs would blow past that immediately.
+- **Asset reports for the Board.** The cost linkage exists via
+  `AssetCostHistory`; what the Board actually wants to see belongs to the Reports
+  form, still outstanding.

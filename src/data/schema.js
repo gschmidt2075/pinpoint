@@ -624,10 +624,15 @@ export const createRoad = (overrides = {}) => ({
   from911:         "",           // 911 address from
   to911:           "",           // 911 address to
   surfaceType:     "",           // Concrete | Bituminous | Gravel | Dirt
+  lengthMiles:     "",           // segment length — feeds mileage-by-surface totals
   speedLimit:      "",
   sectionTownshipRange: "",      // S/T/R (e.g. "29-8-9")
   latitude:        "",
   longitude:       "",
+  // Surface work history — "last graveled 14 months ago" drives what gets done next
+  lastGraveled:    "",           // YYYY-MM-DD
+  lastBladed:      "",
+  lastSealed:      "",
   status:          "active",     // active | inactive
   notes:           "",
   createdAt:       now(),
@@ -651,10 +656,21 @@ export const createBridge = (overrides = {}) => ({
   maxSpanLength:   "",           // feet
   spans:           "",           // number of spans
   yearBuilt:       "",
-  // NBIS condition ratings (0-9 scale, entered manually from state report)
+  // NBIS — the STATE DATABASE is the system of record. County staff inspect, but
+  // results are read from the state system, not entered here. Only what's needed
+  // to decide action is carried: the lowest current rating (action triggers at 3
+  // or 4) and when it was last looked at.
+  nbisRating:      null,         // 0-9, lowest of deck/substructure/superstructure
+  nbisInspected:   "",           // YYYY-MM-DD — date of the inspection this came from
+  // Legacy per-component ratings, retained so existing records still render.
   ratingDeck:          null,
   ratingSubstructure:  null,
   ratingSuperstructure:null,
+  // Postings and special inspection flags
+  loadPosted:      false,
+  loadLimit:       "",           // e.g. "20 T" — posted weight limit
+  scourCritical:   false,
+  fractureCritical:false,
   latitude:        "",
   longitude:       "",
   photos:          [],           // array of photo references

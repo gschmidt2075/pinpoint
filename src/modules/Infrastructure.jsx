@@ -45,19 +45,19 @@ export const RATING_CODES = {
     1: { label:"Critical",  desc:"Very poor condition indicating possible failure. Needs assessment for closing and possible immediate action." },
     0: { label:"Closed",    desc:"Structure is closed." },
   },
-  // Signs are NOT covered by the culvert/structure rating document. Retroreflectivity
-  // is managed by inspection, but the scale and its criteria haven't been supplied
-  // yet — so no descriptions here rather than borrowing ones that don't apply.
-  // TODO: confirm the sign condition scale with Greg. See QUESTION-LOG.md.
+  // Signs run 5 down to 1 with no exception state — confirmed 2026-07-26.
+  // Retroreflectivity is managed by inspection rather than a replacement schedule.
   sign: {
     5: { label:"Excellent", desc:"" },
     4: { label:"Good",      desc:"" },
     3: { label:"Fair",      desc:"" },
     2: { label:"Poor",      desc:"" },
     1: { label:"Critical",  desc:"" },
-    0: { label:"N/A",       desc:"" },
   },
 };
+
+// Signs have no 0. Culverts and structures do, and it means different things.
+export const ratingLevelsFor = (kind) => kind === "sign" ? [5,4,3,2,1] : [5,4,3,2,1,0];
 
 // Which rating vocabulary applies, based on the asset's designation.
 export const ratingKindFor = (designation) =>
@@ -99,7 +99,7 @@ function RatingSelect({ value, onChange, kind = "structure", style }) {
     <div>
       <select value={value ?? ""} onChange={e=>onChange(e.target.value === "" ? "" : Number(e.target.value))} style={style}>
         <option value="">Not rated…</option>
-        {[5,4,3,2,1,0].map(n => (
+        {ratingLevelsFor(kind).map(n => (
           <option key={n} value={n}>{n} — {codes[n].label}</option>
         ))}
       </select>
@@ -342,6 +342,19 @@ export default function Infrastructure({ db, dispatch }) {
 // ROADS
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// "2 yr 3 mo ago" reads better than a bare date when the question is
+// "when did we last gravel this?"
+function sinceLabel(dateStr) {
+  if (!dateStr) return "—";
+  const then = new Date(dateStr);
+  if (isNaN(then)) return dateStr;
+  const months = Math.max(0, Math.round((Date.now() - then.getTime()) / (1000*60*60*24*30.44)));
+  if (months < 1)  return "this month";
+  if (months < 12) return `${months} mo ago`;
+  const y = Math.floor(months/12), m = months % 12;
+  return m ? `${y} yr ${m} mo ago` : `${y} yr ago`;
+}
+
 function RoadsTab({ roads, projects, dispatch }) {
   const [selected, setSelected] = useState(null);
   const [showForm, setShowForm] = useState(false);
@@ -350,6 +363,15 @@ function RoadsTab({ roads, projects, dispatch }) {
   const [surfFilter, setSurfFilter] = useState("all");
 
   const selectedRoad = roads.find(r=>r.id===selected);
+
+  // Mileage by surface type — not required for state reporting, but useful
+  const activeRoads = roads.filter(r => r.status !== "inactive");
+  const sumMiles = (list) =>
+    list.reduce((s, r) => s + (parseFloat(r.lengthMiles) || 0), 0);
+  const fmtMiles = (n) => n > 0 ? `${n.toFixed(1)} mi` : "—";
+  const totalMiles = sumMiles(activeRoads) > 0 ? sumMiles(activeRoads).toFixed(1) : null;
+  const milesFor = (...types) =>
+    fmtMiles(sumMiles(activeRoads.filter(r => types.includes(r.surfaceType))));
 
   if (showForm || editing) {
     const road = editing ? roads.find(r=>r.id===editing) : null;
@@ -394,10 +416,10 @@ function RoadsTab({ roads, projects, dispatch }) {
       </div>
 
       <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:18 }}>
-        <KPICard label="Total Segments"        value={roads.filter(r=>r.status!=="inactive").length} sub=""         accent="#1a3a5c" icon="road" />
-        <KPICard label="Paved"                 value={byType("Concrete")+byType("Bituminous")}       sub="Segments" accent="#1a6b35" icon="layers-subtract" />
-        <KPICard label="Gravel"                value={byType("Gravel")}                              sub="Segments" accent="#d97706" icon="circle-dots" />
-        <KPICard label="Dirt"                  value={byType("Dirt")}                                sub="Segments" accent="#888"    icon="wave-square" />
+        <KPICard label="Total Segments" value={activeRoads.length}                                sub={totalMiles ? `${totalMiles} mi` : "Add lengths for mileage"} accent="#1a3a5c" icon="road" />
+        <KPICard label="Paved"          value={byType("Concrete")+byType("Bituminous")}            sub={milesFor("Concrete","Bituminous")} accent="#1a6b35" icon="layers-subtract" />
+        <KPICard label="Gravel"         value={byType("Gravel")}                                   sub={milesFor("Gravel")}               accent="#d97706" icon="circle-dots" />
+        <KPICard label="Dirt"           value={byType("Dirt")}                                     sub={milesFor("Dirt")}                 accent="#888"    icon="wave-square" />
       </div>
 
       <div style={{ display:"flex", border:"1px solid #ddd", borderRadius:6, overflow:"hidden", marginBottom:16, width:"fit-content" }}>
@@ -412,7 +434,7 @@ function RoadsTab({ roads, projects, dispatch }) {
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
           <thead>
             <tr style={{ background:"#f7f7f5" }}>
-              {["Road Name","From","To","Surface","Authority","Speed Limit","S/T/R",""].map(h=>(
+              {["Road Name","From","To","Surface","Miles","Last Graveled","Last Bladed",""].map(h=>(
                 <th key={h} style={{ padding:"9px 14px", textAlign:"left", fontWeight:600, fontSize:11, textTransform:"uppercase", letterSpacing:"0.05em", color:"#666", borderBottom:"1px solid #eee" }}>{h}</th>
               ))}
             </tr>
@@ -437,9 +459,9 @@ function RoadsTab({ roads, projects, dispatch }) {
                     color:r.surfaceType==="Concrete"?"#1a3a5c":r.surfaceType==="Bituminous"?"#fff":r.surfaceType==="Gravel"?"#8a5a2a":"#555",
                   }}>{r.surfaceType||"—"}</span>
                 </td>
-                <td style={{ padding:"10px 14px", fontSize:12 }}>{r.authority||"—"}</td>
-                <td style={{ padding:"10px 14px", fontSize:12 }}>{r.speedLimit?`${r.speedLimit} mph`:"—"}</td>
-                <td style={{ padding:"10px 14px", fontSize:12, fontFamily:"monospace", color:"#888" }}>{r.sectionTownshipRange||"—"}</td>
+                <td style={{ padding:"10px 14px", fontSize:12, fontFamily:"monospace" }}>{r.lengthMiles||"—"}</td>
+                <td style={{ padding:"10px 14px", fontSize:12, fontFamily:"monospace", color:"#888" }}>{sinceLabel(r.lastGraveled)}</td>
+                <td style={{ padding:"10px 14px", fontSize:12, fontFamily:"monospace", color:"#888" }}>{sinceLabel(r.lastBladed)}</td>
                 <td style={{ padding:"10px 14px" }}><Icon name="chevron-right" size={14} color="#ccc" /></td>
               </tr>
             ))}
@@ -517,10 +539,23 @@ function RoadForm({ road, onSave, onCancel }) {
           <Field label="911 To"><input type="text" value={form.to911} onChange={e=>set("to911",e.target.value)} style={inp} /></Field>
           <Field label="Section / Township / Range"><input type="text" value={form.sectionTownshipRange} onChange={e=>set("sectionTownshipRange",e.target.value)} style={inp} placeholder="29-8-9" /></Field>
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14, marginBottom:14 }}>
+          <Field label="Length (miles)"><input type="text" value={form.lengthMiles} onChange={e=>set("lengthMiles",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="1.0" /></Field>
           <Field label="Latitude"><input type="text" value={form.latitude} onChange={e=>set("latitude",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
           <Field label="Longitude"><input type="text" value={form.longitude} onChange={e=>set("longitude",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
         </div>
+
+        {/* Surface work history — "last graveled 14 months ago" is what drives the next decision */}
+        <div style={{ borderTop:"1px solid #eee", paddingTop:14, marginBottom:14 }}>
+          <div style={{ fontSize:12, fontWeight:700, color:"#555", marginBottom:3 }}>Surface Work History</div>
+          <div style={{ fontSize:11, color:"#888", marginBottom:11 }}>Leave blank if it's never been done or isn't known.</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14 }}>
+            <Field label="Last Graveled"><input type="date" value={form.lastGraveled} onChange={e=>set("lastGraveled",e.target.value)} style={inp} /></Field>
+            <Field label="Last Bladed"><input type="date" value={form.lastBladed} onChange={e=>set("lastBladed",e.target.value)} style={inp} /></Field>
+            <Field label="Last Sealed"><input type="date" value={form.lastSealed} onChange={e=>set("lastSealed",e.target.value)} style={inp} /></Field>
+          </div>
+        </div>
+
         <Field label="Notes"><textarea rows={2} value={form.notes} onChange={e=>set("notes",e.target.value)} style={{ ...inp, resize:"vertical" }} /></Field>
       </div>
       <div style={{ display:"flex", gap:10 }}>
@@ -566,7 +601,10 @@ function BridgesTab({ bridges, projects, dispatch }) {
     );
   }
 
+  // The state database is the system of record. New records carry one current
+  // rating; older ones may still hold the three component ratings.
   function minRating(b) {
+    if (b.nbisRating !== null && b.nbisRating !== undefined && b.nbisRating !== "") return Number(b.nbisRating);
     const vals = [b.ratingDeck, b.ratingSubstructure, b.ratingSuperstructure].filter(v=>v!==null&&v!==undefined&&v!=="");
     return vals.length ? Math.min(...vals.map(Number)) : null;
   }
@@ -615,7 +653,7 @@ function BridgesTab({ bridges, projects, dispatch }) {
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
           <thead>
             <tr style={{ background:"#f7f7f5" }}>
-              {["State #","County #","Road","Feature","Deck W","Length","Year","Deck","Sub","Super",""].map(h=>(
+              {["State #","County #","Road","Feature","Deck W","Length","Year","NBIS","Flags",""].map(h=>(
                 <th key={h} style={{ padding:"9px 12px", textAlign:"left", fontWeight:600, fontSize:11, textTransform:"uppercase", letterSpacing:"0.05em", color:"#666", borderBottom:"1px solid #eee" }}>{h}</th>
               ))}
             </tr>
@@ -638,9 +676,12 @@ function BridgesTab({ bridges, projects, dispatch }) {
                 <td style={{ padding:"9px 12px", fontSize:12, fontFamily:"monospace" }}>{b.deckWidth?`${b.deckWidth}'`:"—"}</td>
                 <td style={{ padding:"9px 12px", fontSize:12, fontFamily:"monospace" }}>{b.structLength?`${b.structLength}'`:"—"}</td>
                 <td style={{ padding:"9px 12px", fontSize:12 }}>{b.yearBuilt||"—"}</td>
-                <td style={{ padding:"9px 12px" }}><NBISRating value={b.ratingDeck} /></td>
-                <td style={{ padding:"9px 12px" }}><NBISRating value={b.ratingSubstructure} /></td>
-                <td style={{ padding:"9px 12px" }}><NBISRating value={b.ratingSuperstructure} /></td>
+                <td style={{ padding:"9px 12px" }}><NBISRating value={minRating(b)} /></td>
+                <td style={{ padding:"9px 12px", fontSize:11 }}>
+                  {b.loadPosted && <span title={b.loadLimit?`Posted ${b.loadLimit}`:"Load posted"} style={{ background:"#fef3cd", color:"#7a4f00", border:"1px solid #f0d080", borderRadius:4, padding:"1px 6px", marginRight:4, fontWeight:700 }}>{b.loadLimit||"POSTED"}</span>}
+                  {b.scourCritical && <span title="Scour critical" style={{ background:"#fdecea", color:"#8c1b18", border:"1px solid #f5c6c6", borderRadius:4, padding:"1px 6px", marginRight:4, fontWeight:700 }}>SC</span>}
+                  {b.fractureCritical && <span title="Fracture critical" style={{ background:"#fdecea", color:"#8c1b18", border:"1px solid #f5c6c6", borderRadius:4, padding:"1px 6px", fontWeight:700 }}>FC</span>}
+                </td>
                 <td style={{ padding:"9px 12px" }}><Icon name="chevron-right" size={14} color="#ccc" /></td>
               </tr>
             ))}
@@ -653,8 +694,10 @@ function BridgesTab({ bridges, projects, dispatch }) {
 
 function BridgeDetail({ bridge: b, projects, onBack, onEdit }) {
   const [tab, setTab] = useState("details");
-  const minR = [b.ratingDeck, b.ratingSubstructure, b.ratingSuperstructure].filter(v=>v!==null&&v!==undefined&&v!=="");
-  const minRating = minR.length ? Math.min(...minR.map(Number)) : null;
+  const legacy = [b.ratingDeck, b.ratingSubstructure, b.ratingSuperstructure].filter(v=>v!==null&&v!==undefined&&v!=="");
+  const minRating = (b.nbisRating !== null && b.nbisRating !== undefined && b.nbisRating !== "")
+    ? Number(b.nbisRating)
+    : (legacy.length ? Math.min(...legacy.map(Number)) : null);
   return (
     <div>
       <div style={{ display:"flex", gap:10, alignItems:"center", marginBottom:16 }}>
@@ -684,14 +727,42 @@ function BridgeDetail({ bridge: b, projects, onBack, onEdit }) {
               </div>
             ))}
           </SectionCard>
-          <SectionCard title="NBIS Condition Ratings">
-            <div style={{ fontSize:11, color:"#888", marginBottom:14 }}>0 = Failed · 4 = Poor · 6 = Satisfactory · 9 = Excellent</div>
-            {[["Deck",b.ratingDeck],["Substructure",b.ratingSubstructure],["Superstructure",b.ratingSuperstructure]].map(([k,v])=>(
-              <div key={k} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 0", borderBottom:"1px solid #f0f0ee" }}>
-                <span style={{ fontSize:14, fontWeight:600 }}>{k}</span>
-                <NBISRating value={v} size="lg" />
+          <SectionCard title="NBIS Condition & Postings">
+            <div style={{ background:"#f0f4ff", border:"1px solid #c8d8f0", borderRadius:5, padding:"8px 11px", fontSize:11, color:"#1a3a5c", marginBottom:14, lineHeight:1.5 }}>
+              Inspections are performed by county staff and recorded in the <strong>state database</strong>,
+              which remains the system of record. The rating held here is a reference copy — action is
+              triggered at 3 or 4.
+            </div>
+            <div style={{ fontSize:11, color:"#888", marginBottom:10 }}>0 = Failed · 4 = Poor · 6 = Satisfactory · 9 = Excellent</div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 0", borderBottom:"1px solid #f0f0ee" }}>
+              <span style={{ fontSize:14, fontWeight:600 }}>Current Rating</span>
+              <NBISRating value={minRating} size="lg" />
+            </div>
+            {b.nbisInspected && (
+              <div style={{ display:"flex", justifyContent:"space-between", padding:"9px 0", borderBottom:"1px solid #f0f0ee", fontSize:13 }}>
+                <span style={{ color:"#666" }}>Last Inspected</span><span style={{ fontWeight:600 }}>{fmtDate(b.nbisInspected)}</span>
+              </div>
+            )}
+            {[["Load Posted", b.loadPosted ? (b.loadLimit || "Yes") : "No"],
+              ["Scour Critical", b.scourCritical ? "Yes" : "No"],
+              ["Fracture Critical", b.fractureCritical ? "Yes" : "No"]].map(([k,v])=>(
+              <div key={k} style={{ display:"flex", justifyContent:"space-between", padding:"9px 0", borderBottom:"1px solid #f0f0ee", fontSize:13 }}>
+                <span style={{ color:"#666" }}>{k}</span>
+                <span style={{ fontWeight:600, color:(v!=="No")?"#c0392b":"#1a1a1a" }}>{v}</span>
               </div>
             ))}
+            {legacy.length > 0 && (
+              <div style={{ marginTop:12, paddingTop:10, borderTop:"1px solid #eee" }}>
+                <div style={{ fontSize:10, textTransform:"uppercase", letterSpacing:"0.06em", color:"#aaa", marginBottom:7 }}>Legacy component ratings</div>
+                {[["Deck",b.ratingDeck],["Substructure",b.ratingSubstructure],["Superstructure",b.ratingSuperstructure]]
+                  .filter(([,v])=>v!==null&&v!==undefined&&v!=="")
+                  .map(([k,v])=>(
+                  <div key={k} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"5px 0", fontSize:12 }}>
+                    <span style={{ color:"#888" }}>{k}</span><NBISRating value={v} />
+                  </div>
+                ))}
+              </div>
+            )}
             {b.notes && <div style={{ padding:"10px 0", fontSize:13, color:"#555", lineHeight:1.6 }}>{b.notes}</div>}
           </SectionCard>
         </div>
@@ -729,16 +800,43 @@ function BridgeForm({ bridge, onSave, onCancel }) {
           <Field label="# Spans"><input type="text" value={form.spans} onChange={e=>set("spans",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
           <Field label="Year Built"><input type="text" value={form.yearBuilt} onChange={e=>set("yearBuilt",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="1967" /></Field>
         </div>
-        <div style={{ fontWeight:700, fontSize:11, textTransform:"uppercase", letterSpacing:"0.06em", color:"#888", marginBottom:12, marginTop:8 }}>NBIS Ratings (0–9)</div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14, marginBottom:14 }}>
-          {[["ratingDeck","Deck"],["ratingSubstructure","Substructure"],["ratingSuperstructure","Superstructure"]].map(([key,label])=>(
-            <Field key={key} label={label}>
-              <select value={form[key]??""} onChange={e=>set(key,e.target.value===""?null:Number(e.target.value))} style={inp}>
-                <option value="">Not rated</option>
-                {[9,8,7,6,5,4,3,2,1,0].map(n=><option key={n} value={n}>{n} — {n>=7?"Good":n>=5?"Fair":n>=3?"Poor":"Critical/Failed"}</option>)}
-              </select>
-            </Field>
-          ))}
+        <div style={{ fontWeight:700, fontSize:11, textTransform:"uppercase", letterSpacing:"0.06em", color:"#888", marginBottom:6, marginTop:8 }}>NBIS — reference from state database</div>
+        <div style={{ fontSize:11, color:"#888", marginBottom:12, lineHeight:1.5 }}>
+          Inspections live in the state system. Copy the current rating across so action items surface here — 3 or 4 triggers action.
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:14 }}>
+          <Field label="Current NBIS Rating (0–9)">
+            <select value={form.nbisRating??""} onChange={e=>set("nbisRating",e.target.value===""?null:Number(e.target.value))} style={inp}>
+              <option value="">Not rated</option>
+              {[9,8,7,6,5,4,3,2,1,0].map(n=><option key={n} value={n}>{n} — {n>=7?"Good":n>=5?"Fair":n>=3?"Poor":"Critical/Failed"}</option>)}
+            </select>
+          </Field>
+          <Field label="Last Inspected">
+            <input type="date" value={form.nbisInspected} onChange={e=>set("nbisInspected",e.target.value)} style={inp} />
+          </Field>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:14, marginBottom:14, alignItems:"end" }}>
+          <Field label="Load Posted">
+            <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", height:34 }}>
+              <input type="checkbox" checked={!!form.loadPosted} onChange={e=>set("loadPosted",e.target.checked)} style={{ width:16, height:16, cursor:"pointer" }} />
+              <span style={{ fontSize:13 }}>Posted</span>
+            </label>
+          </Field>
+          <Field label="Load Limit">
+            <input type="text" value={form.loadLimit} onChange={e=>set("loadLimit",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="20 T" disabled={!form.loadPosted} />
+          </Field>
+          <Field label="Scour Critical">
+            <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", height:34 }}>
+              <input type="checkbox" checked={!!form.scourCritical} onChange={e=>set("scourCritical",e.target.checked)} style={{ width:16, height:16, cursor:"pointer" }} />
+              <span style={{ fontSize:13 }}>Yes</span>
+            </label>
+          </Field>
+          <Field label="Fracture Critical">
+            <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", height:34 }}>
+              <input type="checkbox" checked={!!form.fractureCritical} onChange={e=>set("fractureCritical",e.target.checked)} style={{ width:16, height:16, cursor:"pointer" }} />
+              <span style={{ fontSize:13 }}>Yes</span>
+            </label>
+          </Field>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14, marginBottom:14 }}>
           <Field label="Latitude"><input type="text" value={form.latitude} onChange={e=>set("latitude",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
@@ -1310,11 +1408,13 @@ function SignForm({ sign, onSave, onCancel }) {
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14 }}>
           <Field label="Position"><input type="text" value={form.position} onChange={e=>set("position",e.target.value)} style={inp} /></Field>
           <Field label="Materials Used"><input type="text" value={form.materialsUsed} onChange={e=>set("materialsUsed",e.target.value)} style={inp} /></Field>
-          <Field label="Condition Rating (1–5)">
-            <select value={form.signRating??""} onChange={e=>set("signRating",e.target.value===""?null:Number(e.target.value))} style={inp}>
-              <option value="">Not rated</option>
-              {[[5,"Excellent"],[4,"Good"],[3,"Fair"],[2,"Poor"],[1,"Critical"]].map(([n,l])=><option key={n} value={n}>{n} — {l}</option>)}
-            </select>
+          <Field label="Condition Rating">
+            <RatingSelect
+              value={form.signRating ?? ""}
+              onChange={v=>set("signRating", v === "" ? null : v)}
+              kind="sign"
+              style={inp}
+            />
           </Field>
         </div>
         <div style={{ marginTop:14 }}>
