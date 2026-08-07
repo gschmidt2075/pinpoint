@@ -338,8 +338,21 @@ Matl Cost · Eqp # · Eqp Hrs · Eqp Cost · Contr & Inv # · Payment · Total C
 Q20.1                15600 S. Union Avenue               Rate: 56.81
 ```
 
-Line one carries the figures. Line two carries the **task code**, the **work
-location**, the equipment description and the equipment rate.
+Line one carries the figures. Line two carries the **structure number**, the
+**road segment**, the equipment description and the equipment rate.
+
+**⚠ Corrected 2026-07-27.** `Q20.1` is *not* a task code — it's the **structure
+number** being worked on, and `15600 S. Union Avenue` is the **road segment that
+structure sits in**. The whole of M-2021-01 concerns that one structure, so both
+values repeat on all 73 records. The `(uses TASK Codes)` header appears to be an
+unused feature of the old software; Greg isn't aware of any task codes existing.
+
+**This belongs in the project header, not on every cost record** — which is what
+`project.linkedAssets` already does. No new structure needed.
+
+Incidentally `Q20.1` confirms the culvert numbering convention from Infrastructure
+Q19 — township code `Q`, section `20`, order `.1` — matching the `A 2.2` and
+`D 27.3C` examples.
 
 **This confirms Q10 exactly — labour and equipment are ONE record.** Seybold's
 3 hours at $48.29 is $144.87; unit 327 for 2 of those hours at $56.81 is $113.62;
@@ -384,36 +397,41 @@ Labour + material + equipment reconciles exactly to the total.
 
 ### What the report demands that Pinpoint lacks
 
-1. **Task codes.** `Q20.1` sits under every date and the report is headed
-   *"uses TASK Codes"*. This is almost certainly the same idea as the activity
-   list in Q8 — a work-type classification applied to each cost record.
-   **The full code list hasn't been supplied.**
+*(Originally seven items — two removed after Greg corrected the structure/road
+misreading. No task code system is needed, and no per-record location: the
+project's linked assets already carry both.)*
 
-2. **Work location on every entry.** `15600 S. Union Avenue` repeats on each
-   record. Not a project field — a per-record location.
-
-3. **Labour and equipment as one record.** Cost Accounting keeps
+1. **Labour and equipment as one record.** Cost Accounting keeps
    `laborEntries` and `equipmentEntries` separate and cannot express "these two
-   hours are within those eight." **This needs restructuring.**
+   hours are within those eight." **This needs restructuring** — it's the
+   biggest remaining change.
 
-4. **Direct-charged purchases.** Material bought for a project rather than drawn
+2. **Direct-charged purchases.** Material bought for a project rather than drawn
    from inventory, shown grouped by vendor with an invoice number.
 
-5. **Leased equipment** as a first-class unit with an hourly rate, not owned
+3. **Leased equipment** as a first-class unit with an hourly rate, not owned
    fleet.
 
-6. **Project header fields** absent from `createProject`: FEMA site number,
+4. **Project header fields** absent from `createProject`: FEMA site number,
    project priority, project length in years, reviewed date, map index, and the
    size/quantity figure.
 
-7. **Budget vs actual with percentages**, and an available balance.
+5. **Budget vs actual with percentages**, and an available balance.
+
+**Already covered:** the structure and road belong in the project header via
+`linkedAssets`, which exists and which `AssetCostHistory` already reads — so
+lifetime cost per asset (Infrastructure Q37) works through the same mechanism.
 
 ### Follow-ups
 
-1. **The TASK code list** (Q20.1 etc.) — what are they, and is it the same list
-   as the Q8 activities? This is now the single most useful missing piece.
+1. ~~The TASK code list~~ — **resolved.** Not task codes; structure number and
+   road segment, which belong in the project header. No such list exists.
 2. **Timesheet sample** — *not needed. Greg confirmed it's from other software
    that won't be integrated.*
+3. **The Q8 activity list still stands** as a separate requirement — general work
+   with no project number (snow removal, mowing, cemeteries, villages) still
+   needs somewhere to be costed. That's unrelated to the old report's structure
+   numbers.
 2. **Overtime "exemptions per policy"** (Q15) — which classifications are exempt?
 3. **Leave tracking** (Q30) was "maybe". Accruals with service-based maximums and
    twice-yearly comp payout is real work — in or out?
