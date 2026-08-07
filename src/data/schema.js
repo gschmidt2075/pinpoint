@@ -985,26 +985,175 @@ export const createInsuranceCert = (overrides = {}) => ({
 // EMPLOYEES
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// EMPLOYEES
+//
+// SCOPE (confirmed 2026-07-27): this is NOT payroll. The Clerk's office runs
+// gross-to-net, withholding and direct deposit. Pinpoint holds employees, their
+// rates and their benefit loading for one purpose — costing labour to work.
+//
+// DELIBERATELY NOT STORED: social security number, home address, date of birth.
+// Asked for and declined. Don't add them.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// A pay scale — the rate for a classification, from a date.
+// Rates come from the classification, not the individual (Q24). Rates change on
+// anniversary and by Board approval (Q18), and entries keep the rate in force
+// when they were made (Q19) — hence a dated series rather than a single number.
+export const createPayScale = (overrides = {}) => ({
+  id:             uid(),
+  classification: "",
+  effectiveDate:  today(),
+  hourlyRate:     0,
+  approvedBy:     "",           // "Board 2026-07-01", "anniversary", …
+  notes:          "",
+  createdAt:      now(),
+  ...overrides,
+});
+
+// One line of an employee's benefit loading. Fringe varies by person (Q20) —
+// insurance elections and years of service — but the components are standard.
+export const createFringeComponent = (overrides = {}) => ({
+  id:      uid(),
+  name:    "",
+  percent: 0,      // % of straight-time wage
+  flatHourly: 0,   // or a flat $/hour, for things that aren't wage-proportional
+  ...overrides,
+});
+
+// The components in use, with the rates that are fixed by law (Q22).
+export const DEFAULT_FRINGE_COMPONENTS = () => [
+  createFringeComponent({ name:"Social Security",  percent:6.20 }),
+  createFringeComponent({ name:"Retirement (NPERS)", percent:6.75 }),
+  createFringeComponent({ name:"Medicare",         percent:1.45 }),
+  createFringeComponent({ name:"Holiday Pay",      percent:0 }),
+  createFringeComponent({ name:"Vacation Pay",     percent:0 }),
+  createFringeComponent({ name:"Sick Leave",       percent:0 }),
+  createFringeComponent({ name:"Health Insurance", flatHourly:0 }),
+  createFringeComponent({ name:"Dental",           flatHourly:0 }),
+  createFringeComponent({ name:"HRA",              flatHourly:0 }),
+  createFringeComponent({ name:"Disability",       flatHourly:0 }),
+  createFringeComponent({ name:"FSA",              flatHourly:0 }),
+  createFringeComponent({ name:"Wellness",         flatHourly:0 }),
+  createFringeComponent({ name:"Workers Comp",     percent:0 }),
+];
+
+// A dated fringe profile. Same reasoning as pay scales — old entries keep the
+// loading that applied when they were made.
+export const createFringeProfile = (overrides = {}) => ({
+  id:            uid(),
+  effectiveDate: today(),
+  components:    DEFAULT_FRINGE_COMPONENTS(),
+  notes:         "",
+  createdAt:     now(),
+  ...overrides,
+});
+
+// When an employee held a classification. Promotions create a new assignment
+// rather than overwriting, so past entries still resolve correctly.
+export const createEmployeeAssignment = (overrides = {}) => ({
+  id:             uid(),
+  effectiveDate:  today(),
+  classification: "",
+  rateOverride:   null,   // null = use the classification's pay scale
+  notes:          "",
+  ...overrides,
+});
+
 export const createEmployee = (overrides = {}) => ({
   id:                uid(),
-  name:              "",
-  employeeId:        "",
-  jobTitle:          "",
-  classification:    "",
+  employeeNumber:    "",         // employee number + name is the identifier (Q25)
+  firstName:         "",
+  lastName:          "",
+  name:              "",         // display name, kept in step with first/last
+  employmentType:    "full_time",// full_time | part_time | seasonal
   hireDate:          "",
+  endDate:           "",         // set when they leave; history is kept, they're
+                                 // hidden from dropdowns (Q34)
   phone:             "",
-  address:           "",
-  // Rates (drive labor entry calculations)
-  straightTimeRate:  0,          // $/hour
-  overtimeRate:      0,          // $/hour
-  fringeRate:        0,          // % applied to straight-time (FEMA standard)
-  // Certifications
-  certifications:    [],         // array of createCertification()
+  email:             "",
+  // Classification history — drives which pay scale applies on a given date
+  assignments:       [],         // createEmployeeAssignment[]
+  // Benefit loading, dated
+  fringeProfiles:    [],         // createFringeProfile[]
+  // Blade operators are assigned a machine (Q29)
+  assignedEquipmentId: null,
+  certifications:    [],         // createCertification[] — 90-day warning (Q27)
+  emergencyContact:  { name:"", relationship:"", phone:"" },   // (Q31)
   active:            true,
   notes:             "",
   createdAt:         now(),
   ...overrides,
 });
+
+// ── Rate resolution ───────────────────────────────────────────────────────────
+// The whole point of the dated series. Given an employee and a date, work out
+// what they were paid then — never what they're paid now.
+const latestOnOrBefore = (list, date, key = "effectiveDate") =>
+  (list || [])
+    .filter(x => x[key] && x[key] <= date)
+    .sort((a,b) => b[key].localeCompare(a[key]))[0] || null;
+
+export function resolveClassification(employee, date) {
+  return latestOnOrBefore(employee?.assignments, date);
+}
+
+export function resolveHourlyRate(employee, date, payScales) {
+  const assignment = resolveClassification(employee, date);
+  if (!assignment) return { rate: 0, source: "none", classification: "" };
+  if (assignment.rateOverride !== null && assignment.rateOverride !== undefined && assignment.rateOverride !== "") {
+    return { rate: Number(assignment.rateOverride), source: "override", classification: assignment.classification };
+  }
+  const scale = latestOnOrBefore(
+    (payScales || []).filter(s => s.classification === assignment.classification),
+    date
+  );
+  return {
+    rate: scale ? Number(scale.hourlyRate) : 0,
+    source: scale ? "scale" : "none",
+    classification: assignment.classification,
+    scaleDate: scale?.effectiveDate || null,
+  };
+}
+
+// Fringe as dollars per hour at a given wage, plus the effective percentage.
+export function resolveFringe(employee, date, hourlyRate) {
+  const profile = latestOnOrBefore(employee?.fringeProfiles, date);
+  if (!profile) return { perHour: 0, percent: 0, profile: null, lines: [] };
+  const lines = (profile.components || []).map(c => ({
+    name: c.name,
+    amount: (Number(c.percent) || 0) / 100 * (hourlyRate || 0) + (Number(c.flatHourly) || 0),
+    percent: Number(c.percent) || 0,
+    flatHourly: Number(c.flatHourly) || 0,
+  }));
+  const perHour = lines.reduce((s,l) => s + l.amount, 0);
+  return {
+    perHour,
+    percent: hourlyRate ? (perHour / hourlyRate) * 100 : 0,
+    profile,
+    lines,
+  };
+}
+
+// Everything needed to cost an hour of this person's time on this date.
+export function laborRateFor(employee, date, payScales) {
+  const { rate, source, classification, scaleDate } = resolveHourlyRate(employee, date, payScales);
+  const fringe = resolveFringe(employee, date, rate);
+  return {
+    classification,
+    hourlyRate: rate,
+    rateSource: source,
+    scaleDate,
+    overtimeRate: rate * 1.5,          // 1.5x, over 40/week Mon–Sun (Q15, Q16)
+    fringePerHour: fringe.perHour,
+    fringePercent: fringe.percent,
+    fringeLines: fringe.lines,
+    loadedRate: rate + fringe.perHour, // what an hour actually costs
+  };
+}
+
+// Call-out and after-hours carry a 2-hour minimum (Q15, Q17).
+export const CALLOUT_MINIMUM_HOURS = 2;
 
 // Certification
 export const createCertification = (overrides = {}) => ({
@@ -1093,6 +1242,15 @@ export const LOOKUP_DEFS = [
     values:["low","normal","high","urgent"] },
   { key:"pmTasks",         label:"PM Tasks", module:"Equipment",
     values:["Oil & Filter","Grease","Hydraulic Service","Air Filter","Fuel Filter","Annual Inspection","Tire Rotation","Coolant","Other"] },
+  { key:"classifications", label:"Job Classifications", module:"Employees",
+    hint:"Each has a pay scale",
+    values:["Laborer","Operator II","Operator III","Road Foreman","Shop Foreman","Mechanic","Bridge Inspector","Sign Tech","Parts Manager","Office Manager","Accountant"] },
+  { key:"certificationTypes", label:"Certification Types", module:"Employees",
+    hint:"Warned 90 days before expiry",
+    values:["CDL","DOT Medical Card","Bridge Inspector Licence","Superintendent Licence","Pesticide Applicator","CPR","Flagger","First Aid","Specialised Training"] },
+  { key:"activities", label:"Work Activities", module:"Cost Accounting",
+    hint:"Work with no project number — every hour still gets charged",
+    values:["Snow Removal","Mowing","Grading","Equipment Maintenance","Bridge Inspections","Building Repair","Cemeteries","Culverts — Cut","Culverts — Jack","Culverts — Inspection","Driveway Installations","Gravel Deliveries","Illegal Dumping","Paint Striping","Patching","General Road Maintenance","Seeding","Shouldering","Sign Maintenance","Snow Fence","Weed Spraying","Sylvex Patching","Trees — Cutting","Trees — Stacking","Trees — Burning","Village Work","Shop Time","Training"] },
   { key:"fuelDepartments", label:"Fuel — Other Departments", module:"Equipment",
     hint:"County departments billed for fuel",
     values:["Weed","Sheriff","Assessor","Emergency Management","Maintenance"] },

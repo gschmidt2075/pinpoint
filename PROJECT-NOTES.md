@@ -36,7 +36,7 @@ It replaces a mix of aging software, spreadsheets, and paper across:
 | Infrastructure | `Infrastructure.jsx` | Built and overhauled. Barrels, 0–5 ratings, road history, bridge postings |
 | Projects | `Projects.jsx` | Built. Form still out with staff |
 | Settings | `Settings.jsx` | Built. **Dropdown Lists screen added** — lists now live in `db.lookups` |
-| **Payroll / Employees** | — | **Does not exist.** No UI at all |
+| Employees | `Employees.jsx` | **Built 2026-07-27.** Rate history, per-person fringe, certifications, pay scales. Labour costing only — not payroll |
 | Vendors | `Vendors.jsx` | **Built 2026-07-27.** Payees, remit-to, insurance, bonding, contract rates, supplied items |
 
 **The two gaps matter more than they look.** `db.employees` and `db.vendors` are
@@ -191,6 +191,17 @@ that assumes a meter only ever climbs will break the first time one is swapped.
 **Unit numbers are never reused**, and they're the same numbers as the inventory
 commodity group codes — group `228` is the 2003 140H CAT.
 
+**Employees is not payroll.** The Clerk's office runs gross-to-net, withholding
+and direct deposit. Pinpoint holds rates and benefit loading for one purpose:
+costing labour to work. SSN, home address and date of birth are deliberately
+absent — asked for and declined. Don't add them.
+
+**Rates are dated series, not numbers.** A pay scale belongs to a classification
+and takes effect from a date; an employee's classification is itself a dated
+history; fringe is a dated per-person profile. `laborRateFor(employee, date,
+payScales)` resolves what applied *on that date*, so a raise doesn't silently
+rewrite last year's project costs.
+
 ---
 
 ## Deliberately deferred
@@ -201,7 +212,6 @@ Not forgotten — waiting on something.
 |---|---|
 | Claim sheet restructure + Excel export | Nothing — fully specified, just needs building |
 | Per-claim status incl. denial | Same. `APPROVE_CLAIM_CYCLE` can't express a single denial |
-| Payroll / employee records | Staff answers (37 questions) |
 | Road segment grid address | Greg supplying an example |
 | Operator timesheets as a fuel source | The payroll/timesheet work |
 | Photos & document attachment | A backend — browser storage can't hold them |

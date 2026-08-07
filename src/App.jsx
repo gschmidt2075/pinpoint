@@ -7,6 +7,7 @@ import Infrastructure from "./modules/Infrastructure.jsx";
 import Projects from "./modules/Projects.jsx";
 import Settings from "./modules/Settings.jsx";
 import Vendors from "./modules/Vendors.jsx";
+import Employees from "./modules/Employees.jsx";
 import { FISCAL_YEAR } from "./data/accountCodes.js";
 import { DEFAULT_STORAGE_LOCATIONS, DEFAULT_TOWNSHIPS, DEFAULT_LOOKUPS, DEFAULT_TANKS } from "./data/schema.js";
 import { INITIAL_INVENTORY_ITEMS, INITIAL_INVENTORY_BATCHES, INITIAL_INVENTORY_TRANSACTIONS } from "./data/inventoryData.js";
@@ -50,6 +51,7 @@ const initialState = {
   // ── People & Vendors ─────────────────────────────────────────────────────
   vendors:            [],   // createVendor[]
   employees:          [],   // createEmployee[]
+  payScales:          [],   // createPayScale[] — rate per classification, dated
 
   // ── Settings / Lookups ───────────────────────────────────────────────────
   // Backward-compat aliases — removed when old modules are rebuilt
@@ -496,6 +498,13 @@ function reducer(state, action) {
     case "ADD_SIGN_HISTORY":return { ...state, signHistory:[...state.signHistory, action.payload] };
 
     // ── Vendors ────────────────────────────────────────────────────────────
+    // ── Employees & pay scales ─────────────────────────────────────────────
+    case "ADD_EMPLOYEE":    return { ...state, employees: [...state.employees, action.payload] };
+    case "UPDATE_EMPLOYEE": return { ...state, employees: state.employees.map(e => e.id === action.payload.id ? action.payload : e) };
+    case "ADD_PAY_SCALE":   return { ...state, payScales: [...(state.payScales||[]), action.payload] };
+    case "UPDATE_PAY_SCALE":return { ...state, payScales: (state.payScales||[]).map(s => s.id === action.payload.id ? action.payload : s) };
+    case "DELETE_PAY_SCALE":return { ...state, payScales: (state.payScales||[]).filter(s => s.id !== action.payload) };
+
     case "ADD_VENDOR":      return { ...state, vendors: [...state.vendors, action.payload] };
     case "UPDATE_VENDOR":   return { ...state, vendors: state.vendors.map(v => v.id === action.payload.id ? action.payload : v) };
     case "DELETE_VENDOR":   return { ...state, vendors: state.vendors.map(v => v.id === action.payload ? { ...v, active: false } : v) };
@@ -544,7 +553,7 @@ const NAV_GROUPS = [
       { id:"equipment",      label:"Equipment",         icon:"ti-tractor" },
       { id:"infrastructure", label:"Infrastructure",    icon:"ti-road" },
       { id:"projects",       label:"Projects",          icon:"ti-clipboard-list" },
-      { id:"payroll",        label:"Payroll",           icon:"ti-users",        soon:true },
+      { id:"payroll",        label:"Employees",         icon:"ti-users" },
       { id:"vendors",        label:"Vendors",           icon:"ti-file-invoice" },
     ],
   },
@@ -694,8 +703,9 @@ export default function App() {
           {activeTab==="infrastructure" && <Infrastructure   db={db} dispatch={dispatch} />}
           {activeTab==="projects"       && <Projects         db={db} dispatch={dispatch} />}
           {activeTab==="vendors"        && <Vendors          db={db} dispatch={dispatch} />}
+          {activeTab==="payroll"        && <Employees        db={db} dispatch={dispatch} role={role} />}
           {activeTab==="settings"       && <Settings         db={db} dispatch={dispatch} />}
-          {!["fund","cost","inventory","equipment","infrastructure","projects","vendors","settings"].includes(activeTab) && <ComingSoon tab={currentTab} />}
+          {!["fund","cost","inventory","equipment","infrastructure","projects","vendors","payroll","settings"].includes(activeTab) && <ComingSoon tab={currentTab} />}
         </div>
       </div>
 
