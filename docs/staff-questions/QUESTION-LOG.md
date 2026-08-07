@@ -13,7 +13,7 @@ the answers, records them below, and builds against them.
 
 | Module | Form | Questions | Status |
 |---|---|---|---|
-| Payroll & Employees | `Payroll-Questions.docx` | 37 | **Awaiting answers** |
+| Payroll & Employees | `Payroll-Questions.docx` | 37 | ✅ **Answered** — 4 follow-ups |
 | Vendors | `Vendor-Questions.docx` | 28 | ✅ **Answered** — ⚠ 12-vs-15 conflict |
 | Settings & Administration | `Settings-Questions.docx` | 38 | **Awaiting answers** |
 | Infrastructure | `Infrastructure-Questions.docx` | 38 | ✅ **Answered** — 2 follow-ups open |
@@ -25,7 +25,7 @@ the answers, records them below, and builds against them.
 | Fund Accounting — everything else | `FundAccounting-Questions.docx` | 46 | **Awaiting answers** |
 | Inventory | *(answered in chat)* | — | ✅ Complete |
 
-**208 questions outstanding across 5 forms.** Do not hand these out all at once —
+**171 questions outstanding across 4 forms.** Do not hand these out all at once —
 that's a good way to get nothing back. Give staff the one form matching whatever
 they're testing that week.
 
@@ -187,9 +187,130 @@ vendor would otherwise quietly produce an oversized claim.
 
 ---
 
-## Payroll & Employees
+## Payroll & Employees — ✅ ANSWERED 2026-07-27
 
-Form issued 2026-07-25 → `Payroll-Questions.docx` (37 questions, 5 sections).
+All 37 answered, signed CB. **The scope answer cuts this module roughly in half.**
+
+### Scope
+
+| # | Answer |
+|---|---|
+| 1 | **"Pay with benefits for costs in the project."** |
+| 2 | The **Clerk's Office** runs actual payroll |
+| 3 | **"This system will not need to track that. The only payroll portion this will need is for determining labor costs for projects."** |
+| 4 | Pay period runs **the 10th to the 9th** |
+| 5 | No union — **policy governs** rates and overtime |
+
+**So: no gross-to-net, no withholding, no direct deposit, and no feeding hours
+out to anyone.** Pinpoint needs employees, their rates and their benefit loading,
+so labour can be costed to work. That's it.
+
+### Time entry
+
+| # | Answer |
+|---|---|
+| 6 | **The office enters hours** from the **Daily Work Report** and **Grading Sheets** |
+| 7 | **Every hour should be charged** — *"proving the need for the staff and all that they do"* |
+| 8 | See the activity list below |
+| 9 | **Yes** — one person's day splits across several jobs |
+| 10 | **Equipment is recorded with labour:** *"If 1 person works 8 hours with 2 hours 434 then 6 hours in 241."* |
+| 11 | Must show **each person, what equipment they used, and for how long** |
+| 12 | Snow may need separate treatment **if FEMA-declared** |
+| 13 | **Total hours**, not start/stop times |
+| 14 | The Clerk's office can correct payroll at any time, per law |
+
+**Activity list (Q8)** — work with no project number, which still needs costing:
+
+> Snow removal · Mowing · Grading · Equipment maintenance · Bridge inspections ·
+> Building repair · Cemeteries · Culverts (cut, jack, inspections) · Driveway
+> installations · Gravel deliveries · Illegal dumping · Paint striping ·
+> Patching · General road maintenance (grading, small fill on gravel roads) ·
+> Seeding · Shouldering · Sign maintenance · Snow fence · Weed spraying ·
+> Sylvex patching · Trees (cutting, stacking, burning) · **each Village worked
+> for** · Building repairs
+
+### Rates & overtime
+
+| # | Answer |
+|---|---|
+| 15 | **1.5×**, with exemptions per policy. **2-hour minimum** when called in after hours and not continuing the workday |
+| 16 | Over **40 hours per week, Monday–Sunday** |
+| 17 | **Call-out — 2 hour minimum** |
+| 18 | Rates change on **anniversary** and by **Board approval** |
+| 19 | **YES — entries keep the rate that applied when they were made. Rate history is required.** |
+| 20 | **Fringe varies by person** — insurance elections and years of service |
+| 21 | The internal fringe rate **is** the FEMA one |
+| 22 | Fringe covers: **Social Security 6.20%, Retirement 6.75%, Medicare 1.45%**, holiday pay, vacation pay, sick leave, health insurance (in-lieu, dental, HRA, disability), FSA, wellness, workers comp |
+
+### Employee records
+
+| # | Answer |
+|---|---|
+| 23 | **Classifications:** Laborer · Operator II · Operator III · Road Foreman · Shop Foreman · Mechanic · Bridge Inspector · Sign Tech · Parts Manager · Office Manager · Accountant |
+| 24 | **A pay scale per classification** — the rate comes from the classification, not the individual |
+| 25 | **Employee number and name** |
+| 26 | **Certifications:** CDL · licences (Bridge, Superintendent, Applicator) · CPR · Flagger · First Aid · specialised training |
+| 27 | **90-day expiry warning** |
+| 28 | Part-time and seasonal exist — **no special rules yet** |
+| 29 | Equipment assignment is loose, but **blade operators are assigned a machine** |
+| 30 | Leave — "maybe". Sick and vacation **accrue monthly with maximums by years of service**. **Comp time is paid out twice a year if unused** |
+| 31 | **Emergency contact — yes** |
+| 32 | **DO NOT STORE: SSN, home address, date of birth** |
+| 33 | Pay rates visible to **Superintendent and Office Manager only** |
+| 34 | Keep history, **hide leavers from dropdowns** |
+
+### Reporting & FEMA
+
+| # | Answer |
+|---|---|
+| 35 | FEMA needs a spreadsheet of **employee names, rates with the benefit breakdown per hour, and job title**. Work reports need **name, hours worked, which equipment, and equipment time** |
+| 36 | Wants a **timesheet** and a **project report** — *samples referenced but not attached* |
+| 37 | **Hours by project** would be welcome |
+
+---
+
+### What this changes
+
+**The module is much smaller than the form implied.** No payroll processing, no
+export to the Clerk. Employees, classifications, rates, fringe — enough to cost
+labour. That's a fraction of what a payroll module usually carries.
+
+**Four things are structurally new:**
+
+1. **Rate history is required** (Q19). A rate isn't a number on an employee — it's
+   a dated series, and a labour entry resolves the rate in force on its date.
+   Cost Accounting Q8 asks the same thing about equipment rates; answer both the
+   same way.
+
+2. **Rates come from classification, not person** (Q24). A pay scale per
+   classification, with the employee pointing at one. Fringe, by contrast,
+   **is** per person (Q20).
+
+3. **Activities are a costing target alongside projects** (Q7, Q8). Every hour
+   should land somewhere, and most work has no project number. That list is
+   effectively a chart of work types and belongs in `db.lookups`.
+
+4. **Labour and equipment are one entry, not two** (Q10). Eight hours of a
+   person's day, with two hours on unit 434 and six on 241. Cost Accounting
+   currently keeps labour and equipment entries separate, which can't express
+   "these six hours are the same six hours."
+
+**Sensitive data is explicitly out** (Q32) — no SSN, home address or date of
+birth. Worth honouring in the schema rather than just the form, so it can't creep
+back in.
+
+**Rate visibility is restricted** (Q33) to Superintendent and Office Manager.
+That's the first real permission requirement on the project.
+
+### Follow-ups
+
+1. **Timesheet and project report samples** (Q36) — referenced but not attached.
+   Same as the claim sheet: a filled-in example is worth more than a description.
+2. **Overtime "exemptions per policy"** (Q15) — which classifications are exempt?
+3. **Leave tracking** (Q30) was "maybe". Accruals with service-based maximums and
+   twice-yearly comp payout is real work — in or out?
+4. **Villages** appear in the activity list. Is work for a village billed back,
+   like township work?
 
 **Why this blocks things:** `db.employees` has no management UI at all, so labor
 cost entry in Cost Accounting can never be used. Nothing can be costed to a
