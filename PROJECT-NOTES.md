@@ -4,7 +4,7 @@
 conversation, a future developer, or Greg six months from now — can get oriented
 in minutes instead of re-deriving everything.
 
-Last updated: 2026-07-25
+Last updated: 2026-07-27
 
 ---
 
@@ -29,13 +29,13 @@ It replaces a mix of aging software, spreadsheets, and paper across:
 
 | Module | File | State |
 |---|---|---|
-| Fund Accounting | `FundAccounting.jsx` | Built. Claim flow needs restructure — **blocked on staff answers** |
+| Fund Accounting | `FundAccounting.jsx` | Built. Claim flow fully specified, **not yet restructured** |
 | Cost Accounting | `CostAccounting.jsx` | Built. Unusable until employees exist |
-| Inventory | `Inventory.jsx` | Built, recently overhauled. Closest to done |
-| Equipment | `Equipment.jsx` | Built. Has Parts tab linked to inventory |
-| Infrastructure | `Infrastructure.jsx` | Built |
-| Projects | `Projects.jsx` | Built |
-| Settings | `Settings.jsx` | Built. Dropdown lists still hardcoded in modules — should move here |
+| Inventory | `Inventory.jsx` | Built and overhauled against staff answers |
+| Equipment | `Equipment.jsx` | Built and overhauled. Parts issue from inventory, PM warnings, fuel & department billing, operating cost |
+| Infrastructure | `Infrastructure.jsx` | Built and overhauled. Barrels, 0–5 ratings, road history, bridge postings |
+| Projects | `Projects.jsx` | Built. Form still out with staff |
+| Settings | `Settings.jsx` | Built. **Dropdown Lists screen added** — lists now live in `db.lookups` |
 | **Payroll / Employees** | — | **Does not exist.** No UI at all |
 | **Vendors** | — | **Does not exist.** No UI at all |
 
@@ -177,6 +177,20 @@ informative but nobody could do anything with them.
 workflow before the data model is locked. Every schema change is nearly free
 right now and gets expensive once a database exists.
 
+**Work orders are kept, but parts come out of inventory.** Staff don't currently
+use work orders — repairs are recorded as cost accounting entries. Greg chose to
+adopt them anyway, on the condition that parts behave like every other inventory
+movement: anything bought is received into inventory first, then issued out.
+
+**Depreciation is excluded from operating cost.** Cost per hour is cash out the
+door — fuel, parts, labour, outside repairs — not book value.
+
+**Meters can be replaced.** Lifetime meter is `meterOffset + currentMeter`. Code
+that assumes a meter only ever climbs will break the first time one is swapped.
+
+**Unit numbers are never reused**, and they're the same numbers as the inventory
+commodity group codes — group `228` is the 2003 140H CAT.
+
 ---
 
 ## Deliberately deferred
@@ -185,11 +199,13 @@ Not forgotten — waiting on something.
 
 | Item | Waiting on |
 |---|---|
-| Claim sheet restructure + export | Staff answers (4 questions) |
+| Claim sheet restructure + Excel export | Nothing — fully specified, just needs building |
+| Per-claim status incl. denial | Same. `APPROVE_CLAIM_CYCLE` can't express a single denial |
 | Payroll / employee records | Staff answers (37 questions) |
 | Vendor records | Staff answers (28 questions) |
-| Expenditure → inventory receiving | Staff answer — current implementation is wrong, allows free-text items that aren't in the catalog |
-| Settings-managed dropdown lists | Lower priority; lists are hardcoded in modules today |
+| Road segment grid address | Greg supplying an example |
+| Operator timesheets as a fuel source | The payroll/timesheet work |
+| Photos & document attachment | A backend — browser storage can't hold them |
 | Real database + API | Data model stability, then a county server |
 | Azure AD authentication | The database move |
 | Mobile field app (Flutter) | Everything above |
