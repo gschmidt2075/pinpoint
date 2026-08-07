@@ -302,10 +302,118 @@ back in.
 **Rate visibility is restricted** (Q33) to Superintendent and Office Manager.
 That's the first real permission requirement on the project.
 
+### Project report decoded 2026-07-27
+
+Source: `Project Report Example.pdf` — a real **Detail Costs** report for
+`M-2021-01` out of *R&B IMS, Jan 1999*, the system being replaced. Six pages,
+73 detail records. **The timesheet is deliberately ignored — it comes from other
+software that won't be integrated.**
+
+#### Header
+
+`(uses TASK Codes)` · **Adams County** · `Detail Costs: M-2021-01` · print date ·
+page number
+
+| Field | Example |
+|---|---|
+| Size / quantity | 2,560 |
+| FEMA Site # | 294 |
+| Project Priority | 0 |
+| Prj Length (Yrs) | *(blank)* |
+| Started | 3/10/2021 |
+| Reviewed | 7/01/2021 |
+| **Completed** | **4/12/2021** *(red)* |
+| Fiscal Yr | 2021 |
+| Map Index | 20-5-9 |
+
+#### Columns
+
+`Date · Employee · Rate · Reg Hrs · OT Hrs · Labor Cost · Inven # · Mtl Qty ·
+Matl Cost · Eqp # · Eqp Hrs · Eqp Cost · Contr & Inv # · Payment · Total Cost`
+
+#### Row shape — two printed lines per record
+
+```
+3/08/2021  SEYBOLD  48.29  3.00      144.87        327   2.00   113.62    258.49
+Q20.1                15600 S. Union Avenue               Rate: 56.81
+```
+
+Line one carries the figures. Line two carries the **task code**, the **work
+location**, the equipment description and the equipment rate.
+
+**This confirms Q10 exactly — labour and equipment are ONE record.** Seybold's
+3 hours at $48.29 is $144.87; unit 327 for 2 of those hours at $56.81 is $113.62;
+the record totals $258.49. Equipment hours are a subset of the person's hours.
+
+**Equipment also appears without an employee** — unit 117 for 0.50 hr at $79.43
+stands alone.
+
+#### Materials arrive two ways
+
+**From inventory** — `Inven #`, quantity, cost.
+
+**Direct charged**, grouped by vendor with the invoice number:
+
+```
+BIG G ACE
+4/06/2021   Face shield   1.00   26.06   670209/   26.06
+Q20.1       Direct Charged Purchased Item
+```
+
+Vendors seen: Big G Ace · Consolidated · Fastenal · Menards · Stetson · Sunbelt ·
+Ace Irrigation.
+
+#### Leased equipment
+
+`LEASE21-1`, `LEASE22-1` carry their own pseudo unit numbers and hourly rates
+($38.72), sitting alongside owned units in the same column.
+
+#### Totals
+
+| | Reg Hrs | Mtl Qty | Eqp Hrs | Labor | Material | Equipment | Total |
+|---|---|---|---|---|---|---|---|
+| **Actuals** | 268.00 | 113.00 | 186.00 | $10,229.07 | $10,620.67 | $14,121.64 | **$34,971.38** |
+| **Budgeted** | 0.00 | | 0.00 | | | | |
+| **% Actual/Budget** | 0% | | 0% | 0% | 0% | 0% | |
+
+`Number of Detail Cost Records: 73` · `Available Balance: 34,971.38`
+
+Labour + material + equipment reconciles exactly to the total.
+
+---
+
+### What the report demands that Pinpoint lacks
+
+1. **Task codes.** `Q20.1` sits under every date and the report is headed
+   *"uses TASK Codes"*. This is almost certainly the same idea as the activity
+   list in Q8 — a work-type classification applied to each cost record.
+   **The full code list hasn't been supplied.**
+
+2. **Work location on every entry.** `15600 S. Union Avenue` repeats on each
+   record. Not a project field — a per-record location.
+
+3. **Labour and equipment as one record.** Cost Accounting keeps
+   `laborEntries` and `equipmentEntries` separate and cannot express "these two
+   hours are within those eight." **This needs restructuring.**
+
+4. **Direct-charged purchases.** Material bought for a project rather than drawn
+   from inventory, shown grouped by vendor with an invoice number.
+
+5. **Leased equipment** as a first-class unit with an hourly rate, not owned
+   fleet.
+
+6. **Project header fields** absent from `createProject`: FEMA site number,
+   project priority, project length in years, reviewed date, map index, and the
+   size/quantity figure.
+
+7. **Budget vs actual with percentages**, and an available balance.
+
 ### Follow-ups
 
-1. **Timesheet and project report samples** (Q36) — referenced but not attached.
-   Same as the claim sheet: a filled-in example is worth more than a description.
+1. **The TASK code list** (Q20.1 etc.) — what are they, and is it the same list
+   as the Q8 activities? This is now the single most useful missing piece.
+2. **Timesheet sample** — *not needed. Greg confirmed it's from other software
+   that won't be integrated.*
 2. **Overtime "exemptions per policy"** (Q15) — which classifications are exempt?
 3. **Leave tracking** (Q30) was "maybe". Accruals with service-based maximums and
    twice-yearly comp payout is real work — in or out?
