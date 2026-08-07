@@ -409,16 +409,82 @@ a single shape/size/material on the structure record.
 
 ### Follow-up questions
 
-1. **What does a grid address look like?** An example or two would settle the
-   field format.
-2. **On the 0–5 scale, what does each number mean?** Specifically, is 0 "failed"
-   and 5 "excellent"? Q24 says 0 takes priority, which implies 0 is worst.
-3. **Sign posts and faces** — is it one post with several signs on it? Should a
-   face record point at a post record?
-4. **What is a "sign report"?** Who receives it, what's on it? If there's a sample
-   that would help.
-5. **Barrels** — is there a practical maximum, and do they get numbered
-   individually within a site?
+1. **What does a grid address look like?** — *Greg is getting this.*
+2. **Rating scale meanings** — ✅ **Answered.** See below.
+3. **Sign posts and faces** — ✅ **Answered.** See below.
+4. **What is a "sign report"?** — ✅ **Answered.** See below.
+5. **Barrels** — practical maximum, and are they numbered within a site? *Open.*
+6. **What scale do signs use, and what are its criteria?** *Open — the rating
+   codes document covers culverts and structures only.*
+
+---
+
+### Rating codes — answered 2026-07-26
+
+Source: `Culvert and Structure Rating Codes.docx`, now in `docs/reference/`.
+
+**5 is best, 1 is critical — and 0 is an exception, not the bottom of the scale.**
+
+| Code | Culvert *(under 48")* | Structure *(48" or greater)* |
+|---|---|---|
+| 5 | New or like new, sound and adequate | Same |
+| 4 | Minor rust or damage, still sound | Plus weathered planks/piling, minor concrete cracking |
+| 3 | Rust with pinholes, major end damage, waterway issues starting. Too short or low | Plus deck plank or piling issues, cracking with spalling |
+| 2 | Major rust with large holes, smashed ends, significant waterway issues | Plus pipe deformation, major plank/pile damage, severe cracking and spalling |
+| 1 | Critical — possible failure, assess for closing | Same |
+| **0** | **Inaccessible for assessment, or no rating can be assigned** | **Structure is closed** |
+
+The criteria differ between the two types at nearly every level, so the rating
+vocabulary is chosen from the asset's designation.
+
+**Implemented 2026-07-26.** `RATING_CODES` in `Infrastructure.jsx` holds both
+vocabularies; 0 renders in purple rather than on the red-to-green scale, since
+placing it below 1 would misrepresent it; the "Needs Attention" count includes
+0, 1 and 2; a collapsible criteria reference sits on the structures list.
+
+---
+
+### Sign posts — answered 2026-07-26
+
+**Posts are not separate assets.** Some locations carry two signs on one post.
+Each sign has its own number and its own record, and each records the same
+support details — type, material, length, stub. Posts are only tracked as
+*inventory*, i.e. what's in the yard for replacements.
+
+So no post entity. Support fields stay on the sign record, which is what's
+already built.
+
+---
+
+### Sign report — answered 2026-07-26
+
+Source: `Copy of Sign PDF.docx` (AppSheet template), now in `docs/reference/`.
+
+**The current workflow involves double entry:**
+
+1. Sign tech replaces, inventories or fixes a sign
+2. Updates it in the **AppSheet** app in the field
+3. AppSheet generates this report
+4. Emailed to the **project accountant**
+5. She **prints** it
+6. Sign tech **re-keys it** into the existing inventory system
+
+Steps 4–6 exist only because the two systems don't talk.
+
+**Fields on the report** — 26 in total, and Pinpoint's `createSign` already
+covered 23 of them. Added 2026-07-26: `height`, `changedBy` (AppSheet "Editor"),
+`lastModified` (AppSheet "Timestamp"), plus `sourceSystem` to mark imported
+records.
+
+One to check: **"Stub Used"** is a boolean in Pinpoint (`stub: false`) but may be
+a size or type value in AppSheet.
+
+**The near-term opportunity.** The sign tech needs a mobile device in the field,
+and Pinpoint has no mobile app yet — so AppSheet has to stay for field capture
+for now. But the re-keying can go: AppSheet is normally backed by a Google Sheet,
+so if that can be exported, Pinpoint can import it directly and steps 4–6
+disappear. **Needs confirming: what sits behind the AppSheet app, and can it be
+exported?**
 
 **Why it matters:** the module was built on assumptions rather than on how the
 department actually works — the same problem inventory had. Much of this is also

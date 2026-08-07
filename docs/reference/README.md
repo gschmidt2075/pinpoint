@@ -7,6 +7,8 @@ system has to reproduce exactly.
 |---|---|
 | `Blank Claim Form.xls` | The county claim sheet template — 16 invoice rows, 8 accounting rows, balance formula, signature block |
 | `Claim Sheet Example.xlsx` | A filled-in claim showing both the single-code and split-code conventions |
+| `Culvert and Structure Rating Codes.docx` | The department's 0–5 condition scale, with separate criteria for culverts and structures |
+| `Copy of Sign PDF.docx` | The AppSheet sign report template — the full field set the sign tech captures |
 
 The claim sheet layout is decoded in `../staff-questions/QUESTION-LOG.md` under
 "Q1 resolved". Read that before building any export — the presentation rules are

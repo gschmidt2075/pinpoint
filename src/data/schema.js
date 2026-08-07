@@ -715,13 +715,17 @@ export const createSign = (overrides = {}) => ({
   // Physical
   surface:         "",           // sheeting / surface type
   size:            "",
+  height:          "",           // mounting height
+  // Support (post). Posts are NOT tracked as separate assets — they're attributes
+  // of the sign, and stocked in inventory as yard replacements. Two signs on one
+  // post are two records, each recording the same support details.
   supportType:     "",
   supportMaterial: "",
   supportLength:   "",
   stub:            false,
   sheeting:        "",
   // Condition
-  signRating:      null,         // 1-5
+  signRating:      null,         // scale unconfirmed — see QUESTION-LOG.md
   // Position
   position:        "",
   sideOfRoad:      "",
@@ -732,6 +736,10 @@ export const createSign = (overrides = {}) => ({
   photos:          [],
   status:          "active",     // active | removed | replaced
   notes:           "",
+  // Provenance — mirrors the AppSheet sign report so records can be traced back
+  changedBy:       "",           // AppSheet "Editor"
+  lastModified:    "",           // AppSheet "Timestamp"
+  sourceSystem:    "",           // "appsheet" when imported, blank when entered here
   createdAt:       now(),
   ...overrides,
 });
