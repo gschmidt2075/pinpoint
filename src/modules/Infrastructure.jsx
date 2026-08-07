@@ -22,17 +22,143 @@ function NBISRating({ value, size = "md" }) {
   );
 }
 
-// Structure/sign condition rating (1–5)
-function CondRating({ value, size = "sm" }) {
+// ── Culvert & structure condition ratings ────────────────────────────────────
+// Source: "Culvert and Structure Rating Codes" (department standard).
+//   Culvert  = CMP/CMAP of any size, or other material, UNDER 48"
+//   Structure = anything 48" or greater, any material
+// 5 is best and 1 is critical. 0 is NOT worse than 1 — it's an exception state
+// that means something different for each asset type, and both demand attention.
+export const RATING_CODES = {
+  culvert: {
+    5: { label:"Excellent", desc:"New or like new condition, structurally sound and functionally adequate." },
+    4: { label:"Good",      desc:"Some deterioration — minor rust, minor damage — but structurally sound and functionally adequate." },
+    3: { label:"Fair",      desc:"Advanced deterioration — rust with minor pinholes, major damage to ends, waterway issues starting to develop. Too short or low." },
+    2: { label:"Poor",      desc:"Significant deterioration — major rust with large holes, smashed ends affecting performance, significant waterway issues." },
+    1: { label:"Critical",  desc:"Very poor condition indicating possible failure. Needs assessment for closing and possible immediate action." },
+    0: { label:"Unassessable", desc:"All or part of the culvert is inaccessible for assessment, or a rating cannot be assigned." },
+  },
+  structure: {
+    5: { label:"Excellent", desc:"New or like new condition, structurally sound and functionally adequate." },
+    4: { label:"Good",      desc:"Some deterioration — minor rust, minor damage, weathered planks or piling, minor cracking in concrete — but structurally sound and functionally adequate." },
+    3: { label:"Fair",      desc:"Advanced deterioration — rust with minor pinholes, major damage to ends, deck plank or piling issues, minor cracking with spalling, waterway issues starting to develop." },
+    2: { label:"Poor",      desc:"Significant deterioration — major rust with large holes, deformation in pipe shape due to rust, major plank or pile damage, severe cracking and spalling that may affect structural performance. Significant waterway issues." },
+    1: { label:"Critical",  desc:"Very poor condition indicating possible failure. Needs assessment for closing and possible immediate action." },
+    0: { label:"Closed",    desc:"Structure is closed." },
+  },
+  // Signs are NOT covered by the culvert/structure rating document. Retroreflectivity
+  // is managed by inspection, but the scale and its criteria haven't been supplied
+  // yet — so no descriptions here rather than borrowing ones that don't apply.
+  // TODO: confirm the sign condition scale with Greg. See QUESTION-LOG.md.
+  sign: {
+    5: { label:"Excellent", desc:"" },
+    4: { label:"Good",      desc:"" },
+    3: { label:"Fair",      desc:"" },
+    2: { label:"Poor",      desc:"" },
+    1: { label:"Critical",  desc:"" },
+    0: { label:"N/A",       desc:"" },
+  },
+};
+
+// Which rating vocabulary applies, based on the asset's designation.
+export const ratingKindFor = (designation) =>
+  String(designation || "").toLowerCase() === "culvert" ? "culvert" : "structure";
+
+// A 0 is an exception, not the bottom of the scale — render it distinctly so it
+// doesn't read as "slightly worse than critical". Both 0 and 1 need action.
+function ratingStyle(n) {
+  if (n === 0) return { color:"#4a2d7a", bg:"#f0eaf8", border:"#c9b6e8" };
+  if (n >= 4)  return { color:"#1a6b35", bg:"#e6f4ec", border:"#a8d5b5" };
+  if (n === 3) return { color:"#d97706", bg:"#fef3cd", border:"#f0d080" };
+  return         { color:"#c0392b", bg:"#fdecea", border:"#f5c6c6" };
+}
+
+function CondRating({ value, size = "sm", kind = "structure" }) {
   if (value === null || value === undefined || value === "") return <span style={{ color:"#bbb", fontSize:12 }}>—</span>;
   const n = Number(value);
-  const labels = { 5:"Excellent", 4:"Good", 3:"Fair", 2:"Poor", 1:"Critical" };
-  const color  = n >= 4 ? "#1a6b35" : n === 3 ? "#d97706" : "#c0392b";
-  const bg     = n >= 4 ? "#e6f4ec" : n === 3 ? "#fef3cd" : "#fdecea";
+  const entry = RATING_CODES[kind]?.[n];
+  const { color, bg, border } = ratingStyle(n);
   return (
-    <span style={{ background:bg, color, padding:size==="lg"?"8px 18px":"2px 9px", borderRadius:99, fontWeight:700, fontSize:size==="lg"?18:12, fontFamily:"monospace" }}>
-      {n} — {labels[n]||""}
+    <span
+      title={entry?.desc || ""}
+      style={{
+        background:bg, color, border:`1px solid ${border}`,
+        padding:size==="lg"?"8px 18px":"2px 9px", borderRadius:99,
+        fontWeight:700, fontSize:size==="lg"?18:12, fontFamily:"monospace",
+        whiteSpace:"nowrap",
+      }}
+    >
+      {n} — {entry?.label || ""}
     </span>
+  );
+}
+
+// Dropdown that shows the full criteria for the relevant asset type.
+function RatingSelect({ value, onChange, kind = "structure", style }) {
+  const codes = RATING_CODES[kind];
+  return (
+    <div>
+      <select value={value ?? ""} onChange={e=>onChange(e.target.value === "" ? "" : Number(e.target.value))} style={style}>
+        <option value="">Not rated…</option>
+        {[5,4,3,2,1,0].map(n => (
+          <option key={n} value={n}>{n} — {codes[n].label}</option>
+        ))}
+      </select>
+      {value !== "" && value !== null && value !== undefined && codes[Number(value)] && (
+        <div style={{ fontSize:11, color:"#777", marginTop:5, lineHeight:1.45 }}>
+          {codes[Number(value)].desc}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Collapsible reference so crews can check the criteria without leaving the page.
+function RatingReference() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ marginBottom:16 }}>
+      <button
+        onClick={()=>setOpen(o=>!o)}
+        style={{ background:"transparent", border:"none", color:"#1a3a5c", fontSize:12, fontWeight:600, cursor:"pointer", padding:0, display:"inline-flex", alignItems:"center", gap:6 }}
+      >
+        <Icon name={open?"chevron-down":"chevron-right"} size={13} color="#1a3a5c" />
+        Rating criteria (0–5)
+      </button>
+      {open && (
+        <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:16, marginTop:10 }}>
+          <div style={{ fontSize:11, color:"#888", marginBottom:12, lineHeight:1.5 }}>
+            <strong>Culvert</strong> — CMP, CMAP or other material <strong>under 48"</strong>.{" "}
+            <strong>Structure</strong> — anything <strong>48" or greater</strong>, any material.{" "}
+            Anything NBIS-reportable is a bridge.
+          </div>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+            <thead>
+              <tr style={{ background:"#f7f7f5" }}>
+                {["Code","Culvert","Structure"].map(h=>(
+                  <th key={h} style={{ padding:"7px 10px", textAlign:"left", fontWeight:700, fontSize:10, textTransform:"uppercase", letterSpacing:"0.05em", color:"#666", borderBottom:"1px solid #eee", width:h==="Code"?70:undefined }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {[5,4,3,2,1,0].map((n,i)=>(
+                <tr key={n} style={{ borderTop:"1px solid #f0f0ee", background:i%2===0?"#fff":"#fafaf8" }}>
+                  <td style={{ padding:"8px 10px", verticalAlign:"top" }}>
+                    <CondRating value={n} kind="culvert" />
+                  </td>
+                  <td style={{ padding:"8px 10px", verticalAlign:"top", color:"#555", lineHeight:1.5 }}>{RATING_CODES.culvert[n].desc}</td>
+                  <td style={{ padding:"8px 10px", verticalAlign:"top", color:"#555", lineHeight:1.5 }}>{RATING_CODES.structure[n].desc}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{ fontSize:11, color:"#4a2d7a", background:"#f0eaf8", border:"1px solid #c9b6e8", borderRadius:5, padding:"8px 11px", marginTop:12 }}>
+            <strong>A 0 is not worse than a 1 — it's a different thing.</strong> For a culvert it means
+            nobody could assess it; for a structure it means it's closed. Either way it needs attention,
+            which is why 0 is shown in purple rather than on the red-to-green scale.
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -617,8 +743,22 @@ function StructuresTab({ structures, projects, dispatch }) {
         <KPICard label="Total"           value={active.length} sub="Structures"    accent="#1a3a5c" icon="archway" />
         <KPICard label="Structures"      value={active.filter(s=>s.designation==="Structure").length} sub="Primary" accent="#1a5a3a" icon="building-arch" />
         <KPICard label="Culverts"        value={active.filter(s=>s.designation==="Culvert").length} sub="" accent="#d97706" icon="ripple" />
-        <KPICard label="Poor / Critical" value={active.filter(s=>s.rating!==null&&s.rating!==undefined&&Number(s.rating)<=2).length} sub="Rating ≤ 2" accent="#c0392b" icon="alert-circle" />
+        <KPICard
+          label="Needs Attention"
+          value={active.filter(s => {
+            if (s.rating === null || s.rating === undefined || s.rating === "") return false;
+            const n = Number(s.rating);
+            // 1–2 are failing. 0 is an exception state — unassessable culvert or
+            // closed structure — and takes priority either way.
+            return n === 0 || n <= 2;
+          }).length}
+          sub="Rating 0, 1 or 2"
+          accent="#c0392b"
+          icon="alert-circle"
+        />
       </div>
+
+      <RatingReference />
 
       <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap" }}>
         <div style={{ display:"flex", border:"1px solid #ddd", borderRadius:6, overflow:"hidden" }}>
@@ -659,7 +799,7 @@ function StructuresTab({ structures, projects, dispatch }) {
                 <td style={{ padding:"9px 12px", fontSize:12, maxWidth:200, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.sizeAndType||"—"}</td>
                 <td style={{ padding:"9px 12px", fontSize:12, color:"#888" }}>{s.featureIntersected||"—"}</td>
                 <td style={{ padding:"9px 12px", fontSize:12, color:"#888" }}>{s.route||"—"}</td>
-                <td style={{ padding:"9px 12px" }}><CondRating value={s.rating} /></td>
+                <td style={{ padding:"9px 12px" }}><CondRating value={s.rating} kind={ratingKindFor(s.designation)} /></td>
                 <td style={{ padding:"9px 12px" }}><Icon name="chevron-right" size={14} color="#ccc" /></td>
               </tr>
             ))}
@@ -681,7 +821,7 @@ function StructureDetail({ structure: s, projects, onBack, onEdit }) {
           <div style={{ fontSize:18, fontWeight:700 }}>{s.road||"Structure"}</div>
           <div style={{ fontSize:13, color:"#666" }}>{s.township||""}{s.featureIntersected?` · ${s.featureIntersected}`:""}</div>
         </div>
-        <CondRating value={s.rating} size="lg" />
+        <CondRating value={s.rating} size="lg" kind={ratingKindFor(s.designation)} />
         <button onClick={onEdit} style={{ ...btn.small, background:"#1a3a5c" }}>Edit</button>
       </div>
       <SubTabs tabs={[["details","Details","info-circle"],["cost","Cost History","coin"]]} active={tab} onChange={setTab} />
@@ -711,7 +851,7 @@ function StructureDetail({ structure: s, projects, onBack, onEdit }) {
             ))}
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 0", borderBottom:"1px solid #f0f0ee" }}>
               <span style={{ fontSize:14, fontWeight:600 }}>Condition Rating</span>
-              <CondRating value={s.rating} size="lg" />
+              <CondRating value={s.rating} size="lg" kind={ratingKindFor(s.designation)} />
             </div>
             {s.notes && <div style={{ padding:"10px 0", fontSize:13, color:"#555", lineHeight:1.6 }}>{s.notes}</div>}
           </SectionCard>
@@ -777,15 +917,19 @@ function StructureForm({ structure, onSave, onCancel }) {
           <Field label="Year Built"><input type="text" value={form.yearBuilt} onChange={e=>set("yearBuilt",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
           <Field label="FAS Number"><input type="text" value={form.fasNumber} onChange={e=>set("fasNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:14, marginBottom:14 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14, marginBottom:14 }}>
           <Field label="Project Ref"><input type="text" value={form.project} onChange={e=>set("project",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="M-2024-01…" /></Field>
-          <Field label="Latitude"><input type="text" value={form.latitude} onChange={e=>set("latitude",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
-          <Field label="Longitude"><input type="text" value={form.longitude} onChange={e=>set("longitude",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
-          <Field label="Condition Rating (1–5)">
-            <select value={form.rating??""} onChange={e=>set("rating",e.target.value===""?null:Number(e.target.value))} style={inp}>
-              <option value="">Not rated</option>
-              {[[5,"Excellent"],[4,"Good"],[3,"Fair"],[2,"Poor"],[1,"Critical"]].map(([n,l])=><option key={n} value={n}>{n} — {l}</option>)}
-            </select>
+          <Field label="Latitude"><input type="text" value={form.latitude} onChange={e=>set("latitude",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="40.5853" /></Field>
+          <Field label="Longitude"><input type="text" value={form.longitude} onChange={e=>set("longitude",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="-98.3889" /></Field>
+        </div>
+        <div style={{ marginBottom:14, maxWidth:520 }}>
+          <Field label={`Condition Rating (0–5) — ${ratingKindFor(form.designation)==="culvert"?"culvert":"structure"} criteria`}>
+            <RatingSelect
+              value={form.rating ?? ""}
+              onChange={v=>set("rating", v === "" ? null : v)}
+              kind={ratingKindFor(form.designation)}
+              style={inp}
+            />
           </Field>
         </div>
         <Field label="Notes"><input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={inp} /></Field>
@@ -896,7 +1040,7 @@ function SignsTab({ signs, signHistory, projects, dispatch }) {
                 <td style={{ padding:"9px 12px" }}>
                   {s.reason && <span style={{ fontSize:11, fontWeight:700, padding:"2px 8px", borderRadius:99, background:s.reason==="HSIP"?"#e6edf5":"#f0f0ee", color:s.reason==="HSIP"?"#1a3a5c":"#555" }}>{s.reason}</span>}
                 </td>
-                <td style={{ padding:"9px 12px" }}><CondRating value={s.signRating} /></td>
+                <td style={{ padding:"9px 12px" }}><CondRating value={s.signRating} kind="sign" /></td>
                 <td style={{ padding:"9px 12px" }}><Icon name="chevron-right" size={14} color="#ccc" /></td>
               </tr>
             ))}
@@ -932,7 +1076,7 @@ function SignDetail({ sign: s, history, projects, onBack, onEdit, dispatch }) {
           <div style={{ fontSize:18, fontWeight:700 }}>{s.signName||"Sign"}</div>
           <div style={{ fontSize:13, color:"#666" }}>{s.onRoad||""}{s.township?` · ${s.township}`:""}</div>
         </div>
-        {(s.signRating!==null&&s.signRating!==undefined&&s.signRating!=="") && <CondRating value={s.signRating} size="lg" />}
+        {(s.signRating!==null&&s.signRating!==undefined&&s.signRating!=="") && <CondRating value={s.signRating} size="lg" kind="sign" />}
         <button onClick={onEdit} style={{ ...btn.small, background:"#1a3a5c" }}>Edit</button>
       </div>
       <SubTabs tabs={[["details","Details","info-circle"],["history","Service History","history"],["cost","Cost History","coin"]]} active={tab} onChange={setTab} />
@@ -961,7 +1105,7 @@ function SignDetail({ sign: s, history, projects, onBack, onEdit, dispatch }) {
             ))}
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 0" }}>
               <span style={{ fontSize:14, fontWeight:600 }}>Condition Rating</span>
-              <CondRating value={s.signRating} size="lg" />
+              <CondRating value={s.signRating} size="lg" kind="sign" />
             </div>
             {s.notes && <div style={{ padding:"8px 0", fontSize:13, color:"#555", lineHeight:1.6 }}>{s.notes}</div>}
           </SectionCard>
