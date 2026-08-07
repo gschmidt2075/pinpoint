@@ -682,13 +682,30 @@ cost, bill as Sheriff $114.91 / Weed $106.02, total $220.93 across 64.6 gallons.
 The county grader's 62.5 gallons is excluded from billing but counted in the
 off-road tax total.
 
+### Operating cost & tank reconciliation — built 2026-07-27
+
+**Cost per hour / per mile** sits on each unit's Overview tab. Adds fuel, parts,
+in-house labour and outside repairs; **excludes depreciation** as instructed. The
+denominator is the metered span actually on record — earliest fuelling reading to
+current lifetime meter — so it doesn't invent a rate from a single reading. A
+stacked bar shows where the money went, which is what makes a repair-versus-
+replace conversation concrete.
+
+Verified: unit 241 with $655.61 fuel, $2,132.55 parts, $960 labour and $2,100
+outside over a 300-hour span reports **$19.49/hr**, split fuel 11% · parts 36% ·
+labour 16% · outside 36%.
+
+**Tank reconciliation** distinguishes the two cadences. Monitored Main shop tanks
+are balanced against the logs **daily**; everything else is dipped **annually**.
+A panel on the Tanks tab lists anything overdue or never done, with the last
+variance. Verified: Main shop read today = ok, Kenesaw dipped 200 days ago = ok,
+Holstein 400 days ago = overdue.
+
 ### Still to build from this form
 
-- **Tank reconciliation** — daily monitor balance at Main, annual dip
 - **Operator timesheets as a fuel source** — outlying sheds are recorded on
-  weekly timesheets, not at a pump
-- **Cost per hour / per mile** — fuel, parts, oils, shop supplies, all repairs,
-  in-house and outside labour. **No depreciation**
+  weekly timesheets, not at a pump. Needs the payroll/timesheet work first, so
+  it's blocked behind the Payroll form.
 - **Document attachment** — scanned invoices and outside warranty orders.
   Deferred with photos until there's a backend
 

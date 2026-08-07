@@ -384,7 +384,7 @@ function UnitDetail({ unit, workOrders, pmLogs, dispensing, invItems, invBatches
         ))}
       </div>
 
-      {tab==="overview"   && <UnitOverview unit={unit} />}
+      {tab==="overview"   && <UnitOverview unit={unit} workOrders={workOrders} dispensing={dispensing} />}
       {tab==="workorders" && <UnitWorkOrders unit={unit} workOrders={workOrders} dispatch={dispatch} onOpen={onOpenWO} />}
       {tab==="pm"         && <UnitPM unit={unit} pmLogs={pmLogs} dispatch={dispatch} />}
       {tab==="parts"      && <UnitParts parts={fitParts} batches={invBatches} />}
@@ -465,8 +465,71 @@ function UnitParts({ parts, batches }) {
   );
 }
 
-function UnitOverview({ unit: u }) {
+function UnitOverview({ unit: u, workOrders, dispensing }) {
+  const cost = operatingCost(u, workOrders, dispensing);
   return (
+    <div>
+      {/* What it costs to run — feeds replacement decisions */}
+      <SectionCard title="Operating Cost" subtitle="Fuel, parts, labour and outside repairs. Excludes depreciation." style={{ marginBottom:20 }}>
+        <div style={{ padding:16 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:16 }}>
+            <div style={{ background:"#fafaf8", border:"1px solid #eee", borderRadius:6, padding:13 }}>
+              <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em", color:"#888" }}>Cost per {cost.unitLabel}</div>
+              <div style={{ fontSize:22, fontWeight:700, fontFamily:"monospace", color: cost.perUnit ? "#1a3a5c" : "#ccc", marginTop:3 }}>
+                {cost.perUnit ? fmtSm(cost.perUnit) : "—"}
+              </div>
+              <div style={{ fontSize:10, color:"#aaa" }}>
+                {cost.span ? `over ${cost.span.toLocaleString()} ${cost.unitLabel}` : "needs meter history"}
+              </div>
+            </div>
+            <div style={{ background:"#fafaf8", border:"1px solid #eee", borderRadius:6, padding:13 }}>
+              <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em", color:"#888" }}>Lifetime Meter</div>
+              <div style={{ fontSize:22, fontWeight:700, fontFamily:"monospace", color:"#1a1a1a", marginTop:3 }}>{lifetimeMeter(u).toLocaleString()}</div>
+              <div style={{ fontSize:10, color:"#aaa" }}>
+                {u.meterOffset ? `incl. ${Number(u.meterOffset).toLocaleString()} on prior meter` : cost.unitLabel}
+              </div>
+            </div>
+            <div style={{ background:"#fafaf8", border:"1px solid #eee", borderRadius:6, padding:13 }}>
+              <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em", color:"#888" }}>Total Spent</div>
+              <div style={{ fontSize:22, fontWeight:700, fontFamily:"monospace", color:"#5a1a8a", marginTop:3 }}>{fmtSm(cost.total)}</div>
+              <div style={{ fontSize:10, color:"#aaa" }}>{cost.workOrderCount} work order{cost.workOrderCount!==1?"s":""}</div>
+            </div>
+            <div style={{ background:"#fafaf8", border:"1px solid #eee", borderRadius:6, padding:13 }}>
+              <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em", color:"#888" }}>Fuel Used</div>
+              <div style={{ fontSize:22, fontWeight:700, fontFamily:"monospace", color:"#1a5a3a", marginTop:3 }}>{cost.fuelGallons.toFixed(1)}</div>
+              <div style={{ fontSize:10, color:"#aaa" }}>gal · {fmtSm(cost.fuelCost)}</div>
+            </div>
+          </div>
+
+          {/* Where the money went */}
+          {cost.total > 0 && (
+            <>
+              <div style={{ display:"flex", height:9, borderRadius:99, overflow:"hidden", marginBottom:9 }}>
+                {[["Fuel",cost.fuelCost,"#1a5a3a"],["Parts",cost.parts,"#5a1a8a"],["Labour",cost.labor,"#1a3a5c"],["Outside",cost.outside,"#d97706"]]
+                  .filter(([,v])=>v>0)
+                  .map(([k,v,c])=>(
+                    <div key={k} title={`${k} — ${fmtSm(v)}`} style={{ width:`${(v/cost.total)*100}%`, background:c }} />
+                  ))}
+              </div>
+              <div style={{ display:"flex", gap:16, flexWrap:"wrap", fontSize:11 }}>
+                {[["Fuel",cost.fuelCost,"#1a5a3a"],["Parts",cost.parts,"#5a1a8a"],["Labour",cost.labor,"#1a3a5c"],["Outside Repairs",cost.outside,"#d97706"]].map(([k,v,c])=>(
+                  <span key={k} style={{ display:"inline-flex", alignItems:"center", gap:5, color:"#666" }}>
+                    <span style={{ width:9, height:9, borderRadius:2, background:c, display:"inline-block" }} />
+                    {k} <strong style={{ fontFamily:"monospace", color:"#1a1a1a" }}>{fmtSm(v)}</strong>
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
+
+          {!cost.span && cost.total > 0 && (
+            <div style={{ background:"#fef3cd", border:"1px solid #f0d080", borderRadius:5, padding:"8px 11px", marginTop:12, fontSize:11, color:"#7a4f00" }}>
+              Cost per {cost.unitLabel} needs at least two meter readings from fuelling. Log fuel with the meter and it will fill in.
+            </div>
+          )}
+        </div>
+      </SectionCard>
+
     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20 }}>
       <SectionCard title="Specifications">
         <div style={{ padding:"0 2px" }}>
@@ -507,6 +570,7 @@ function UnitOverview({ unit: u }) {
           )}
         </div>
       </SectionCard>
+    </div>
     </div>
   );
 }
@@ -740,6 +804,126 @@ function WOLaborTab({ wo, dispatch }) {
       />
     </div>
   );
+}
+
+// ── Tank reconciliation status ────────────────────────────────────────────────
+// Main shop tanks have an electronic monitor and are balanced against the paper
+// logs daily. The outlying sheds and portables have no monitor — they're dipped
+// once a year. Different cadence, so different overdue thresholds.
+function daysSince(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  if (isNaN(d)) return null;
+  return Math.floor((Date.now() - d.getTime()) / 864e5);
+}
+
+export function reconciliationStatus(tank, tankTx) {
+  const kind   = tank.hasMonitor ? "monitor_reading" : "dip_reading";
+  const cadence = tank.hasMonitor ? "daily" : "annual";
+  const limit   = tank.hasMonitor ? 1 : 365;
+
+  const last = (tankTx || [])
+    .filter(t => t.tankId === tank.id && t.type === kind)
+    .sort((a,b) => (b.date||"").localeCompare(a.date||""))[0];
+
+  const age = last ? daysSince(last.date) : null;
+  const state = age === null ? "never" : age > limit ? "overdue" : "ok";
+  return { cadence, kind, last, age, state, limit, variance: last?.variance ?? null };
+}
+
+function ReconciliationPanel({ tanks, tankTx }) {
+  const rows = tanks
+    .filter(t => t.status !== "out_of_service")
+    .map(t => ({ tank: t, rec: reconciliationStatus(t, tankTx) }))
+    .sort((a,b) => {
+      const rank = s => s === "overdue" ? 0 : s === "never" ? 1 : 2;
+      return rank(a.rec.state) - rank(b.rec.state);
+    });
+
+  const needing = rows.filter(r => r.rec.state !== "ok");
+  if (!needing.length) return null;
+
+  return (
+    <div style={{ background:"#fff", border:"2px solid #f0d080", borderRadius:8, padding:16, marginBottom:18 }}>
+      <div style={{ fontSize:14, fontWeight:700, color:"#7a4f00", marginBottom:3 }}>
+        ◷ {needing.length} tank{needing.length!==1?"s":""} need reconciling
+      </div>
+      <div style={{ fontSize:11, color:"#888", marginBottom:12 }}>
+        Monitored tanks are balanced against the logs daily. The rest are dipped once a year.
+      </div>
+      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+        <thead>
+          <tr style={{ background:"#f7f7f5" }}>
+            {["Tank","Method","Last Done","Last Variance","Status"].map(h=>(
+              <th key={h} style={{ padding:"7px 10px", textAlign:h==="Last Variance"?"right":"left", fontWeight:700, fontSize:10, textTransform:"uppercase", letterSpacing:"0.05em", color:"#666", borderBottom:"1px solid #eee" }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {needing.map(({ tank, rec }, i) => (
+            <tr key={tank.id} style={{ borderTop:"1px solid #f0f0ee", background:i%2===0?"#fff":"#fafaf8" }}>
+              <td style={{ padding:"8px 10px", fontWeight:600 }}>
+                {tank.name}
+                {tank.filledByContractor && <span style={{ fontSize:10, color:"#888", marginLeft:6 }}>(contractor filled)</span>}
+              </td>
+              <td style={{ padding:"8px 10px", color:"#888" }}>{rec.cadence === "daily" ? "Monitor · daily" : "Dip · annual"}</td>
+              <td style={{ padding:"8px 10px", fontFamily:"monospace", color:"#888" }}>
+                {rec.last ? `${fmtDate(rec.last.date)} (${rec.age}d ago)` : "never"}
+              </td>
+              <td style={{ padding:"8px 10px", textAlign:"right", fontFamily:"monospace", color: Math.abs(rec.variance||0) > 0 ? "#c0392b" : "#888" }}>
+                {rec.variance === null ? "—" : `${rec.variance > 0 ? "+" : ""}${rec.variance.toFixed(0)} gal`}
+              </td>
+              <td style={{ padding:"8px 10px" }}>
+                <span style={{
+                  background: rec.state==="overdue" ? "#fdecea" : "#f4f4f2",
+                  color:      rec.state==="overdue" ? "#8c1b18" : "#888",
+                  border:`1px solid ${rec.state==="overdue" ? "#f5c6c6" : "#ddd"}`,
+                  borderRadius:99, padding:"2px 9px", fontSize:10, fontWeight:700,
+                }}>
+                  {rec.state === "overdue" ? "Overdue" : "Never done"}
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Operating cost ────────────────────────────────────────────────────────────
+// What it costs to run a machine: fuel, parts, oils, shop supplies, all repairs,
+// in-house and outside labour. Deliberately excludes depreciation (confirmed
+// 2026-07-27) — this is cash out the door, not book value.
+//
+// Meters only ever move forward, so cost per hour/mile is measured across the
+// metered life we can actually see: from the earliest reading on record to the
+// unit's current lifetime meter.
+export function operatingCost(unit, workOrders, dispensing) {
+  const wos  = (workOrders || []).filter(w => w.unitId === unit.id);
+  const fuel = (dispensing || []).filter(f => f.equipmentId === unit.id);
+
+  const parts   = wos.reduce((s,w) => s + (w.totalPartsCost   || 0), 0);
+  const labor   = wos.reduce((s,w) => s + (w.totalLaborCost   || 0), 0);
+  const outside = wos.reduce((s,w) => s + (w.totalServiceCost || 0), 0);
+  const fuelCost    = fuel.reduce((s,f) => s + (f.totalCost || 0), 0);
+  const fuelGallons = fuel.reduce((s,f) => s + (f.gallons   || 0), 0);
+  const total = parts + labor + outside + fuelCost;
+
+  // Metered span we have evidence for
+  const readings = fuel.map(f => f.meterReading).filter(v => v > 0);
+  const lifetime = lifetimeMeter(unit);
+  const earliest = readings.length ? Math.min(...readings) : null;
+  const span     = earliest !== null && lifetime > earliest ? lifetime - earliest : null;
+
+  return {
+    parts, labor, outside, fuelCost, fuelGallons, total,
+    span,
+    unitLabel: unit.meterType === "miles" ? "mi" : "hr",
+    perUnit:   span ? total / span : null,
+    fuelPerUnit: span ? fuelCost / span : null,
+    workOrderCount: wos.length,
+  };
 }
 
 // ── PM due calculation ────────────────────────────────────────────────────────
@@ -1625,11 +1809,11 @@ function TanksTab({ tanks, tankTx, dispensing, dispatch }) {
     dispatch({ type:"ADD_TANK_TRANSACTION", payload:{
       id:`${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
       type:txForm.type, date:txForm.date, tankId:txForm.tankId, tankName:tank?.name||"",
-      gallons: txForm.type==="dip_reading" ? 0 : gals,
+      gallons: (txForm.type==="dip_reading"||txForm.type==="monitor_reading") ? 0 : gals,
       vendorName:txForm.vendorName, invoiceNumber:txForm.invoiceNumber,
       deliveryCost, unitCost:parseFloat(txForm.unitCost)||0,
       dipReading:parseFloat(txForm.dipReading)||0,
-      variance: txForm.type==="dip_reading" ? (parseFloat(txForm.dipReading)||0) - ((tank?.currentLevel)||0) : 0,
+      variance: (txForm.type==="dip_reading"||txForm.type==="monitor_reading") ? (parseFloat(txForm.dipReading)||0) - ((tank?.currentLevel)||0) : 0,
       notes:txForm.notes, createdAt:new Date().toISOString(),
     }});
     setTxForm({ type:"delivery", date:"", tankId:"", gallons:"", vendorName:"", invoiceNumber:"", unitCost:"", dipReading:"", notes:"" });
@@ -1641,10 +1825,12 @@ function TanksTab({ tanks, tankTx, dispensing, dispatch }) {
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
         <div style={{ fontSize:16, fontWeight:700 }}>Fuel Tanks</div>
         <div style={{ display:"flex", gap:8 }}>
-          <button onClick={()=>setShowTxForm(s=>!s)} style={{ ...btn.secondary, fontSize:12 }}>{showTxForm?"Cancel":"+ Delivery / Dip Reading"}</button>
+          <button onClick={()=>setShowTxForm(s=>!s)} style={{ ...btn.secondary, fontSize:12 }}>{showTxForm?"Cancel":"+ Delivery / Reading"}</button>
           <button onClick={()=>setShowNew(s=>!s)} style={btn.primary}>{showNew?"Cancel":"+ Add Tank"}</button>
         </div>
       </div>
+
+      <ReconciliationPanel tanks={tanks} tankTx={tankTx} />
 
       {showNew && (
         <div style={{ background:"#f7f7f5", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:16 }}>
@@ -1678,7 +1864,8 @@ function TanksTab({ tanks, tankTx, dispensing, dispatch }) {
             <Field label="Type">
               <select value={txForm.type} onChange={e=>setTx("type",e.target.value)} style={{ ...inp, margin:0 }}>
                 <option value="delivery">Fuel Delivery</option>
-                <option value="dip_reading">Dip Reading / Reconcile</option>
+                <option value="monitor_reading">Monitor Balance (daily)</option>
+                <option value="dip_reading">Dip Reading (annual)</option>
                 <option value="portable_fill">Fill Portable Tank</option>
               </select>
             </Field>
@@ -1689,8 +1876,8 @@ function TanksTab({ tanks, tankTx, dispensing, dispatch }) {
                 {tanks.map(t=><option key={t.id} value={t.id}>{t.name} ({t.currentLevel?.toFixed(0)||0} gal)</option>)}
               </select>
             </Field>
-            {txForm.type==="dip_reading"
-              ? <Field label="Dip Reading (gal)"><input type="number" min="0" step="1" value={txForm.dipReading} onChange={e=>setTx("dipReading",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+            {(txForm.type==="dip_reading"||txForm.type==="monitor_reading")
+              ? <Field label={txForm.type==="monitor_reading"?"Monitor Reads (gal)":"Dip Reads (gal)"}><input type="number" min="0" step="1" value={txForm.dipReading} onChange={e=>setTx("dipReading",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
               : <Field label="Gallons"><input type="number" min="0" step="1" value={txForm.gallons} onChange={e=>setTx("gallons",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
             }
           </div>
