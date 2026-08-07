@@ -159,22 +159,25 @@ Example balances at 597.54 both ways.
    convention. Suggested: `214.00 = $500.00   201.00 = $62.32`
 3. **`105.0` renders as `10500`.** ✅ Split on `.`, pad decimals to two, join.
 
-#### Claim size limit — new constraint
+#### Claim size limit — resolved 2026-07-26
 
-**Maximum 15 lines per claim.** Beyond that it becomes a *separate claim*, not a
-continuation page. Pinpoint must split automatically and produce multiple sheets.
+**One rule only: a maximum of 15 invoices per claim, per vendor.** Beyond that it
+becomes a *separate claim*, not a continuation page.
 
-Two open details before the split logic can be written:
+Both earlier worries turned out not to apply:
 
-- **Do continuation rows count toward the 15?** An item with several codes takes
-  two rows — the item, then the breakdown. Does that item consume 1 or 2?
-- **Is the 8-row accounting block also a hard limit?** It may bind before the 15
-  does: fifteen items with distinct codes would need fifteen accounting rows and
-  there are eight. If so, a claim splits when *either* limit is reached.
+- **Continuation rows don't count.** The limit counts invoices, not printed rows.
+  A split-code item still counts as one invoice however many rows it occupies.
+- **The 8-row accounting block is not a hard limit.** Rows can be added as needed.
 
-Note: `ExpenditureForm` already caps line items at 15 (`if (lines.length < 15)`),
-which lines up — though that limit is per expenditure, and a claim sheet groups
-several expenditures from one vendor, so the cap needs to move up to the sheet.
+So the sheet grows vertically as required — the export builds the layout with as
+many rows as the data needs, rather than filling a fixed template. The only
+splitting rule is the 15-invoice count.
+
+Note: `ExpenditureForm` currently caps *line items* at 15
+(`if (lines.length < 15)`). That's a different thing from 15 invoices per claim,
+and the real cap belongs on the assembled sheet — three 6-line invoices from one
+vendor would otherwise quietly produce an oversized claim.
 
 ---
 
