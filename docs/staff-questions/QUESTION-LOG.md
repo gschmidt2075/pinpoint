@@ -310,6 +310,32 @@ guessing.
 - **Bonding** tracked on larger projects.
 - **New report wanted:** vendor and GL codes across a date range.
 
+### Built 2026-07-27
+
+`Vendors.jsx` — list with type/flag columns and inactive toggle, detail with
+Details / Contract Rates / Supplies / Payment History tabs, and a form covering
+everything the answers called for:
+
+- **Payee types** including employee, for reimbursement claims
+- **Separate remit-to address**, with a preview of exactly what prints on the
+  claim sheet. Falls back to the main address if the flag is set but the fields
+  are blank
+- **Vendor code** recorded but never generated — it's the Clerk's
+- **Insurance** limited to general liability, no expiry warnings
+- **Bonding** with amount and reference
+- **State contract / co-op** and **tax exemption sent** flags
+- **Contract rates** with effective dates and bid references, so a scale ticket
+  can be traced to the rate in force when written
+- **Supplied items** many-to-many against the catalog, searchable rather than
+  rendering all 2,375 rows
+- **Conflict of interest** flag
+- **Inactive** hides but keeps history
+
+Fund Accounting's vendor picker now captures the vendor id rather than just a
+typed name, shows a REMIT badge on vendors with a separate payment address, and
+warns when a typed name isn't in the list. An expenditure can also hold the
+**claim number the Clerk returns after processing**.
+
 ### Follow-ups
 
 1. **12 or 15 invoices per claim?** Blocks the claim split logic.

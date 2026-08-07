@@ -37,11 +37,14 @@ const CLAIM_CYCLES = generateClaimCycles(FISCAL_YEAR.start);
 // Post-approval corrections require a manual Journal Entry.
 
 // ── VendorInput — text with autocomplete from db.vendors ─────────────────────
-function VendorInput({ value, onChange, vendors = [], placeholder = "Vendor / Payee…" }) {
+// Selecting a real vendor captures its id, so the claim sheet can pull the
+// remit-to address rather than relying on a typed name matching.
+function VendorInput({ value, onChange, onSelect, vendors = [], placeholder = "Vendor / Payee…" }) {
   const [open, setOpen] = useState(false);
   const suggestions = vendors
     .filter(v => v.active !== false && v.name?.toLowerCase().includes(value.toLowerCase()) && value.length > 1)
     .slice(0, 8);
+  const exact = vendors.find(v => v.active !== false && v.name === value);
   return (
     <div style={{ position: "relative" }}>
       <input
@@ -58,15 +61,21 @@ function VendorInput({ value, onChange, vendors = [], placeholder = "Vendor / Pa
           {suggestions.map(v => (
             <div
               key={v.id}
-              onMouseDown={() => { onChange(v.name); setOpen(false); }}
+              onMouseDown={() => { onChange(v.name); onSelect?.(v); setOpen(false); }}
               style={{ padding:"8px 12px", cursor:"pointer", fontSize:13, borderBottom:"1px solid #f0f0ee" }}
               onMouseEnter={e => e.currentTarget.style.background="#f0f8ff"}
               onMouseLeave={e => e.currentTarget.style.background="#fff"}
             >
               <strong>{v.name}</strong>
+              {v.separateRemitTo && <span style={{ fontSize:10, background:"#e6edf5", color:"#1a3a5c", borderRadius:3, padding:"1px 5px", marginLeft:7, fontWeight:700 }}>REMIT</span>}
               {v.address && <span style={{ fontSize:11, color:"#888", marginLeft:8 }}>{v.address}</span>}
             </div>
           ))}
+        </div>
+      )}
+      {value.length > 1 && !exact && !open && (
+        <div style={{ fontSize:11, color:"#d97706", marginTop:4 }}>
+          Not in the vendor list — add them under Vendors so the payment address carries onto the claim sheet.
         </div>
       )}
     </div>
@@ -364,9 +373,12 @@ function ExpenditureForm({ db, dispatch, onDone, initialData = null }) {
   const [header, setHeader] = useState({
     date:       initialData?.date || "",
     vendorName: initialData?.vendorName || initialData?.vendor || "",
+    vendorId:   initialData?.vendorId || null,
     type:       initialData?.type || "invoice",
     reference:  initialData?.reference || "",
     claimCycleId: initialData?.claimCycleId || initialData?.claimCycle || "",
+    // Assigned by the Clerk's office after processing — recorded, not generated
+    claimNumber: initialData?.claimNumber || "",
   });
   const [lines, setLines]     = useState(initialData ? (initialData.lines||[]).map(l=>emptyLine(l)) : [emptyLine()]);
   const [saved, setSaved]     = useState(false);
@@ -398,8 +410,9 @@ function ExpenditureForm({ db, dispatch, onDone, initialData = null }) {
     const payload = {
       id:              initialData?.id || Date.now(),
       date:            header.date,
-      vendorId:        null,
+      vendorId:        header.vendorId || null,
       vendorName:      header.vendorName,
+      claimNumber:     header.claimNumber,
       vendor:          header.vendorName,  // legacy compat
       type:            header.type,
       reference:       header.reference,
@@ -524,6 +537,7 @@ function ExpenditureForm({ db, dispatch, onDone, initialData = null }) {
             <VendorInput
               value={header.vendorName}
               onChange={v => set("vendorName",v)}
+              onSelect={v => set("vendorId", v.id)}
               vendors={db.vendors||[]}
             />
           </Field>

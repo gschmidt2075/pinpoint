@@ -6,6 +6,7 @@ import Equipment from "./modules/Equipment.jsx";
 import Infrastructure from "./modules/Infrastructure.jsx";
 import Projects from "./modules/Projects.jsx";
 import Settings from "./modules/Settings.jsx";
+import Vendors from "./modules/Vendors.jsx";
 import { FISCAL_YEAR } from "./data/accountCodes.js";
 import { DEFAULT_STORAGE_LOCATIONS, DEFAULT_TOWNSHIPS, DEFAULT_LOOKUPS, DEFAULT_TANKS } from "./data/schema.js";
 import { INITIAL_INVENTORY_ITEMS, INITIAL_INVENTORY_BATCHES, INITIAL_INVENTORY_TRANSACTIONS } from "./data/inventoryData.js";
@@ -544,7 +545,7 @@ const NAV_GROUPS = [
       { id:"infrastructure", label:"Infrastructure",    icon:"ti-road" },
       { id:"projects",       label:"Projects",          icon:"ti-clipboard-list" },
       { id:"payroll",        label:"Payroll",           icon:"ti-users",        soon:true },
-      { id:"vendors",        label:"Vendors",           icon:"ti-file-invoice", soon:true },
+      { id:"vendors",        label:"Vendors",           icon:"ti-file-invoice" },
     ],
   },
   {
@@ -692,8 +693,9 @@ export default function App() {
           {activeTab==="equipment"      && <Equipment        db={db} dispatch={dispatch} />}
           {activeTab==="infrastructure" && <Infrastructure   db={db} dispatch={dispatch} />}
           {activeTab==="projects"       && <Projects         db={db} dispatch={dispatch} />}
+          {activeTab==="vendors"        && <Vendors          db={db} dispatch={dispatch} />}
           {activeTab==="settings"       && <Settings         db={db} dispatch={dispatch} />}
-          {!["fund","cost","inventory","equipment","infrastructure","projects","settings"].includes(activeTab) && <ComingSoon tab={currentTab} />}
+          {!["fund","cost","inventory","equipment","infrastructure","projects","vendors","settings"].includes(activeTab) && <ComingSoon tab={currentTab} />}
         </div>
       </div>
 

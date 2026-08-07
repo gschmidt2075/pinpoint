@@ -37,7 +37,7 @@ It replaces a mix of aging software, spreadsheets, and paper across:
 | Projects | `Projects.jsx` | Built. Form still out with staff |
 | Settings | `Settings.jsx` | Built. **Dropdown Lists screen added** — lists now live in `db.lookups` |
 | **Payroll / Employees** | — | **Does not exist.** No UI at all |
-| **Vendors** | — | **Does not exist.** No UI at all |
+| Vendors | `Vendors.jsx` | **Built 2026-07-27.** Payees, remit-to, insurance, bonding, contract rates, supplied items |
 
 **The two gaps matter more than they look.** `db.employees` and `db.vendors` are
 read by Cost Accounting and Fund Accounting but nothing populates them. Labor
@@ -202,7 +202,6 @@ Not forgotten — waiting on something.
 | Claim sheet restructure + Excel export | Nothing — fully specified, just needs building |
 | Per-claim status incl. denial | Same. `APPROVE_CLAIM_CYCLE` can't express a single denial |
 | Payroll / employee records | Staff answers (37 questions) |
-| Vendor records | Staff answers (28 questions) |
 | Road segment grid address | Greg supplying an example |
 | Operator timesheets as a fuel source | The payroll/timesheet work |
 | Photos & document attachment | A backend — browser storage can't hold them |
