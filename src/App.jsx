@@ -7,7 +7,7 @@ import Infrastructure from "./modules/Infrastructure.jsx";
 import Projects from "./modules/Projects.jsx";
 import Settings from "./modules/Settings.jsx";
 import { FISCAL_YEAR } from "./data/accountCodes.js";
-import { DEFAULT_STORAGE_LOCATIONS, DEFAULT_TOWNSHIPS } from "./data/schema.js";
+import { DEFAULT_STORAGE_LOCATIONS, DEFAULT_TOWNSHIPS, DEFAULT_LOOKUPS } from "./data/schema.js";
 import { INITIAL_INVENTORY_ITEMS, INITIAL_INVENTORY_BATCHES, INITIAL_INVENTORY_TRANSACTIONS } from "./data/inventoryData.js";
 import { Icon } from "./components/shared.jsx";
 
@@ -59,6 +59,8 @@ const initialState = {
   fiscalYear:         null,
   storageLocations:   DEFAULT_STORAGE_LOCATIONS,
   townships:          DEFAULT_TOWNSHIPS,
+  // Editable dropdown lists — managed in Settings, never hardcoded in modules
+  lookups:            DEFAULT_LOOKUPS,
   customFunds:        [],
   customAccountCodes: {},
   femaRates:          [],
@@ -164,6 +166,43 @@ function reducer(state, action) {
           }
         ),
       };
+    }
+
+    // ── Lookup lists (editable dropdowns) ──────────────────────────────────
+    case "ADD_LOOKUP_VALUE": {
+      const { key, value } = action.payload;
+      const list = state.lookups?.[key] || [];
+      if (!value || list.includes(value)) return state;
+      return { ...state, lookups: { ...state.lookups, [key]: [...list, value] } };
+    }
+    // Renaming updates the list only. Records store the string, so existing rows
+    // keep the old value until edited — see Settings Q3, still unanswered.
+    case "RENAME_LOOKUP_VALUE": {
+      const { key, oldValue, newValue } = action.payload;
+      const list = state.lookups?.[key] || [];
+      if (!newValue || oldValue === newValue) return state;
+      return {
+        ...state,
+        lookups: { ...state.lookups, [key]: list.map(v => v === oldValue ? newValue : v) },
+      };
+    }
+    case "DELETE_LOOKUP_VALUE": {
+      const { key, value } = action.payload;
+      const list = state.lookups?.[key] || [];
+      return { ...state, lookups: { ...state.lookups, [key]: list.filter(v => v !== value) } };
+    }
+    case "REORDER_LOOKUP_VALUE": {
+      const { key, value, direction } = action.payload;
+      const list = [...(state.lookups?.[key] || [])];
+      const i = list.indexOf(value);
+      const j = direction === "up" ? i - 1 : i + 1;
+      if (i < 0 || j < 0 || j >= list.length) return state;
+      [list[i], list[j]] = [list[j], list[i]];
+      return { ...state, lookups: { ...state.lookups, [key]: list } };
+    }
+    case "RESET_LOOKUP": {
+      const { key, values } = action.payload;
+      return { ...state, lookups: { ...state.lookups, [key]: [...values] } };
     }
 
     // Update a cost entry within a project

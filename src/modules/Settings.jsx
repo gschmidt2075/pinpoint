@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { Field, SectionCard, Table, Icon, AlertBar, inp, btn, fmt, fmtSm } from "../components/shared.jsx";
 import { EXPENDITURE_CODES, REVENUE_CODES, FISCAL_YEAR } from "../data/accountCodes.js";
+import { LOOKUP_DEFS } from "../data/schema.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const DEFAULT_TOWNSHIPS = [
@@ -611,7 +612,7 @@ function AccountCodes({ db, dispatch }) {
 
 // ── System Settings ───────────────────────────────────────────────────────────
 function SystemSettings({ db, dispatch }) {
-  const [activeSection, setActiveSection] = useState("townships");
+  const [activeSection, setActiveSection] = useState("lists");
   const [newTownship, setNewTownship]     = useState("");
   const [newFund, setNewFund]             = useState("");
   const [newLocation, setNewLocation]     = useState("");
@@ -621,6 +622,7 @@ function SystemSettings({ db, dispatch }) {
   const locations    = db.locations    || DEFAULT_LOCATIONS;
 
   const sections = [
+    { id:"lists",     label:"Dropdown Lists",   icon:"list" },
     { id:"townships", label:"Townships",        icon:"map-pin" },
     { id:"locations", label:"Inventory Locations",icon:"building-warehouse" },
     { id:"funds",     label:"Custom Funds",     icon:"coin" },
@@ -634,7 +636,7 @@ function SystemSettings({ db, dispatch }) {
           <Icon name="adjustments-horizontal" size={18} color="#1a3a5c" />
           System Settings
         </div>
-        <div style={{ fontSize:13, color:"#888", marginTop:3 }}>Townships, inventory locations, funds, and FEMA rates</div>
+        <div style={{ fontSize:13, color:"#888", marginTop:3 }}>Dropdown lists, townships, inventory locations, funds, and FEMA rates</div>
       </div>
 
       {/* Section selector */}
@@ -652,6 +654,8 @@ function SystemSettings({ db, dispatch }) {
       </div>
 
       {/* Townships */}
+      {activeSection==="lists" && <LookupLists db={db} dispatch={dispatch} />}
+
       {activeSection==="townships" && (
         <SectionCard title="Townships" subtitle={`${townships.length} townships configured`} icon="map-pin">
           <div style={{ padding:"16px 18px", borderBottom:"1px solid #eee" }}>
@@ -778,6 +782,134 @@ function SystemSettings({ db, dispatch }) {
           </div>
         </SectionCard>
       )}
+    </div>
+  );
+}
+
+// ── Dropdown Lists ────────────────────────────────────────────────────────────
+// Every list that used to be hardcoded in a module lives here now, so it can be
+// corrected without a code change — renaming "2Nd Floor" to "2nd Floor", adding a
+// new culvert type, retiring an equipment category.
+function LookupLists({ db, dispatch }) {
+  const [openKey, setOpenKey] = useState(LOOKUP_DEFS[0]?.key || null);
+  const [draft, setDraft]     = useState({});
+  const [editing, setEditing] = useState(null);   // { key, value }
+  const [editText, setEditText] = useState("");
+
+  const lookups = db.lookups || {};
+
+  const byModule = LOOKUP_DEFS.reduce((acc, d) => {
+    (acc[d.module] = acc[d.module] || []).push(d);
+    return acc;
+  }, {});
+
+  const addValue = (key) => {
+    const v = (draft[key] || "").trim();
+    if (!v) return;
+    dispatch({ type:"ADD_LOOKUP_VALUE", payload:{ key, value:v } });
+    setDraft(d => ({ ...d, [key]: "" }));
+  };
+
+  const commitRename = () => {
+    if (!editing) return;
+    const nv = editText.trim();
+    if (nv && nv !== editing.value) {
+      dispatch({ type:"RENAME_LOOKUP_VALUE", payload:{ key:editing.key, oldValue:editing.value, newValue:nv } });
+    }
+    setEditing(null); setEditText("");
+  };
+
+  return (
+    <div>
+      <AlertBar tone="info">
+        These lists feed the dropdowns throughout the app. Changing one here changes it
+        everywhere — no code change needed. Records already saved keep the old wording
+        until they're edited.
+      </AlertBar>
+
+      {Object.entries(byModule).map(([module, defs]) => (
+        <div key={module} style={{ marginBottom:18 }}>
+          <div style={{ fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.07em", color:"#888", margin:"14px 0 8px" }}>
+            {module}
+          </div>
+
+          {defs.map(def => {
+            const values = lookups[def.key] || [];
+            const isOpen = openKey === def.key;
+            return (
+              <div key={def.key} style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, marginBottom:8, overflow:"hidden" }}>
+                <button
+                  onClick={()=>setOpenKey(isOpen ? null : def.key)}
+                  style={{ width:"100%", display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, padding:"11px 15px", background:isOpen?"#f7f7f5":"#fff", border:"none", cursor:"pointer", textAlign:"left" }}
+                >
+                  <span style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    <Icon name={isOpen?"chevron-down":"chevron-right"} size={13} color="#888" />
+                    <span style={{ fontSize:13, fontWeight:600 }}>{def.label}</span>
+                    {def.hint && <span style={{ fontSize:11, color:"#aaa" }}>· {def.hint}</span>}
+                  </span>
+                  <span style={{ fontSize:11, color:"#888", fontFamily:"monospace" }}>{values.length}</span>
+                </button>
+
+                {isOpen && (
+                  <div style={{ padding:"4px 15px 15px" }}>
+                    {values.length === 0 && (
+                      <div style={{ padding:"12px 0", color:"#aaa", fontSize:12 }}>Empty — add the first value below.</div>
+                    )}
+
+                    {values.map((v, i) => (
+                      <div key={v} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0", borderBottom:"1px solid #f4f4f2" }}>
+                        <span style={{ width:22, fontSize:11, color:"#bbb", fontFamily:"monospace" }}>{i+1}</span>
+
+                        {editing && editing.key === def.key && editing.value === v ? (
+                          <>
+                            <input
+                              autoFocus value={editText}
+                              onChange={e=>setEditText(e.target.value)}
+                              onKeyDown={e=>{ if(e.key==="Enter") commitRename(); if(e.key==="Escape"){ setEditing(null); setEditText(""); } }}
+                              style={{ ...inp, margin:0, flex:1, fontSize:13 }}
+                            />
+                            <button onClick={commitRename} style={{ ...btn.small, background:"#1a5a3a", fontSize:10, padding:"4px 10px" }}>Save</button>
+                            <button onClick={()=>{ setEditing(null); setEditText(""); }} style={{ ...btn.small, background:"#aaa", fontSize:10, padding:"4px 10px" }}>Cancel</button>
+                          </>
+                        ) : (
+                          <>
+                            <span style={{ flex:1, fontSize:13 }}>{v}</span>
+                            <button onClick={()=>dispatch({ type:"REORDER_LOOKUP_VALUE", payload:{ key:def.key, value:v, direction:"up" } })}
+                              disabled={i===0}
+                              style={{ background:"none", border:"none", cursor:i===0?"default":"pointer", opacity:i===0?0.25:1, padding:"2px 5px", fontSize:11, color:"#888" }}>▲</button>
+                            <button onClick={()=>dispatch({ type:"REORDER_LOOKUP_VALUE", payload:{ key:def.key, value:v, direction:"down" } })}
+                              disabled={i===values.length-1}
+                              style={{ background:"none", border:"none", cursor:i===values.length-1?"default":"pointer", opacity:i===values.length-1?0.25:1, padding:"2px 5px", fontSize:11, color:"#888" }}>▼</button>
+                            <button onClick={()=>{ setEditing({ key:def.key, value:v }); setEditText(v); }}
+                              style={{ ...btn.small, background:"#1a3a5c", fontSize:10, padding:"4px 10px" }}>Rename</button>
+                            <button onClick={()=>{ if(window.confirm(`Remove "${v}" from ${def.label}?\n\nRecords already using it keep the value — it just won't be offered on new entries.`)) dispatch({ type:"DELETE_LOOKUP_VALUE", payload:{ key:def.key, value:v } }); }}
+                              style={{ ...btn.small, background:"#c0392b", fontSize:10, padding:"4px 10px" }}>Remove</button>
+                          </>
+                        )}
+                      </div>
+                    ))}
+
+                    <div style={{ display:"flex", gap:8, marginTop:12 }}>
+                      <input
+                        value={draft[def.key] || ""}
+                        onChange={e=>setDraft(d=>({ ...d, [def.key]: e.target.value }))}
+                        onKeyDown={e=>{ if(e.key==="Enter") addValue(def.key); }}
+                        placeholder={`Add to ${def.label}…`}
+                        style={{ ...inp, margin:0, flex:1, fontSize:13 }}
+                      />
+                      <button onClick={()=>addValue(def.key)} style={{ ...btn.primary, fontSize:12, padding:"7px 16px" }}>Add</button>
+                      <button
+                        onClick={()=>{ if(window.confirm(`Reset ${def.label} to its original values?\n\nAnything you've added will be lost.`)) dispatch({ type:"RESET_LOOKUP", payload:{ key:def.key, values:def.values } }); }}
+                        style={{ ...btn.ghost, fontSize:12, padding:"7px 14px" }}
+                      >Reset</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ))}
     </div>
   );
 }

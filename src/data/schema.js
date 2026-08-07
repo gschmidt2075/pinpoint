@@ -642,8 +642,10 @@ export const createBridge = (overrides = {}) => ({
   id:              uid(),
   stateNumber:     "",           // e.g. "C00205"
   countyNumber:    "",           // e.g. "N 36.1" (letter + space + numbers)
+  fasNumber:       "",           // FAS # — bridges only
   road:            "",           // road / street name
   features:        "",           // what it crosses (Little Blue, Flat Creek, DITCH, etc.)
+  route:           "",           // route designation, where one applies
   deckWidth:       "",           // feet
   structLength:    "",           // feet
   maxSpanLength:   "",           // feet
@@ -666,32 +668,62 @@ export const createBridge = (overrides = {}) => ({
 // INFRASTRUCTURE — CULVERTS & STRUCTURES
 // ─────────────────────────────────────────────────────────────────────────────
 
+// One barrel spec at a structure site.
+// A site has ONE number but may hold several barrels of differing size, shape and
+// material. `count` groups identical ones:
+//   "A 2.2"   → 2 × 72" × 58' CMAP          (one barrel record, count 2)
+//   "D 27.3C" → 1 × 18" × 65' CMP
+//               1 × 36" × 65' CMP           (two barrel records, count 1 each)
+export const createStructureBarrel = (overrides = {}) => ({
+  id:     uid(),
+  count:  1,      // how many barrels share this exact spec
+  size:   "",     // diameter in inches, or box dimensions e.g. "8x6"
+  length: "",     // feet
+  type:   "",     // CMP | CMAP | RCP | Concrete Box | … (encodes material and shape)
+  notes:  "",
+  ...overrides,
+});
+
+// Render a barrel the way the department writes it: 2 - 72" X 58' CMAP
+export const barrelLabel = (b) => {
+  if (!b) return "";
+  const parts = [`${b.count || 1} -`];
+  if (b.size)   parts.push(`${b.size}"`);
+  if (b.length) parts.push(`X ${b.length}'`);
+  if (b.type)   parts.push(b.type);
+  return parts.join(" ").trim();
+};
+
+// Whole-site summary, barrels joined with +
+export const barrelsSummary = (barrels) =>
+  (barrels || []).map(barrelLabel).filter(Boolean).join("  +  ");
+
 export const createStructure = (overrides = {}) => ({
   id:              uid(),
-  culvertNumber:   "",           // e.g. "A 1.1", "A 1.2C" (section prefix + space + sequential + suffix)
-  designation:     "Structure",  // Structure | Culvert | Bridge (auto-classified by size)
+  culvertNumber:   "",           // township code + section + order, e.g. "A 2.2", "D 27.3C"
+  designation:     "Structure",  // Culvert (<48") | Structure (48"+) | Bridge (NBIS-reportable)
   roadDesignation: "Primary",    // Primary | Secondary
   road:            "",
-  township:        "",
-  sizeAndType:     "",           // e.g. "2 - 94\" X 50' ROUND CONCRETE"
-  featureIntersected: "",        // what it crosses
-  drainage:        "",           // DITCH | Big Blue | Tributary | etc.
-  route:           "",
-  // Condition rating (1-5 scale)
+  township:        "",           // reference only — the township system was eliminated
+  // Condition rating — 0-5. Criteria differ for culverts vs structures, and 0 is an
+  // exception state rather than the bottom of the scale (culvert: unassessable,
+  // structure: closed). See RATING_CODES in Infrastructure.jsx.
   rating:          null,
-  // Physical dimensions
-  shape:           "",           // CMP | CBC | CRCX2 | CONCRETE | LWC | T-BEAM | etc.
-  diameter:        "",           // inches (or box dimensions)
-  length:          "",           // feet
+  // Barrels — a site may hold several of differing size, shape and material.
+  barrels:         [],           // createStructureBarrel[]
   yearBuilt:       "",
-  fasNumber:       "",           // FAS # (state bridge number for larger structures)
   latitude:        "",
   longitude:       "",
   photos:          [],
   project:         "",           // project reference (M- or C1- number)
-  status:          "active",     // active | replaced | removed
   notes:           "",
   createdAt:       now(),
+  // Legacy single-barrel fields — superseded by `barrels`, retained so existing
+  // records still render until they're edited. Do not use for new records.
+  sizeAndType:     "",
+  shape:           "",
+  diameter:        "",
+  length:          "",
   ...overrides,
 });
 
@@ -886,6 +918,49 @@ export const createUserRole = (overrides = {}) => ({
   permissions:     [],           // array of permission strings
   ...overrides,
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LOOKUP LISTS
+// Every dropdown that might change belongs here rather than hardcoded in a
+// module, so Settings can edit it without a code change. Values are stored on
+// records as plain strings.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const LOOKUP_DEFS = [
+  { key:"structureTypes",  label:"Culvert & Structure Types", module:"Infrastructure",
+    hint:"Barrel type — encodes material and shape",
+    values:["CMP","CMAP","RCP","CBC","CRCX2","CRCX3","Concrete Box","LWC","T-Beam","Wood","Steel","Other"] },
+  { key:"signEventTypes",  label:"Sign Event Types", module:"Infrastructure",
+    hint:"What happened to a sign",
+    values:["replacement","repair","HSIP_upgrade","inspection","removal"] },
+  { key:"equipmentTypes",  label:"Equipment Types", module:"Equipment",
+    values:["Motor Grader","Truck","Pickup","Loader","Excavator","Dozer","Scraper","Roller","Trailer","Mower","Other"] },
+  { key:"woCategories",    label:"Work Order Categories", module:"Equipment",
+    values:["repair","preventive_maintenance","accident","warranty","inspection","other"] },
+  { key:"woPriorities",    label:"Work Order Priorities", module:"Equipment",
+    values:["low","normal","high","urgent"] },
+  { key:"pmTasks",         label:"PM Tasks", module:"Equipment",
+    values:["Oil & Filter","Grease","Hydraulic Service","Air Filter","Fuel Filter","Annual Inspection","Tire Rotation","Coolant","Other"] },
+  { key:"unitsOfMeasure",  label:"Units of Measure", module:"Inventory",
+    values:["TON","CY","LF","EA","LB","GAL","QT","SF","BX","CS","RL","SET","PR","KIT","OTH"] },
+  { key:"haulTypes",       label:"Haul Types", module:"Inventory",
+    hint:"Who hauled the load",
+    values:["County Pickup","Contractor Delivery"] },
+  { key:"projectTypesCapital",  label:"Capital Project Types", module:"Projects", values:[] },
+  { key:"projectTypesMaint",    label:"Maintenance Project Types", module:"Projects", values:[] },
+  { key:"fundingSources",  label:"Funding Sources", module:"Projects",
+    values:["Local","State Aid","Federal","FEMA","Other"] },
+  { key:"engPhases",       label:"Engineering Phases", module:"Cost Accounting",
+    values:["design","inspection","survey","construction_mgmt","other"] },
+  { key:"adjustReasons",   label:"Inventory Adjustment Reasons", module:"Inventory",
+    values:["Annual count correction","Damaged / waste","Returned to vendor","Found — not previously recorded","Other"] },
+];
+
+// Seeded into state on first run. Shape: { key: string[] }
+export const DEFAULT_LOOKUPS = LOOKUP_DEFS.reduce((acc, d) => {
+  acc[d.key] = [...d.values];
+  return acc;
+}, {});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DEFAULT STORAGE LOCATIONS (loaded into settings on first run)

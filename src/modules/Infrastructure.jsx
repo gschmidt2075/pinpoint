@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm } from "../components/shared.jsx";
-import { createRoad, createBridge, createStructure, createSign, createSignHistory } from "../data/schema.js";
+import { createRoad, createBridge, createStructure, createStructureBarrel, createSign, createSignHistory, barrelLabel, barrelsSummary } from "../data/schema.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmtDate(str) {
@@ -108,6 +108,80 @@ function RatingSelect({ value, onChange, kind = "structure", style }) {
           {codes[Number(value)].desc}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Barrel editor ─────────────────────────────────────────────────────────────
+// A site has one number but may hold several barrels of differing size, shape and
+// material. Identical barrels are grouped by count:
+//   A 2.2   → 2 - 72" X 58' CMAP
+//   D 27.3C → 1 - 18" X 65' CMP  +  1 - 36" X 65' CMP
+function BarrelEditor({ barrels, typeOptions, onChange }) {
+  const add = () => onChange([...barrels, createStructureBarrel()]);
+  const remove = (id) => onChange(barrels.filter(b => b.id !== id));
+  const setField = (id, k, v) => onChange(barrels.map(b => b.id === id ? { ...b, [k]: v } : b));
+
+  const totalBarrels = barrels.reduce((s, b) => s + (Number(b.count) || 0), 0);
+
+  return (
+    <div style={{ border:"1px solid #ddd", borderRadius:8, padding:16, marginBottom:14, background:"#fafaf8" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:4 }}>
+        <div style={{ fontSize:13, fontWeight:700, color:"#1a1a1a" }}>Barrels</div>
+        {totalBarrels > 0 && (
+          <div style={{ fontSize:11, color:"#888" }}>
+            {totalBarrels} barrel{totalBarrels !== 1 ? "s" : ""} across {barrels.length} spec{barrels.length !== 1 ? "s" : ""}
+          </div>
+        )}
+      </div>
+      <div style={{ fontSize:11, color:"#888", marginBottom:12 }}>
+        One row per size/shape/material. Use the count for identical barrels — 2 of the same pipe is one row with count 2.
+      </div>
+
+      {barrels.length === 0 && (
+        <div style={{ padding:"14px 0", textAlign:"center", color:"#aaa", fontSize:12 }}>
+          No barrels recorded yet.
+        </div>
+      )}
+
+      {barrels.map((b, i) => (
+        <div key={b.id} style={{ display:"grid", gridTemplateColumns:"70px 100px 100px 1fr 1fr 36px", gap:8, alignItems:"end", marginBottom:8 }}>
+          <Field label={i === 0 ? "Count" : ""}>
+            <input type="number" min="1" step="1" value={b.count}
+              onChange={e=>setField(b.id,"count",e.target.value === "" ? "" : Number(e.target.value))}
+              style={{ ...inp, fontFamily:"monospace", margin:0 }} />
+          </Field>
+          <Field label={i === 0 ? "Size (in)" : ""}>
+            <input type="text" value={b.size} onChange={e=>setField(b.id,"size",e.target.value)}
+              style={{ ...inp, fontFamily:"monospace", margin:0 }} placeholder="72" />
+          </Field>
+          <Field label={i === 0 ? "Length (ft)" : ""}>
+            <input type="text" value={b.length} onChange={e=>setField(b.id,"length",e.target.value)}
+              style={{ ...inp, fontFamily:"monospace", margin:0 }} placeholder="58" />
+          </Field>
+          <Field label={i === 0 ? "Type" : ""}>
+            <select value={b.type} onChange={e=>setField(b.id,"type",e.target.value)} style={{ ...inp, margin:0 }}>
+              <option value="">Select…</option>
+              {typeOptions.map(t=><option key={t}>{t}</option>)}
+            </select>
+          </Field>
+          <Field label={i === 0 ? "Notes" : ""}>
+            <input type="text" value={b.notes} onChange={e=>setField(b.id,"notes",e.target.value)}
+              style={{ ...inp, margin:0 }} placeholder="Optional…" />
+          </Field>
+          <button onClick={()=>remove(b.id)} title="Remove barrel"
+            style={{ ...btn.danger, padding:"7px 0", fontSize:15, lineHeight:1, height:34 }}>×</button>
+        </div>
+      ))}
+
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:10 }}>
+        <button onClick={add} style={{ ...btn.secondary, fontSize:12, padding:"6px 14px" }}>+ Add Barrel</button>
+        {barrels.length > 0 && (
+          <div style={{ fontFamily:"monospace", fontSize:12, color:"#1a5a3a", fontWeight:600 }}>
+            {barrelsSummary(barrels)}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -258,7 +332,7 @@ export default function Infrastructure({ db, dispatch }) {
 
       {tab==="roads"      && <RoadsTab      roads={roads}           projects={projects} dispatch={dispatch} />}
       {tab==="bridges"    && <BridgesTab    bridges={bridges}       projects={projects} dispatch={dispatch} />}
-      {tab==="structures" && <StructuresTab structures={structures} projects={projects} dispatch={dispatch} />}
+      {tab==="structures" && <StructuresTab structures={structures} projects={projects} db={db} dispatch={dispatch} />}
       {tab==="signs"      && <SignsTab      signs={signs} signHistory={signHistory} projects={projects} dispatch={dispatch} />}
     </div>
   );
@@ -641,8 +715,12 @@ function BridgeForm({ bridge, onSave, onCancel }) {
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:14, marginBottom:14 }}>
           <Field label="State Number"><input type="text" value={form.stateNumber} onChange={e=>set("stateNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="C00205" /></Field>
           <Field label="County Number"><input type="text" value={form.countyNumber} onChange={e=>set("countyNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="N 36.1" /></Field>
+          <Field label="FAS Number"><input type="text" value={form.fasNumber} onChange={e=>set("fasNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
           <Field label="Road / Street"><input type="text" value={form.road} onChange={e=>set("road",e.target.value)} style={inp} /></Field>
-          <Field label="Feature Crossed"><input type="text" value={form.features} onChange={e=>set("features",e.target.value)} style={inp} placeholder="Little Blue, DITCH…" /></Field>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr", gap:14, marginBottom:14 }}>
+          <Field label="Feature Crossed"><input type="text" value={form.features} onChange={e=>set("features",e.target.value)} style={inp} placeholder="Little Blue, Flat Creek, DITCH…" /></Field>
+          <Field label="Route"><input type="text" value={form.route} onChange={e=>set("route",e.target.value)} style={inp} /></Field>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr", gap:14, marginBottom:14 }}>
           <Field label="Deck Width (ft)"><input type="text" value={form.deckWidth} onChange={e=>set("deckWidth",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
@@ -685,10 +763,12 @@ function BridgeForm({ bridge, onSave, onCancel }) {
 // CULVERTS & STRUCTURES
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const STRUCTURE_SHAPES = ["CMP","CBC","CRCX2","CRCX3","Concrete Box","LWC","T-Beam","Wood","Steel","Other"];
 const TOWNSHIPS_NE = ["West Blue","Blaine","Pauline","Kenesaw","Roseland","Holstein","Oak Creek","Pleasant Hill"];
 
-function StructuresTab({ structures, projects, dispatch }) {
+function StructuresTab({ structures, projects, db, dispatch }) {
+  // Editable lists live in the database — see Settings → Lists
+  const structureTypes = db?.lookups?.structureTypes || [];
+  const townshipList   = (db?.townships || []).map(t => t.name || t);
   const [selected, setSelected] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing]   = useState(null);
@@ -702,6 +782,8 @@ function StructuresTab({ structures, projects, dispatch }) {
     const str = editing ? structures.find(s=>s.id===editing) : null;
     return (
       <StructureForm
+        structureTypes={structureTypes}
+        townshipList={townshipList}
         structure={str}
         onSave={payload => { dispatch({ type: str?"UPDATE_STRUCTURE":"ADD_STRUCTURE", payload }); setShowForm(false); setEditing(null); }}
         onCancel={() => { setShowForm(false); setEditing(null); }}
@@ -720,12 +802,12 @@ function StructuresTab({ structures, projects, dispatch }) {
     );
   }
 
-  const active = structures.filter(s=>s.status==="active");
+  const active = structures;
   const towns  = [...new Set(active.filter(s=>s.township).map(s=>s.township))].sort();
   const filtered = active.filter(s => {
     if (desigFilter !== "all" && s.designation !== desigFilter) return false;
     if (townFilter  !== "all" && s.township    !== townFilter)  return false;
-    if (search && !`${s.culvertNumber} ${s.road} ${s.featureIntersected} ${s.township}`.toLowerCase().includes(search.toLowerCase())) return false;
+    if (search && !`${s.culvertNumber} ${s.road} ${s.township} ${barrelsSummary(s.barrels)}`.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
 
@@ -776,7 +858,7 @@ function StructuresTab({ structures, projects, dispatch }) {
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
           <thead>
             <tr style={{ background:"#f7f7f5" }}>
-              {["Culvert #","Designation","Road","Township","Size & Type","Feature","Route","Rating",""].map(h=>(
+              {["Culvert #","Designation","Road","Township","Barrels","Rating",""].map(h=>(
                 <th key={h} style={{ padding:"9px 12px", textAlign:"left", fontWeight:600, fontSize:11, textTransform:"uppercase", letterSpacing:"0.05em", color:"#666", borderBottom:"1px solid #eee" }}>{h}</th>
               ))}
             </tr>
@@ -796,9 +878,9 @@ function StructuresTab({ structures, projects, dispatch }) {
                 <td style={{ padding:"9px 12px", fontSize:12 }}>{s.designation||"—"}</td>
                 <td style={{ padding:"9px 12px", fontWeight:600 }}>{s.road||"—"}</td>
                 <td style={{ padding:"9px 12px", fontSize:12 }}>{s.township||"—"}</td>
-                <td style={{ padding:"9px 12px", fontSize:12, maxWidth:200, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.sizeAndType||"—"}</td>
-                <td style={{ padding:"9px 12px", fontSize:12, color:"#888" }}>{s.featureIntersected||"—"}</td>
-                <td style={{ padding:"9px 12px", fontSize:12, color:"#888" }}>{s.route||"—"}</td>
+                <td style={{ padding:"9px 12px", fontSize:12, fontFamily:"monospace", maxWidth:280, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                  {barrelsSummary(s.barrels) || s.sizeAndType || "—"}
+                </td>
                 <td style={{ padding:"9px 12px" }}><CondRating value={s.rating} kind={ratingKindFor(s.designation)} /></td>
                 <td style={{ padding:"9px 12px" }}><Icon name="chevron-right" size={14} color="#ccc" /></td>
               </tr>
@@ -819,7 +901,7 @@ function StructureDetail({ structure: s, projects, onBack, onEdit }) {
         <div style={{ flex:1 }}>
           <div style={{ fontSize:11, fontFamily:"monospace", color:"#888" }}>{s.culvertNumber} · {s.designation}</div>
           <div style={{ fontSize:18, fontWeight:700 }}>{s.road||"Structure"}</div>
-          <div style={{ fontSize:13, color:"#666" }}>{s.township||""}{s.featureIntersected?` · ${s.featureIntersected}`:""}</div>
+          <div style={{ fontSize:13, color:"#666" }}>{s.township||""}</div>
         </div>
         <CondRating value={s.rating} size="lg" kind={ratingKindFor(s.designation)} />
         <button onClick={onEdit} style={{ ...btn.small, background:"#1a3a5c" }}>Edit</button>
@@ -830,9 +912,8 @@ function StructureDetail({ structure: s, projects, onBack, onEdit }) {
           <SectionCard title="Location & Classification">
             {[
               ["Culvert Number",s.culvertNumber||"—"],["Designation",s.designation||"—"],["Road Designation",s.roadDesignation||"—"],
-              ["Road",s.road||"—"],["Township",s.township||"—"],["Route",s.route||"—"],
-              ["Feature Intersected",s.featureIntersected||"—"],["Drainage",s.drainage||"—"],
-              ["FAS Number",s.fasNumber||"—"],["Project Ref",s.project||"—"],
+              ["Road",s.road||"—"],["Township",s.township||"—"],
+              ["Project Ref",s.project||"—"],
               ["GPS",s.latitude&&s.longitude?`${s.latitude}, ${s.longitude}`:"—"],
             ].map(([k,v])=>(
               <div key={k} style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", borderBottom:"1px solid #f0f0ee", fontSize:13 }}>
@@ -842,8 +923,9 @@ function StructureDetail({ structure: s, projects, onBack, onEdit }) {
           </SectionCard>
           <SectionCard title="Physical / Condition">
             {[
-              ["Size & Type",s.sizeAndType||"—"],["Shape",s.shape||"—"],["Diameter",s.diameter||"—"],
-              ["Length",s.length?`${s.length} ft`:"—"],["Year Built",s.yearBuilt||"—"],["Status",s.status||"active"],
+              ["Barrels",barrelsSummary(s.barrels) || s.sizeAndType || "—"],
+              ["Total Barrels",(s.barrels||[]).reduce((n,b)=>n+(Number(b.count)||0),0) || "—"],
+              ["Year Built",s.yearBuilt||"—"],
             ].map(([k,v])=>(
               <div key={k} style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", borderBottom:"1px solid #f0f0ee", fontSize:13 }}>
                 <span style={{ color:"#666" }}>{k}</span><span style={{ fontWeight:600 }}>{v}</span>
@@ -862,8 +944,24 @@ function StructureDetail({ structure: s, projects, onBack, onEdit }) {
   );
 }
 
-function StructureForm({ structure, onSave, onCancel }) {
-  const [form, setForm] = useState(structure ? { ...structure } : createStructure());
+function StructureForm({ structure, structureTypes = [], townshipList = [], onSave, onCancel }) {
+  // Older records held a single barrel across shape/diameter/length. Lift that into
+  // the barrels list on first edit so nothing is lost.
+  const [form, setForm] = useState(() => {
+    if (!structure) return createStructure();
+    const f = { ...structure };
+    if (!Array.isArray(f.barrels)) f.barrels = [];
+    if (f.barrels.length === 0 && (f.shape || f.diameter || f.length)) {
+      f.barrels = [createStructureBarrel({
+        count:  1,
+        size:   f.diameter || "",
+        length: f.length   || "",
+        type:   f.shape    || "",
+        notes:  f.sizeAndType ? `Migrated from: ${f.sizeAndType}` : "",
+      })];
+    }
+    return f;
+  });
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
   return (
     <div style={{ maxWidth:720 }}>
@@ -884,39 +982,25 @@ function StructureForm({ structure, onSave, onCancel }) {
               {["Primary","Secondary"].map(d=><option key={d}>{d}</option>)}
             </select>
           </Field>
-          <Field label="Status">
-            <select value={form.status} onChange={e=>set("status",e.target.value)} style={inp}>
-              {["active","replaced","removed"].map(s=><option key={s}>{s}</option>)}
-            </select>
-          </Field>
+          <Field label="Year Built"><input type="text" value={form.yearBuilt} onChange={e=>set("yearBuilt",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:14, marginBottom:14 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr", gap:14, marginBottom:14 }}>
           <Field label="Road"><input type="text" value={form.road} onChange={e=>set("road",e.target.value)} style={inp} /></Field>
           <Field label="Township">
             <select value={form.township} onChange={e=>set("township",e.target.value)} style={inp}>
               <option value="">Select…</option>
-              {TOWNSHIPS_NE.map(t=><option key={t}>{t}</option>)}
+              {townshipList.map(t=><option key={t}>{t}</option>)}
             </select>
           </Field>
-          <Field label="Route"><input type="text" value={form.route} onChange={e=>set("route",e.target.value)} style={inp} /></Field>
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:14, marginBottom:14 }}>
-          <Field label="Size & Type"><input type="text" value={form.sizeAndType} onChange={e=>set("sizeAndType",e.target.value)} style={inp} placeholder='2 - 94" X 50&apos; ROUND CONCRETE' /></Field>
-          <Field label="Feature Intersected"><input type="text" value={form.featureIntersected} onChange={e=>set("featureIntersected",e.target.value)} style={inp} placeholder="Flat Creek, DITCH…" /></Field>
-          <Field label="Drainage"><input type="text" value={form.drainage} onChange={e=>set("drainage",e.target.value)} style={inp} placeholder="Big Blue, Ditch…" /></Field>
-        </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr", gap:14, marginBottom:14 }}>
-          <Field label="Shape">
-            <select value={form.shape} onChange={e=>set("shape",e.target.value)} style={inp}>
-              <option value="">Select…</option>
-              {STRUCTURE_SHAPES.map(s=><option key={s}>{s}</option>)}
-            </select>
-          </Field>
-          <Field label="Diameter / Size"><input type="text" value={form.diameter} onChange={e=>set("diameter",e.target.value)} style={inp} placeholder='94"' /></Field>
-          <Field label="Length (ft)"><input type="text" value={form.length} onChange={e=>set("length",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
-          <Field label="Year Built"><input type="text" value={form.yearBuilt} onChange={e=>set("yearBuilt",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
-          <Field label="FAS Number"><input type="text" value={form.fasNumber} onChange={e=>set("fasNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
-        </div>
+
+        {/* Barrels — a site may hold several of differing size, shape and material */}
+        <BarrelEditor
+          barrels={form.barrels || []}
+          typeOptions={structureTypes}
+          onChange={list => set("barrels", list)}
+        />
+
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14, marginBottom:14 }}>
           <Field label="Project Ref"><input type="text" value={form.project} onChange={e=>set("project",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="M-2024-01…" /></Field>
           <Field label="Latitude"><input type="text" value={form.latitude} onChange={e=>set("latitude",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="40.5853" /></Field>

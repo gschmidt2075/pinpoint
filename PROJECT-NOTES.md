@@ -204,6 +204,11 @@ Accounting, not just the fuel log. Questions are on the Equipment form.
 
 ## Conventions
 
+- **Lookup lists:** every dropdown that might change lives in `db.lookups`,
+  defined by `LOOKUP_DEFS` in `schema.js` and edited under Settings → Dropdown
+  Lists. Do not hardcode a list in a module. Records store the string value, so
+  renaming a list value does not rewrite existing records (see Settings Q3,
+  unanswered).
 - **Styling:** inline styles throughout. No CSS framework, no styled-components.
   Shared primitives (`Icon`, `Field`, `SectionCard`, `Table`, `KPICard`, `inp`,
   `btn`, `fmt`, `fmtSm`) live in `components/shared.jsx`.
