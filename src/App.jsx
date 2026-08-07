@@ -137,6 +137,35 @@ function reducer(state, action) {
         ),
       };
     }
+    // A reconciled invoice changed the rate on a batch this entry consumed.
+    // Accept the new cost, or keep the original and clear the flag.
+    case "RESOLVE_COST_REVIEW": {
+      const { projectId, entryId, accept } = action.payload;
+      return {
+        ...state,
+        projects: state.projects.map(p =>
+          p.id !== projectId ? p : {
+            ...p,
+            materialEntries: (p.materialEntries || []).map(e => {
+              if (e.id !== entryId || !e.costReview) return e;
+              const { proposedTotal, newUnitCost, batchId } = e.costReview;
+              const { costReview, ...rest } = e;
+              if (!accept) return rest;
+              return {
+                ...rest,
+                totalCost: proposedTotal,
+                batchLines: (e.batchLines || []).map(l =>
+                  l.batchId === batchId
+                    ? { ...l, unitCost: newUnitCost, totalCost: (l.quantity || 0) * newUnitCost }
+                    : l
+                ),
+              };
+            }),
+          }
+        ),
+      };
+    }
+
     // Update a cost entry within a project
     case "UPDATE_PROJECT_ENTRY": {
       const { projectId, entryType, entry } = action.payload;
@@ -223,19 +252,61 @@ function reducer(state, action) {
         });
       }
 
+      let projects = state.projects;
+
       if (tx.type === "reconcile") {
-        // Invoice reconciliation — update unit cost on the linked batch and cascade to project material entries
+        // Invoice reconciliation — lock the unit cost on the batch.
         if (tx.batchId && tx.newUnitCost !== undefined) {
+          const oldBatch = batches.find(b => b.id === tx.batchId);
+          const oldUnitCost = oldBatch?.unitCost ?? 0;
+          const rateChanged = Math.abs(oldUnitCost - tx.newUnitCost) > 0.0001;
+
           batches = batches.map(b =>
             b.id === tx.batchId
               ? { ...b, unitCost: tx.newUnitCost, totalCost: tx.newUnitCost * b.quantityReceived, invoiceStatus: "final", invoiceRef: tx.invoiceRef || b.invoiceRef }
               : b
           );
+
+          // If the invoice rate differs from what was estimated, any project that
+          // already consumed this batch now carries a stale cost. Flag those
+          // entries for review rather than changing project costs silently —
+          // someone may have already reported on that project.
+          if (rateChanged) {
+            projects = projects.map(p => {
+              const entries = p.materialEntries || [];
+              let touched = false;
+              const updated = entries.map(e => {
+                const lines = e.batchLines || [];
+                const hit = lines.find(l => l.batchId === tx.batchId);
+                if (!hit) return e;
+                touched = true;
+                // Recompute what this entry would cost at the invoiced rate.
+                const proposedTotal = lines.reduce((s, l) =>
+                  s + (l.batchId === tx.batchId
+                    ? (l.quantity || 0) * tx.newUnitCost
+                    : (l.totalCost || 0)), 0);
+                return {
+                  ...e,
+                  costReview: {
+                    batchId:     tx.batchId,
+                    invoiceRef:  tx.invoiceRef || "",
+                    oldUnitCost,
+                    newUnitCost: tx.newUnitCost,
+                    currentTotal: e.totalCost || 0,
+                    proposedTotal,
+                    flaggedAt:   new Date().toISOString(),
+                  },
+                };
+              });
+              return touched ? { ...p, materialEntries: updated } : p;
+            });
+          }
         }
       }
 
       return {
         ...state,
+        projects,
         inventoryBatches: batches,
         inventoryTransactions: [...state.inventoryTransactions, tx],
       };

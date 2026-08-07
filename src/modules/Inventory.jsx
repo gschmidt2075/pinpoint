@@ -867,7 +867,35 @@ function ScaleTicket({ db, dispatch, onDone }) {
     if (!form.date||!form.itemId||!form.quantity||!form.unitRate) return;
     const txId    = `${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
     const batchId = `${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
-    const goesToStockpile = !isRoadSegment;
+    const qty     = parseFloat(form.quantity);
+    const rate    = parseFloat(form.unitRate);
+
+    // Confirmed with staff: ALL gravel enters inventory first, whether it went to
+    // a stockpile or straight onto a road. Direct-to-road loads are then issued
+    // out to the project immediately. Nothing bypasses inventory — that way every
+    // ticket has a batch to reconcile against an invoice.
+    const batchLocation = isRoadSegment
+      ? (form.destinationLocation || "Direct to Road")
+      : destLocationName;
+
+    const batch = {
+      id:                batchId,
+      itemId:            form.itemId,
+      itemName:          selectedItem?.name || "",
+      receiptDate:       form.date,
+      receiptRef:        form.ticketNumber,
+      location:          batchLocation,
+      quantityReceived:  qty,
+      quantityRemaining: qty,
+      unitCost:          rate,
+      totalCost,
+      vendorName:        form.vendorName,
+      invoiceStatus:     "pending_reconciliation",
+      invoiceRef:        "",
+      status:            "open",
+      notes:             form.notes,
+      createdAt:         new Date().toISOString(),
+    };
 
     const tx = {
       id:                  txId,
@@ -879,47 +907,87 @@ function ScaleTicket({ db, dispatch, onDone }) {
       vendorName:          form.vendorName,
       ticketNumber:        form.ticketNumber,
       source:              form.source,
-      quantity:            parseFloat(form.quantity),
+      quantity:            qty,
       unitOfMeasure:       form.unitOfMeasure,
       haulType:            isComplex ? form.haulType : null,
       haulerName:          form.haulerName,
       destinationType:     isComplex ? form.destinationType : "stockpile",
       township:            form.township,
-      unitRate:            parseFloat(form.unitRate),
+      unitRate:            rate,
       totalCost,
       destinationLocation: destLocationName,
       projectId:           isRoadSegment ? form.projectId : null,
       invoiceStatus:       "pending_reconciliation",
       invoiceRef:          "",
-      batchId:             goesToStockpile ? batchId : null,
+      batchId,
+      batch,
       notes:               form.notes,
       createdAt:           new Date().toISOString(),
     };
 
-    let batch = null;
-    if (goesToStockpile) {
-      batch = {
-        id:                batchId,
-        itemId:            form.itemId,
-        itemName:          selectedItem?.name || "",
-        receiptDate:       form.date,
-        receiptRef:        form.ticketNumber,
-        location:          destLocationName,
-        quantityReceived:  parseFloat(form.quantity),
-        quantityRemaining: parseFloat(form.quantity),
-        unitCost:          parseFloat(form.unitRate),
+    dispatch({ type:"ADD_INVENTORY_TRANSACTION", payload: tx });
+
+    // Straight to a road segment — issue it back out against the project so the
+    // cost actually lands somewhere. Without this the gravel was recorded as
+    // neither stock nor project cost.
+    if (isRoadSegment && form.projectId) {
+      const project    = projects.find(p => p.id === form.projectId);
+      const batchLines = [{
+        batchId,
+        batchRef:  `${form.date} — ${form.vendorName || form.source || "scale ticket"}`,
+        itemId:    form.itemId,
+        itemName:  selectedItem?.name || "",
+        quantity:  qty,
+        unitCost:  rate,
         totalCost,
-        vendorName:        form.vendorName,
-        invoiceStatus:     "pending_reconciliation",
-        invoiceRef:        "",
-        status:            "open",
-        notes:             form.notes,
-        createdAt:         new Date().toISOString(),
-      };
-      tx.batch = batch;
+      }];
+      const noteParts = [
+        `Scale ticket${form.ticketNumber ? ` ${form.ticketNumber}` : ""}`,
+        form.destinationLocation,
+        form.notes,
+      ].filter(Boolean);
+
+      dispatch({
+        type: "ADD_INVENTORY_TRANSACTION",
+        payload: {
+          id:          `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+          type:        "issue",
+          date:        form.date,
+          itemId:      form.itemId,
+          itemName:    selectedItem?.name || "",
+          quantity:    qty,
+          location:    batchLocation,
+          projectId:   form.projectId,
+          projectName: project?.name || project?.projectNumber || "",
+          batchLines,
+          totalCost,
+          notes:       noteParts.join(" · "),
+          createdAt:   new Date().toISOString(),
+        },
+      });
+
+      dispatch({
+        type: "ADD_PROJECT_ENTRY",
+        payload: {
+          projectId: form.projectId,
+          entryType: "materialEntries",
+          entry: {
+            id:            `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+            date:          form.date,
+            itemId:        form.itemId,
+            itemName:      selectedItem?.name || "",
+            quantity:      qty,
+            unitOfMeasure: form.unitOfMeasure,
+            batchLines,
+            totalCost,
+            linkedAssets:  [],
+            notes:         noteParts.join(" · "),
+            createdAt:     new Date().toISOString(),
+          },
+        },
+      });
     }
 
-    dispatch({ type:"ADD_INVENTORY_TRANSACTION", payload: tx });
     setSaved(true);
     setForm(EMPTY_FORM);
     setTimeout(()=>{ setSaved(false); }, 2000);
@@ -1074,8 +1142,21 @@ function ScaleTicket({ db, dispatch, onDone }) {
               </Field>
             </div>
 
+            {isRoadSegment && !form.projectId && (
+              <div style={{ background:"#fdecea", border:"1px solid #f5c6c6", borderRadius:6, padding:"10px 14px", fontSize:12, color:"#8c1b18", marginBottom:10 }}>
+                ⚠ <strong>No project selected.</strong> This load will enter inventory but won't be costed to anything. Pick a project so the cost lands on the road.
+              </div>
+            )}
+
+            {isRoadSegment && form.projectId && (
+              <div style={{ background:"#f0f8f4", border:"1px solid #a8d5b5", borderRadius:6, padding:"10px 14px", fontSize:12, color:"#1a5a3a", marginBottom:10 }}>
+                ✓ Enters inventory, then issues straight out to <strong>{projects.find(p=>p.id===form.projectId)?.name || "the project"}</strong> — {fmtSm(totalCost)} of material cost.
+              </div>
+            )}
+
             <div style={{ background:"#fef3cd", border:"1px solid #f0d080", borderRadius:6, padding:"10px 14px", fontSize:12, color:"#7a4f00" }}>
               ⏳ <strong>Pending reconciliation</strong> — stock enters inventory at the estimated rate. When the invoice arrives, go to the Reconcile tab to lock the final cost. You can reconcile multiple tickets to one invoice at once.
+              {isRoadSegment && form.projectId && " If the invoice rate differs, the project cost will be flagged for your review rather than changed automatically."}
             </div>
           </div>
 
@@ -1088,6 +1169,7 @@ function ScaleTicket({ db, dispatch, onDone }) {
 
       {mode==="reconcile" && (
         <div>
+          <CostReviewQueue db={db} dispatch={dispatch} />
           {pendingBatches.length === 0 ? (
             <div style={{ background:"#f0f8f4", border:"1px solid #a8d5b5", borderRadius:8, padding:32, textAlign:"center", color:"#1a5a3a", fontSize:13 }}>
               ✓ All scale ticket batches have been reconciled.
@@ -1176,6 +1258,89 @@ function ScaleTicket({ db, dispatch, onDone }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Cost Review Queue ─────────────────────────────────────────────────────────
+// When an invoice comes in at a different rate than the contract estimate, any
+// project that already consumed that batch is carrying a stale cost. Staff chose
+// review-and-approve over silent correction — someone may already have reported
+// on that project.
+function CostReviewQueue({ db, dispatch }) {
+  const flagged = useMemo(() => {
+    const out = [];
+    (db.projects || []).forEach(p => {
+      (p.materialEntries || []).forEach(e => {
+        if (e.costReview) out.push({ project: p, entry: e, review: e.costReview });
+      });
+    });
+    return out.sort((a, b) => (a.review.flaggedAt || "").localeCompare(b.review.flaggedAt || ""));
+  }, [db.projects]);
+
+  if (!flagged.length) return null;
+
+  const resolve = (projectId, entryId, accept) =>
+    dispatch({ type: "RESOLVE_COST_REVIEW", payload: { projectId, entryId, accept } });
+
+  const resolveAll = (accept) =>
+    flagged.forEach(f => resolve(f.project.id, f.entry.id, accept));
+
+  return (
+    <div style={{ background:"#fff8e1", border:"2px solid #f0d080", borderRadius:8, padding:18, marginBottom:20 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:6, flexWrap:"wrap", gap:10 }}>
+        <div>
+          <div style={{ fontSize:15, fontWeight:700, color:"#7a4f00" }}>
+            ⚠ {flagged.length} project cost{flagged.length!==1?"s need":" needs"} review
+          </div>
+          <div style={{ fontSize:12, color:"#7a4f00", marginTop:3, maxWidth:620 }}>
+            An invoice came in at a different rate than estimated. These projects already used
+            that material, so their recorded cost is now out of date. Nothing has been changed
+            — accept the invoiced cost or keep what's there.
+          </div>
+        </div>
+        {flagged.length > 1 && (
+          <div style={{ display:"flex", gap:8 }}>
+            <button onClick={()=>resolveAll(true)}  style={{ ...btn.small, background:"#1a5a3a", fontSize:11, whiteSpace:"nowrap" }}>Accept All</button>
+            <button onClick={()=>resolveAll(false)} style={{ ...btn.small, background:"#888",    fontSize:11, whiteSpace:"nowrap" }}>Keep All</button>
+          </div>
+        )}
+      </div>
+
+      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12, marginTop:12, background:"#fff", borderRadius:6, overflow:"hidden" }}>
+        <thead>
+          <tr style={{ background:"#f7f2e0" }}>
+            {["Project","Material","Invoice","Rate was","Rate now","Cost was","Cost now","Change",""].map(h=>(
+              <th key={h} style={{ padding:"7px 10px", textAlign:["Rate was","Rate now","Cost was","Cost now","Change"].includes(h)?"right":"left", fontWeight:700, fontSize:10, textTransform:"uppercase", letterSpacing:"0.04em", color:"#7a4f00", borderBottom:"1px solid #f0d080" }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {flagged.map(({ project, entry, review }, i) => {
+            const delta = (review.proposedTotal || 0) - (review.currentTotal || 0);
+            return (
+              <tr key={entry.id} style={{ borderTop:"1px solid #f4ecd8", background:i%2===0?"#fff":"#fffdf6" }}>
+                <td style={{ padding:"8px 10px", fontWeight:600 }}>{project.name || project.projectNumber || "—"}</td>
+                <td style={{ padding:"8px 10px" }}>{entry.itemName || "—"}</td>
+                <td style={{ padding:"8px 10px", fontFamily:"monospace", fontSize:11, color:"#888" }}>{review.invoiceRef || "—"}</td>
+                <td style={{ padding:"8px 10px", textAlign:"right", fontFamily:"monospace", color:"#888" }}>{fmtSm(review.oldUnitCost||0)}</td>
+                <td style={{ padding:"8px 10px", textAlign:"right", fontFamily:"monospace", fontWeight:700 }}>{fmtSm(review.newUnitCost||0)}</td>
+                <td style={{ padding:"8px 10px", textAlign:"right", fontFamily:"monospace", color:"#888" }}>{fmtSm(review.currentTotal||0)}</td>
+                <td style={{ padding:"8px 10px", textAlign:"right", fontFamily:"monospace", fontWeight:700 }}>{fmtSm(review.proposedTotal||0)}</td>
+                <td style={{ padding:"8px 10px", textAlign:"right", fontFamily:"monospace", fontWeight:700, color:delta>0?"#c0392b":delta<0?"#1a6b35":"#888" }}>
+                  {delta>0?"+":""}{fmtSm(delta)}
+                </td>
+                <td style={{ padding:"8px 10px" }}>
+                  <div style={{ display:"flex", gap:5, justifyContent:"flex-end" }}>
+                    <button onClick={()=>resolve(project.id, entry.id, true)}  style={{ ...btn.small, background:"#1a5a3a", fontSize:10, padding:"4px 9px" }}>Accept</button>
+                    <button onClick={()=>resolve(project.id, entry.id, false)} style={{ ...btn.small, background:"#888",    fontSize:10, padding:"4px 9px" }}>Keep</button>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

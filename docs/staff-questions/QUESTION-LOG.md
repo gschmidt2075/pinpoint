@@ -261,11 +261,16 @@ Greg walked the flow through with the office. Their description:
 segment, immediately issue it out against that project, producing both the
 inventory movement and the project material entry.
 
-**Open design question:** if a direct-to-road batch is consumed the moment it's
-created, and the invoice later comes in at a different rate, the correction has
-to ripple through to the project's material entry as well as the batch. Staff say
-the contract price is usually right, so this should be rare — but the system
-needs to handle it rather than silently leaving the project cost wrong.
+**Answered 2026-07-26 — flag for review, don't auto-apply.** When a reconciled
+invoice changes the rate on a batch a project already consumed, the project entry
+is flagged and shown in a review queue on the Reconcile tab. Nothing changes until
+someone accepts it. Rationale: a project may already have been reported on, so a
+silent cost change would be worse than a visible decision.
+
+**Fixed and verified 2026-07-26.** All scale tickets now create a batch. Road
+segment destinations additionally issue straight back out to the project,
+producing the material entry. Reconciling at a different rate flags affected
+project costs with accept / keep options rather than rewriting them.
 
 ---
 
