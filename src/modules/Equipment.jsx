@@ -182,6 +182,9 @@ function FleetTab({ units, workOrders, dispensing, dispatch, onSelect }) {
   const oos      = units.filter(u=>u.status==="out_of_service").length;
   const openWOs  = workOrders.filter(w=>w.status==="open").length;
 
+  const pmDue        = pmDueList(units);
+  const overdueCount = pmDue.filter(p => p.status.state === "overdue").length;
+
   const filtered = units.filter(u => {
     if (statusFilter !== "all" && u.status !== statusFilter) return false;
     if (search && !`${u.unitNumber} ${u.year} ${u.make} ${u.model} ${u.description}`.toLowerCase().includes(search.toLowerCase())) return false;
@@ -207,12 +210,55 @@ function FleetTab({ units, workOrders, dispensing, dispatch, onSelect }) {
         </div>
       </div>
 
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:18 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12, marginBottom:18 }}>
         <KPICard label="Active"         value={active}  sub="Units"      accent="#1a6b35" icon="check-circle" />
         <KPICard label="In Shop"        value={inShop}  sub="Units"      accent="#d97706" icon="tool" />
         <KPICard label="Out of Service" value={oos}     sub="Units"      accent="#c0392b" icon="alert-circle" />
         <KPICard label="Open Work Orders" value={openWOs} sub="WOs"      accent="#1a3a5c" icon="clipboard-check" />
+        <KPICard label="PM Due"         value={pmDue.length}
+          sub={overdueCount ? `${overdueCount} overdue` : "Upcoming"}
+          accent={overdueCount ? "#c0392b" : pmDue.length ? "#d97706" : "#888"} icon="alarm" />
       </div>
+
+      {/* What needs servicing — meter readings drive this */}
+      {pmDue.length > 0 && (
+        <div style={{ background:"#fff", border:`2px solid ${overdueCount ? "#f5c6c6" : "#f0d080"}`, borderRadius:8, padding:16, marginBottom:18 }}>
+          <div style={{ fontSize:14, fontWeight:700, color: overdueCount ? "#8c1b18" : "#7a4f00", marginBottom:3 }}>
+            {overdueCount > 0 ? `⚠ ${overdueCount} service${overdueCount!==1?"s":""} overdue` : `◷ ${pmDue.length} service${pmDue.length!==1?"s":""} coming due`}
+          </div>
+          <div style={{ fontSize:11, color:"#888", marginBottom:12 }}>
+            Based on the latest meter readings. Update a unit's meter to refresh this.
+          </div>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+            <thead>
+              <tr style={{ background:"#f7f7f5" }}>
+                {["Unit","Equipment","Service","Interval","Meter","Status"].map(h=>(
+                  <th key={h} style={{ padding:"7px 10px", textAlign:h==="Meter"?"right":"left", fontWeight:700, fontSize:10, textTransform:"uppercase", letterSpacing:"0.05em", color:"#666", borderBottom:"1px solid #eee" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {pmDue.slice(0, 12).map(({ unit, sched, status }, i) => (
+                <tr key={`${unit.id}-${sched.id}`}
+                  onClick={()=>onSelect(unit.id)}
+                  style={{ borderTop:"1px solid #f0f0ee", background:i%2===0?"#fff":"#fafaf8", cursor:"pointer" }}>
+                  <td style={{ padding:"8px 10px", fontFamily:"monospace", fontWeight:700, color:"#1a3a5c" }}>{unit.unitNumber||"—"}</td>
+                  <td style={{ padding:"8px 10px" }}>{[unit.year,unit.make,unit.model].filter(Boolean).join(" ")||"—"}</td>
+                  <td style={{ padding:"8px 10px", fontWeight:600 }}>{sched.service||"—"}</td>
+                  <td style={{ padding:"8px 10px", color:"#888" }}>
+                    every {Number(sched.interval).toLocaleString()} {sched.intervalType==="miles"?"mi":sched.intervalType==="hours"?"hr":"mo"}
+                  </td>
+                  <td style={{ padding:"8px 10px", textAlign:"right", fontFamily:"monospace" }}>{lifetimeMeter(unit).toLocaleString()}</td>
+                  <td style={{ padding:"8px 10px" }}><PMBadge status={status} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {pmDue.length > 12 && (
+            <div style={{ fontSize:11, color:"#888", marginTop:9 }}>…and {pmDue.length - 12} more</div>
+          )}
+        </div>
+      )}
 
       <div style={{ display:"flex", border:"1px solid #ddd", borderRadius:6, overflow:"hidden", marginBottom:16, width:"fit-content" }}>
         {[["all","All"],["active","Active"],["in_shop","In Shop"],["out_of_service","OOS"],["sold","Sold"]].map(([v,l])=>(
@@ -630,7 +676,7 @@ function WorkOrderDetail({ wo, unit, invItems, invBatches, dispatch, onBack }) {
       </div>
 
       {tab==="labor"   && <WOLaborTab   wo={wo} dispatch={dispatch} />}
-      {tab==="parts"   && <WOPartsTab   wo={wo} invItems={invItems} invBatches={invBatches} dispatch={dispatch} />}
+      {tab==="parts"   && <WOPartsTab   wo={wo} unit={unit} invItems={invItems} invBatches={invBatches} dispatch={dispatch} />}
       {tab==="service" && <WOServiceTab wo={wo} dispatch={dispatch} />}
     </div>
   );
@@ -696,32 +742,193 @@ function WOLaborTab({ wo, dispatch }) {
   );
 }
 
+// ── PM due calculation ────────────────────────────────────────────────────────
+// Meter readings drive the schedule. Becky reads them at every fuelling, service
+// and repair, then flags what's due — this does the arithmetic for her.
+// Lifetime meter = meterOffset + currentMeter, so a replaced gauge doesn't reset
+// the clock.
+export function lifetimeMeter(unit) {
+  return (Number(unit?.meterOffset) || 0) + (Number(unit?.currentMeter) || 0);
+}
+
+// Default warning windows — roughly 10% of the interval, which lands about where
+// you'd want to start scheduling.
+const DEFAULT_WARN = { hours: 25, miles: 500, months: 1 };
+
+export function pmStatus(unit, sched) {
+  if (!sched || sched.active === false || !sched.interval) return null;
+  const warn = Number(sched.warnAhead) || DEFAULT_WARN[sched.intervalType] || 0;
+
+  if (sched.intervalType === "months") {
+    if (!sched.lastDoneDate) return { state:"unknown", label:"Never done", remaining:null };
+    const due = new Date(sched.lastDoneDate);
+    due.setMonth(due.getMonth() + Number(sched.interval));
+    const days = Math.round((due - Date.now()) / 864e5);
+    if (days < 0)          return { state:"overdue", label:`${Math.abs(days)} days overdue`, remaining:days };
+    if (days <= warn * 30) return { state:"due",     label:`Due in ${days} days`,            remaining:days };
+    return { state:"ok", label:`Due in ${days} days`, remaining:days };
+  }
+
+  const current = lifetimeMeter(unit);
+  if (sched.lastDoneMeter === null || sched.lastDoneMeter === undefined) {
+    return { state:"unknown", label:"No baseline reading", remaining:null };
+  }
+  const dueAt     = Number(sched.lastDoneMeter) + Number(sched.interval);
+  const remaining = dueAt - current;
+  const u = sched.intervalType === "miles" ? "mi" : "hr";
+  if (remaining < 0)     return { state:"overdue", label:`${Math.abs(remaining).toLocaleString()} ${u} overdue`, remaining, dueAt };
+  if (remaining <= warn) return { state:"due",     label:`${remaining.toLocaleString()} ${u} to go`,             remaining, dueAt };
+  return { state:"ok", label:`${remaining.toLocaleString()} ${u} to go`, remaining, dueAt };
+}
+
+// Every schedule across the fleet that wants attention, worst first.
+export function pmDueList(equipment) {
+  const out = [];
+  (equipment || []).forEach(unit => {
+    if (unit.status === "sold") return;
+    (unit.pmSchedule || []).forEach(sched => {
+      const st = pmStatus(unit, sched);
+      if (st && (st.state === "overdue" || st.state === "due")) out.push({ unit, sched, status: st });
+    });
+  });
+  return out.sort((a, b) => {
+    if (a.status.state !== b.status.state) return a.status.state === "overdue" ? -1 : 1;
+    return (a.status.remaining ?? 0) - (b.status.remaining ?? 0);
+  });
+}
+
+const PM_TONE = {
+  overdue: { color:"#c0392b", bg:"#fdecea", border:"#f5c6c6", icon:"⚠" },
+  due:     { color:"#d97706", bg:"#fef3cd", border:"#f0d080", icon:"◷" },
+  ok:      { color:"#1a6b35", bg:"#e6f4ec", border:"#a8d5b5", icon:"✓" },
+  unknown: { color:"#888",    bg:"#f4f4f2", border:"#ddd",    icon:"–" },
+};
+
+function PMBadge({ status }) {
+  if (!status) return null;
+  const t = PM_TONE[status.state] || PM_TONE.unknown;
+  return (
+    <span style={{ background:t.bg, color:t.color, border:`1px solid ${t.border}`, borderRadius:99, padding:"2px 9px", fontSize:11, fontWeight:700, whiteSpace:"nowrap" }}>
+      {t.icon} {status.label}
+    </span>
+  );
+}
+
+// ── FIFO helpers ──────────────────────────────────────────────────────────────
+// Same rules as the Inventory module: oldest batch by receipt date depletes first.
+function onHandFor(itemId, batches) {
+  return (batches || [])
+    .filter(b => b.itemId === itemId && b.status === "open")
+    .reduce((s, b) => s + (b.quantityRemaining || 0), 0);
+}
+
+function buildFIFO(itemId, qty, batches) {
+  const open = (batches || [])
+    .filter(b => b.itemId === itemId && b.status === "open")
+    .sort((a, b) => (a.receiptDate || "").localeCompare(b.receiptDate || ""));
+  let remaining = qty;
+  const lines = [];
+  let totalCost = 0;
+  for (const b of open) {
+    if (remaining <= 0) break;
+    const take = Math.min(remaining, b.quantityRemaining || 0);
+    if (take <= 0) continue;
+    lines.push({
+      batchId:   b.id,
+      batchRef:  `${b.receiptDate || ""} — ${b.vendorName || b.receiptRef || "batch"}`,
+      itemId:    b.itemId,
+      itemName:  b.itemName || "",
+      quantity:  take,
+      unitCost:  b.unitCost || 0,
+      totalCost: take * (b.unitCost || 0),
+    });
+    totalCost += take * (b.unitCost || 0);
+    remaining -= take;
+  }
+  return { lines, totalCost, canFulfill: remaining <= 0, shortfall: Math.max(0, remaining) };
+}
+
 // ── WO Parts tab ──────────────────────────────────────────────────────────────
-function WOPartsTab({ wo, invItems, invBatches, dispatch }) {
+// Parts on a work order come OUT OF INVENTORY, same as anything else. Nothing is
+// entered by hand — if it isn't in the catalog it can't be used. Cost is FIFO,
+// not standard cost, and issuing decrements the batches.
+function WOPartsTab({ wo, unit, invItems, invBatches, dispatch }) {
   const [showForm, setShowForm] = useState(false);
-  const entries = wo.partEntries || [];
-  const [form, setForm] = useState({ date:"", itemId:"", itemName:"", quantity:"", unitCost:"", notes:"" });
+  const [search, setSearch]     = useState("");
+  const [form, setForm]         = useState({ date:"", itemId:"", quantity:"", notes:"" });
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
-  const selectedItem = invItems.find(i=>i.id===form.itemId);
-  const cost = (parseFloat(form.quantity)||0)*(parseFloat(form.unitCost)||0);
+  const entries = wo.partEntries || [];
+  const active  = invItems.filter(i => i.active !== false);
 
-  const handleItemSelect = id => {
-    const item = invItems.find(i=>i.id===id);
-    set("itemId",id); set("itemName",item?.name||""); set("unitCost",item?.standardCost||"");
+  // Parts tagged as fitting this unit float to the top — that's what the
+  // fitsEquipment tagging is for.
+  const fitting = unit ? active.filter(i => (i.fitsEquipment || []).includes(unit.id)) : [];
+  const fittingIds = new Set(fitting.map(i => i.id));
+  const others  = active.filter(i => !fittingIds.has(i.id));
+
+  const matches = (i) => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return `${i.legacyNumber} ${i.name} ${i.commodityGroupCode} ${i.commodityGroup}`.toLowerCase().includes(q);
   };
 
+  const selectedItem = active.find(i => i.id === form.itemId);
+  const qty      = parseFloat(form.quantity) || 0;
+  const onHand   = form.itemId ? onHandFor(form.itemId, invBatches) : 0;
+  const preview  = form.itemId && qty > 0 ? buildFIFO(form.itemId, qty, invBatches) : null;
+  const canSave  = form.date && form.itemId && qty > 0 && preview?.canFulfill;
+
   const handleSave = () => {
-    if (!form.date||(!form.itemId&&!form.itemName)||!form.quantity) return;
+    if (!canSave) return;
+    const entryId = `${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
     const entry = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
-      date: form.date, itemId: form.itemId||null, itemName: form.itemId?selectedItem?.name:form.itemName,
-      quantity: parseFloat(form.quantity)||0, unitCost: parseFloat(form.unitCost)||0,
-      totalCost: cost, batchLines: [], notes: form.notes, createdAt: new Date().toISOString(),
+      id: entryId,
+      date: form.date,
+      itemId: form.itemId,
+      itemName: selectedItem?.name || "",
+      legacyNumber: selectedItem?.legacyNumber || "",
+      quantity: qty,
+      unitCost: qty > 0 ? preview.totalCost / qty : 0,   // weighted across batches
+      totalCost: preview.totalCost,
+      batchLines: preview.lines,
+      notes: form.notes,
+      createdAt: new Date().toISOString(),
     };
     dispatch({ type:"ADD_WORK_ORDER_ENTRY", payload:{ workOrderId:wo.id, entryType:"partEntries", entry } });
-    setForm({ date:"", itemId:"", itemName:"", quantity:"", unitCost:"", notes:"" });
+
+    // Take it out of stock — a part used on a repair is issued, same as any other issue
+    dispatch({
+      type: "ADD_INVENTORY_TRANSACTION",
+      payload: {
+        id:          `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+        type:        "issue",
+        date:        form.date,
+        itemId:      form.itemId,
+        itemName:    selectedItem?.name || "",
+        quantity:    qty,
+        location:    "all",
+        workOrderId: wo.id,
+        equipmentId: unit?.id || null,
+        batchLines:  preview.lines,
+        totalCost:   preview.totalCost,
+        notes:       [`WO ${wo.workOrderNumber || wo.id}`, unit ? `Unit ${unit.unitNumber}` : "", form.notes].filter(Boolean).join(" · "),
+        createdAt:   new Date().toISOString(),
+      },
+    });
+
+    setForm({ date:"", itemId:"", quantity:"", notes:"" });
+    setSearch("");
     setShowForm(false);
+  };
+
+  const renderOption = (i) => {
+    const oh = onHandFor(i.id, invBatches);
+    return (
+      <option key={i.id} value={i.id} disabled={oh <= 0}>
+        {i.legacyNumber ? `[${i.legacyNumber}] ` : ""}{i.name} — {oh > 0 ? `${oh} on hand` : "OUT OF STOCK"}
+      </option>
+    );
   };
 
   return (
@@ -730,42 +937,78 @@ function WOPartsTab({ wo, invItems, invBatches, dispatch }) {
         <div style={{ fontSize:13 }}>Total parts: <strong style={{ color:"#5a1a8a" }}>{fmtSm(wo.totalPartsCost||0)}</strong></div>
         <button onClick={()=>setShowForm(s=>!s)} style={btn.primary}>{showForm?"Cancel":"+ Add Part"}</button>
       </div>
+
       {showForm && (
         <div style={{ background:"#f7f7f5", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:16 }}>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr 1fr 1fr", gap:12, marginBottom:12 }}>
+          <div style={{ fontSize:11, color:"#888", marginBottom:12 }}>
+            Parts are issued from inventory at FIFO cost. If it isn't in the catalog, add it in Inventory first.
+          </div>
+
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:12, marginBottom:12 }}>
             <Field label="Date"><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
-            <Field label="Part (from catalog or manual)">
-              <select value={form.itemId} onChange={e=>handleItemSelect(e.target.value)} style={{ ...inp, margin:0 }}>
-                <option value="">Manual entry…</option>
-                {invItems.filter(i=>["PARTS","FILTERS","FLUIDS","HARDWARE","SMALL TOOLS"].includes(i.commodityGroup)).map(i=><option key={i.id} value={i.id}>{i.name}</option>)}
+            <Field label="Search parts"><input type="text" value={search} onChange={e=>setSearch(e.target.value)} style={{ ...inp, margin:0 }} placeholder="Part #, name, group…" /></Field>
+          </div>
+
+          <div style={{ marginBottom:12 }}>
+            <Field label="Part" required>
+              <select value={form.itemId} onChange={e=>set("itemId",e.target.value)} style={{ ...inp, margin:0 }}>
+                <option value="">Select a catalog item…</option>
+                {fitting.filter(matches).length > 0 && (
+                  <optgroup label={`── Fits Unit ${unit?.unitNumber || ""} ──`}>
+                    {fitting.filter(matches).map(renderOption)}
+                  </optgroup>
+                )}
+                <optgroup label="── All Items ──">
+                  {others.filter(matches).slice(0, 300).map(renderOption)}
+                </optgroup>
               </select>
             </Field>
-            <Field label="Qty"><input type="number" min="0" step="any" value={form.quantity} onChange={e=>set("quantity",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
-            <Field label="Unit Cost"><input type="number" min="0" step="0.01" value={form.unitCost} onChange={e=>set("unitCost",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
-            <Field label="Total"><div style={{ ...inp, margin:0, background:"#fff", fontFamily:"monospace", fontWeight:700, color:"#5a1a8a" }}>{fmtSm(cost)}</div></Field>
           </div>
-          {!form.itemId && (
-            <div style={{ marginBottom:12 }}>
-              <Field label="Part Description"><input type="text" value={form.itemName} onChange={e=>set("itemName",e.target.value)} style={{ ...inp, margin:0 }} placeholder="Part name / description…" /></Field>
+
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 2fr", gap:12, marginBottom:12 }}>
+            <Field label={`Qty${selectedItem ? ` (${onHand} on hand)` : ""}`} required>
+              <input type="number" min="0" step="any" value={form.quantity}
+                onChange={e=>set("quantity",e.target.value)}
+                style={{ ...inp, margin:0, fontFamily:"monospace", borderColor: qty > onHand ? "#c0392b" : "" }} />
+            </Field>
+            <Field label="FIFO Cost">
+              <div style={{ ...inp, margin:0, background:"#fff", fontFamily:"monospace", fontWeight:700, color:"#5a1a8a" }}>
+                {preview ? fmtSm(preview.totalCost) : "—"}
+              </div>
+            </Field>
+            <Field label="Notes"><input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+          </div>
+
+          {preview && !preview.canFulfill && (
+            <div style={{ background:"#fdecea", border:"1px solid #f5c6c6", borderRadius:5, padding:"9px 12px", marginBottom:12, fontSize:12, color:"#8c1b18", fontWeight:600 }}>
+              ⚠ Only {onHand} on hand — short by {preview.shortfall}. Receive stock before issuing.
             </div>
           )}
-          <div style={{ display:"flex", gap:10 }}>
-            <Field label="Notes" style={{ flex:1 }}><input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
-            <button onClick={handleSave} style={{ ...btn.primary, marginTop:20 }}>Add</button>
-          </div>
+
+          {preview && preview.canFulfill && preview.lines.length > 1 && (
+            <div style={{ background:"#f0f8f4", border:"1px solid #a8d5b5", borderRadius:5, padding:"9px 12px", marginBottom:12, fontSize:11, color:"#1a5a3a" }}>
+              Drawn from {preview.lines.length} batches: {preview.lines.map(l=>`${l.quantity} @ ${fmtSm(l.unitCost)}`).join(" · ")}
+            </div>
+          )}
+
+          <button onClick={handleSave} disabled={!canSave} style={{ ...btn.primary, opacity: canSave ? 1 : 0.4 }}>
+            Issue to Work Order
+          </button>
         </div>
       )}
+
       <Table
-        headers={[{label:"Date"},{label:"Part"},{label:"Qty"},{label:"Unit Cost"},{label:"Total"},{label:"Notes"}]}
+        headers={[{label:"Date"},{label:"Part #"},{label:"Part"},{label:"Qty"},{label:"Unit Cost"},{label:"Total"},{label:"Notes"}]}
         rows={entries.map(e=>[
           <span style={{fontFamily:"monospace",fontSize:12}}>{fmtDate(e.date)}</span>,
+          <span style={{fontFamily:"monospace",fontSize:11,fontWeight:700,color:"#1a3a5c"}}>{e.legacyNumber||"—"}</span>,
           <span style={{fontWeight:600}}>{e.itemName||"—"}</span>,
           <span style={{fontFamily:"monospace"}}>{e.quantity}</span>,
           <span style={{fontFamily:"monospace"}}>{fmtSm(e.unitCost||0)}</span>,
           <span style={{fontFamily:"monospace",fontWeight:700}}>{fmtSm(e.totalCost||0)}</span>,
           <span style={{fontSize:12,color:"#888"}}>{e.notes||"—"}</span>,
         ])}
-        emptyMessage="No parts entries"
+        emptyMessage="No parts issued to this work order"
       />
     </div>
   );

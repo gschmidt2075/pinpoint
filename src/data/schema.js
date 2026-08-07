@@ -450,7 +450,14 @@ export const createEquipmentUnit = (overrides = {}) => ({
   vin:             "",
   licensePlate:    "",
   primaryLocation: "",           // shed name
-  meterType:       "hours",      // hours | odometer
+  // Meters — off-road equipment runs on hours, on-road on miles.
+  // Read at every fuelling, service and repair.
+  meterType:       "hours",      // hours | miles
+  currentMeter:    0,            // what the gauge reads right now
+  // When a meter is replaced, the broken one's final reading is banked here so a
+  // lifetime total is still knowable: lifetime = meterOffset + currentMeter.
+  meterOffset:     0,
+  meterHistory:    [],           // createMeterReplacement[]
   femaRate:        0,            // $/hour
   internalRate:    0,            // $/hour
   dateAcquired:    "",
@@ -466,23 +473,69 @@ export const createEquipmentUnit = (overrides = {}) => ({
   ...overrides,
 });
 
-// PM schedule entry
+// PM log entry
+// A meter swap. The old gauge's final reading is banked into the unit's
+// meterOffset so lifetime totals survive the replacement.
+export const createMeterReplacement = (overrides = {}) => ({
+  id:              uid(),
+  equipmentId:     null,
+  date:            today(),
+  oldFinalReading: 0,            // what the broken meter last showed
+  newStartReading: 0,            // what the replacement starts at, usually 0
+  notes:           "",
+  createdAt:       now(),
+  ...overrides,
+});
+
+// A recurring service on a unit — "oil every 250 hours", "trans every 40,000 miles".
+// Real intervals in use (confirmed 2026-07-27):
+//   On/off road trucks  oil 5,000 mi   · trans/hydraulic/fuel 40,000 mi
+//   On-road trucks (2)  oil 10,000 mi  · trans/hydraulic/fuel 40,000 mi
+//   Off-road equipment  oil 250 hr     · trans/fuel 500 hr · trans/fuel/hyd 1,000 hr
+//   Greasing            as needed, several times a day — not scheduled
 export const createPMSchedule = (overrides = {}) => ({
   id:              uid(),
   equipmentId:     null,
-  service:         "",           // e.g. "Oil Change", "Filter Replacement"
-  intervalType:    "hours",      // hours | calendar | both
-  intervalHours:   0,
-  intervalDays:    0,
-  lastServiceDate: "",
-  lastServiceHours:0,
-  nextServiceDate: "",
-  nextServiceHours:0,
+  service:         "",           // "Oil & Filter", "Hydraulic Service", …
+  intervalType:    "hours",      // hours | miles | months
+  interval:        0,            // e.g. 250, 5000, 12
+  warnAhead:       0,            // warn this far out; 0 uses a sensible default
+  lastDoneMeter:   null,         // meter reading at last service
+  lastDoneDate:    "",
+  active:          true,
   notes:           "",
   ...overrides,
 });
 
-// PM log entry
+// The intervals actually in use, offered as one-click presets when setting a
+// unit up. Confirmed 2026-07-27.
+export const PM_PRESETS = {
+  on_off_road_truck: [
+    { service:"Oil & Filter",              intervalType:"miles", interval:5000 },
+    { service:"Transmission Service",      intervalType:"miles", interval:40000 },
+    { service:"Hydraulic Service",         intervalType:"miles", interval:40000 },
+    { service:"Fuel System Service",       intervalType:"miles", interval:40000 },
+  ],
+  on_road_truck: [
+    { service:"Oil & Filter",              intervalType:"miles", interval:10000 },
+    { service:"Transmission Service",      intervalType:"miles", interval:40000 },
+    { service:"Hydraulic Service",         intervalType:"miles", interval:40000 },
+    { service:"Fuel System Service",       intervalType:"miles", interval:40000 },
+  ],
+  off_road_equipment: [
+    { service:"Oil & Filter",              intervalType:"hours", interval:250 },
+    { service:"Transmission Service",      intervalType:"hours", interval:500 },
+    { service:"Fuel System Service",       intervalType:"hours", interval:500 },
+    { service:"Hydraulic Service",         intervalType:"hours", interval:1000 },
+  ],
+};
+
+export const PM_PRESET_LABELS = {
+  on_off_road_truck:  "On/Off Road Truck — oil 5,000 mi",
+  on_road_truck:      "On-Road Truck — oil 10,000 mi",
+  off_road_equipment: "Off-Road Equipment — oil 250 hr",
+};
+
 export const createPMLog = (overrides = {}) => ({
   id:              uid(),
   equipmentId:     null,

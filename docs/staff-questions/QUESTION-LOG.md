@@ -618,14 +618,52 @@ which is cash-basis and needs a Fund Accounting path.
 **6. Document attachment keeps recurring** — scanned invoices (Q6), outside
 warranty work orders (Q24). Same deferral as photos: needs a backend.
 
-### Follow-ups
+### Follow-ups — answered 2026-07-27
 
-1. **Work orders — adopt or drop?** Everything else in Equipment depends on this.
-2. **Q16** — advance PM warning was answered with a question mark. Do you want it?
-3. **Q38** — the log captures their vehicle and mileage, but billing is a
-   department total. Should Pinpoint store the per-vehicle detail even though the
-   bill doesn't itemise it?
-4. **Depreciation in cost-per-hour** — in or out?
+1. **Work orders — KEEP them.** But parts on a work order must come out of
+   inventory like everything else: anything bought is received into inventory
+   first, then issued out to whatever consumes it.
+2. **PM warnings — YES.**
+3. **Per-vehicle detail for other departments — YES**, so a report can be
+   produced if they challenge the numbers. Billing stays a department total.
+4. **Depreciation — NO**, keep it out of cost-per-hour.
+
+### Built 2026-07-27
+
+**Work order parts now issue from inventory.** The old version was wrong four
+ways: free-text "manual entry" invented parts with no catalog record, cost came
+from `standardCost` rather than FIFO, inventory was never decremented
+(`batchLines: []`), and the picker filtered on commodity group names that stopped
+existing after the crosswalk. Now: catalog-only, FIFO cost across batches, an
+issue transaction that decrements stock, blocked when there isn't enough on hand,
+and parts tagged to that unit float to the top of the picker.
+
+**PM warnings.** `pmStatus` compares lifetime meter against
+`lastDoneMeter + interval`; `pmDueList` gathers everything overdue or approaching
+across the fleet, worst first. Shown as a KPI and a panel on the Fleet tab.
+Default warning windows are 25 hr / 500 mi / 1 month, overridable per schedule.
+
+**Meter replacement handled** (Q11). `lifetimeMeter = meterOffset + currentMeter`,
+so banking a dead gauge's final reading keeps the service clock honest. Verified:
+a unit whose meter died at 8,750 hr and was replaced with one reading 412 shows
+9,162 lifetime — naive code would read 412 and think it had 8,838 hours to go.
+
+**PM presets** from Q14 are in `PM_PRESETS` — the three real schedules
+(on/off road truck, on-road truck, off-road equipment) available as one-click
+setup rather than typing intervals per unit.
+
+### Still to build from this form
+
+- **Fuel subsystem** — 8 tanks, daily monitor reconciliation at Main, annual
+  dips, contracted tank wagons filling outlying sheds, operator timesheets as a
+  fuel source, off-road/on-road tax split
+- **Inter-departmental fuel billing** — five departments, monthly, at cost,
+  per-vehicle detail retained for challenges, revenue recognised on receipt of
+  the check
+- **Cost per hour / per mile** — fuel, parts, oils, shop supplies, all repairs,
+  in-house and outside labour. **No depreciation**
+- **Document attachment** — scanned invoices and outside warranty orders.
+  Deferred with photos until there's a backend
 
 Sections: The fleet · Meters & usage · Preventive maintenance · Work orders ·
 Fuel & tanks · **Fuelling for other departments** · Cost & replacement
