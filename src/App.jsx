@@ -13,6 +13,18 @@ import { DEFAULT_STORAGE_LOCATIONS, DEFAULT_TOWNSHIPS, DEFAULT_LOOKUPS, DEFAULT_
 import { INITIAL_INVENTORY_ITEMS, INITIAL_INVENTORY_BATCHES, INITIAL_INVENTORY_TRANSACTIONS } from "./data/inventoryData.js";
 import { Icon } from "./components/shared.jsx";
 
+// ── Roles ─────────────────────────────────────────────────────────────────────
+// Pay rates are visible to the Superintendent and the Office Manager (Payroll
+// Q33). Staff see everything else but no money.
+export const ROLES = [
+  { id:"superintendent", label:"Superintendent", description:"Full access" },
+  { id:"office_manager", label:"Office Manager", description:"Enters claims and payroll costing — sees pay rates" },
+  { id:"staff",          label:"Staff",          description:"Day-to-day entry — pay rates hidden" },
+];
+
+// Who may see pay rates and loaded labor cost.
+export const canSeeRates = (role) => role === "superintendent" || role === "office_manager";
+
 // ── Global State ──────────────────────────────────────────────────────────────
 const initialState = {
   // ── Fund Accounting ──────────────────────────────────────────────────────
@@ -638,9 +650,9 @@ export default function App() {
           <div style={{ display:"flex", alignItems:"center", gap:12 }}>
             <div style={{ fontSize:12, opacity:0.5 }}>Roads Fund · {FISCAL_YEAR.start} – {FISCAL_YEAR.end}</div>
             <div style={{ display:"flex", background:"rgba(255,255,255,0.1)", borderRadius:6, padding:2 }}>
-              {["superintendent","staff"].map(r => (
-                <button key={r} onClick={() => setRole(r)} style={{ padding:"4px 10px", fontSize:11, fontWeight:600, border:"none", borderRadius:4, cursor:"pointer", background:role===r?"#fff":"transparent", color:role===r?"#1a3a5c":"rgba(255,255,255,0.6)", textTransform:"capitalize" }}>
-                  {r === "superintendent" ? "Superintendent" : "Staff"}
+              {ROLES.map(r => (
+                <button key={r.id} onClick={() => setRole(r.id)} title={r.description} style={{ padding:"4px 10px", fontSize:11, fontWeight:600, border:"none", borderRadius:4, cursor:"pointer", background:role===r.id?"#fff":"transparent", color:role===r.id?"#1a3a5c":"rgba(255,255,255,0.6)", whiteSpace:"nowrap" }}>
+                  {r.label}
                 </button>
               ))}
             </div>

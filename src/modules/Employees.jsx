@@ -65,9 +65,7 @@ export default function Employees({ db, dispatch, role = "staff" }) {
   const [showForm, setShowForm] = useState(false);
 
   // Rates are visible to the Superintendent and Office Manager only (Q33).
-  // The app currently has superintendent | staff; Office Manager needs to become
-  // a role of its own. Until then, staff don't see money.
-  const canSeeRates = role === "superintendent";
+  const canSeeRates = role === "superintendent" || role === "office_manager";
 
   const employees = db.employees || [];
   const payScales = db.payScales || [];
@@ -160,7 +158,7 @@ function EmployeeList({ employees, payScales, canSeeRates, onSelect, onNew }) {
         <div>
           <div style={{ fontSize:18, fontWeight:700 }}>Employees</div>
           <div style={{ fontSize:13, color:"#888", marginTop:3 }}>
-            Rates and benefit loading for costing labour. Payroll itself is run by the Clerk's office.
+            Rates and benefit loading for costing labor. Payroll itself is run by the Clerk's office.
           </div>
         </div>
         <div style={{ display:"flex", gap:8, alignItems:"center" }}>
@@ -200,7 +198,7 @@ function EmployeeList({ employees, payScales, canSeeRates, onSelect, onNew }) {
 
       {employees.length === 0 && (
         <div style={{ background:"#f0f4ff", border:"1px solid #c8d8f0", borderRadius:8, padding:20, marginBottom:16, fontSize:13, color:"#1a3a5c", lineHeight:1.6 }}>
-          <strong>No employees yet.</strong> Cost Accounting can't record labour until people exist here.
+          <strong>No employees yet.</strong> Cost Accounting can't record labor until people exist here.
           {canSeeRates && <> Set up the <strong>Pay Scales</strong> first — rates come from the classification, so a scale has to exist before someone can be costed.</>}
         </div>
       )}
@@ -310,7 +308,7 @@ function EmployeeDetail({ employee: e, db, canSeeRates, dispatch, onBack, onEdit
       {canSeeRates && rate.hourlyRate === 0 && (
         <div style={{ background:"#fdecea", border:"1px solid #f5c6c6", borderRadius:8, padding:"11px 16px", marginBottom:16, fontSize:12, color:"#8c1b18" }}>
           <strong>No rate resolves for today.</strong> Either no classification is assigned, or no pay scale
-          exists for {rate.classification||"their classification"} on or before today. Labour can't be costed until one does.
+          exists for {rate.classification||"their classification"} on or before today. Labor can't be costed until one does.
         </div>
       )}
 
@@ -381,7 +379,7 @@ function RateTab({ employee: e, payScales, db, dispatch }) {
   return (
     <div>
       <div style={{ background:"#f0f4ff", border:"1px solid #c8d8f0", borderRadius:8, padding:"11px 15px", marginBottom:18, fontSize:12, color:"#1a3a5c", lineHeight:1.5 }}>
-        Rates and fringe are dated. A labour entry uses whatever applied <strong>on its own date</strong>,
+        Rates and fringe are dated. A labor entry uses whatever applied <strong>on its own date</strong>,
         not today's figures — so past costs stay correct after a raise.
       </div>
 
@@ -445,7 +443,7 @@ function RateTab({ employee: e, payScales, db, dispatch }) {
               <span style={{ fontWeight:600 }}>{a.classification||"—"}</span>,
               <span style={{ fontFamily:"monospace", color:a.rateOverride?"#d97706":"#ccc" }}>{a.rateOverride?fmtSm(a.rateOverride):"—"}</span>,
             ])}
-            emptyMessage="No classification assigned — labour can't be costed"
+            emptyMessage="No classification assigned — labor can't be costed"
           />
         </SectionCard>
 
@@ -689,7 +687,7 @@ function PayScales({ db, dispatch }) {
             <span style={{ fontSize:12, color:"#888" }}>{s.approvedBy||"—"}</span>,
             <span style={{ fontSize:12, color:"#888" }}>{s.notes||"—"}</span>,
           ])}
-          emptyMessage="No pay scales yet — labour can't be costed until at least one exists"
+          emptyMessage="No pay scales yet — labor can't be costed until at least one exists"
         />
       </SectionCard>
     </div>
@@ -791,7 +789,7 @@ function EmployeeForm({ employee, db, canSeeRates, onSave, onCancel }) {
             </div>
             {(form.assignments||[]).length===0 && (
               <div style={{ fontSize:12, color:"#c0392b", padding:"6px 0" }}>
-                None yet — labour can't be costed without at least one classification.
+                None yet — labor can't be costed without at least one classification.
               </div>
             )}
             {(form.assignments||[]).map(a=>(

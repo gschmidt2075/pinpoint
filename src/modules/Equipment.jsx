@@ -470,7 +470,7 @@ function UnitOverview({ unit: u, workOrders, dispensing }) {
   return (
     <div>
       {/* What it costs to run — feeds replacement decisions */}
-      <SectionCard title="Operating Cost" subtitle="Fuel, parts, labour and outside repairs. Excludes depreciation." style={{ marginBottom:20 }}>
+      <SectionCard title="Operating Cost" subtitle="Fuel, parts, labor and outside repairs. Excludes depreciation." style={{ marginBottom:20 }}>
         <div style={{ padding:16 }}>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:16 }}>
             <div style={{ background:"#fafaf8", border:"1px solid #eee", borderRadius:6, padding:13 }}>
@@ -505,14 +505,14 @@ function UnitOverview({ unit: u, workOrders, dispensing }) {
           {cost.total > 0 && (
             <>
               <div style={{ display:"flex", height:9, borderRadius:99, overflow:"hidden", marginBottom:9 }}>
-                {[["Fuel",cost.fuelCost,"#1a5a3a"],["Parts",cost.parts,"#5a1a8a"],["Labour",cost.labor,"#1a3a5c"],["Outside",cost.outside,"#d97706"]]
+                {[["Fuel",cost.fuelCost,"#1a5a3a"],["Parts",cost.parts,"#5a1a8a"],["Labor",cost.labor,"#1a3a5c"],["Outside",cost.outside,"#d97706"]]
                   .filter(([,v])=>v>0)
                   .map(([k,v,c])=>(
                     <div key={k} title={`${k} — ${fmtSm(v)}`} style={{ width:`${(v/cost.total)*100}%`, background:c }} />
                   ))}
               </div>
               <div style={{ display:"flex", gap:16, flexWrap:"wrap", fontSize:11 }}>
-                {[["Fuel",cost.fuelCost,"#1a5a3a"],["Parts",cost.parts,"#5a1a8a"],["Labour",cost.labor,"#1a3a5c"],["Outside Repairs",cost.outside,"#d97706"]].map(([k,v,c])=>(
+                {[["Fuel",cost.fuelCost,"#1a5a3a"],["Parts",cost.parts,"#5a1a8a"],["Labor",cost.labor,"#1a3a5c"],["Outside Repairs",cost.outside,"#d97706"]].map(([k,v,c])=>(
                   <span key={k} style={{ display:"inline-flex", alignItems:"center", gap:5, color:"#666" }}>
                     <span style={{ width:9, height:9, borderRadius:2, background:c, display:"inline-block" }} />
                     {k} <strong style={{ fontFamily:"monospace", color:"#1a1a1a" }}>{fmtSm(v)}</strong>
@@ -893,7 +893,7 @@ function ReconciliationPanel({ tanks, tankTx }) {
 
 // ── Operating cost ────────────────────────────────────────────────────────────
 // What it costs to run a machine: fuel, parts, oils, shop supplies, all repairs,
-// in-house and outside labour. Deliberately excludes depreciation (confirmed
+// in-house and outside labor. Deliberately excludes depreciation (confirmed
 // 2026-07-27) — this is cash out the door, not book value.
 //
 // Meters only ever move forward, so cost per hour/mile is measured across the

@@ -203,7 +203,7 @@ All 37 answered, signed CB. **The scope answer cuts this module roughly in half.
 
 **So: no gross-to-net, no withholding, no direct deposit, and no feeding hours
 out to anyone.** Pinpoint needs employees, their rates and their benefit loading,
-so labour can be costed to work. That's it.
+so labor can be costed to work. That's it.
 
 ### Time entry
 
@@ -213,7 +213,7 @@ so labour can be costed to work. That's it.
 | 7 | **Every hour should be charged** — *"proving the need for the staff and all that they do"* |
 | 8 | See the activity list below |
 | 9 | **Yes** — one person's day splits across several jobs |
-| 10 | **Equipment is recorded with labour:** *"If 1 person works 8 hours with 2 hours 434 then 6 hours in 241."* |
+| 10 | **Equipment is recorded with labor:** *"If 1 person works 8 hours with 2 hours 434 then 6 hours in 241."* |
 | 11 | Must show **each person, what equipment they used, and for how long** |
 | 12 | Snow may need separate treatment **if FEMA-declared** |
 | 13 | **Total hours**, not start/stop times |
@@ -273,12 +273,12 @@ so labour can be costed to work. That's it.
 
 **The module is much smaller than the form implied.** No payroll processing, no
 export to the Clerk. Employees, classifications, rates, fringe — enough to cost
-labour. That's a fraction of what a payroll module usually carries.
+labor. That's a fraction of what a payroll module usually carries.
 
 **Four things are structurally new:**
 
 1. **Rate history is required** (Q19). A rate isn't a number on an employee — it's
-   a dated series, and a labour entry resolves the rate in force on its date.
+   a dated series, and a labor entry resolves the rate in force on its date.
    Cost Accounting Q8 asks the same thing about equipment rates; answer both the
    same way.
 
@@ -286,13 +286,15 @@ labour. That's a fraction of what a payroll module usually carries.
    classification, with the employee pointing at one. Fringe, by contrast,
    **is** per person (Q20).
 
-3. **Activities are a costing target alongside projects** (Q7, Q8). Every hour
-   should land somewhere, and most work has no project number. That list is
-   effectively a chart of work types and belongs in `db.lookups`.
+3. **Activities are handled by Miscellaneous projects** (Q7, Q8). Every hour
+   should land somewhere, and most work has no project number — Greg confirmed
+   2026-07-27 that misc projects cover this rather than a separate activity
+   concept. The 28-item list is seeded as `miscProjectTypes` so naming stays
+   consistent when creating them.
 
-4. **Labour and equipment are one entry, not two** (Q10). Eight hours of a
+4. **Labor and equipment are one entry, not two** (Q10). Eight hours of a
    person's day, with two hours on unit 434 and six on 241. Cost Accounting
-   currently keeps labour and equipment entries separate, which can't express
+   currently keeps labor and equipment entries separate, which can't express
    "these six hours are the same six hours."
 
 **Sensitive data is explicitly out** (Q32) — no SSN, home address or date of
@@ -354,7 +356,7 @@ Incidentally `Q20.1` confirms the culvert numbering convention from Infrastructu
 Q19 — township code `Q`, section `20`, order `.1` — matching the `A 2.2` and
 `D 27.3C` examples.
 
-**This confirms Q10 exactly — labour and equipment are ONE record.** Seybold's
+**This confirms Q10 exactly — labor and equipment are ONE record.** Seybold's
 3 hours at $48.29 is $144.87; unit 327 for 2 of those hours at $56.81 is $113.62;
 the record totals $258.49. Equipment hours are a subset of the person's hours.
 
@@ -391,7 +393,7 @@ Ace Irrigation.
 
 `Number of Detail Cost Records: 73` · `Available Balance: 34,971.38`
 
-Labour + material + equipment reconciles exactly to the total.
+Labor + material + equipment reconciles exactly to the total.
 
 ---
 
@@ -401,7 +403,7 @@ Labour + material + equipment reconciles exactly to the total.
 misreading. No task code system is needed, and no per-record location: the
 project's linked assets already carry both.)*
 
-1. **Labour and equipment as one record.** Cost Accounting keeps
+1. **Labor and equipment as one record.** Cost Accounting keeps
    `laborEntries` and `equipmentEntries` separate and cannot express "these two
    hours are within those eight." **This needs restructuring** — it's the
    biggest remaining change.
@@ -927,7 +929,7 @@ numbering systems are the same system.
 | 20 | Approval sought for scheduling, high repair cost, or if the unit is due for replacement |
 | 21 | Repair, PM and accident damage are distinguished |
 | 22 | Out-of-service time tracked occasionally |
-| 23 | **Our own outside shops** → recorded like any work in cost accounting. **Another company** → recorded as outside labour in fund accounting |
+| 23 | **Our own outside shops** → recorded like any work in cost accounting. **Another company** → recorded as outside labor in fund accounting |
 | 24 | Warranty work only tracked via work orders from outside companies, scanned into the equipment file |
 | 25 | *"If we are going to use work orders, yes. **If we aren't going to use work orders, the cost and fund accounting entries will need to have a way to link all entries to a project and/or an equipment number and/or an inventory number**"* |
 | 26 | Parts entered in cost accounting, then removed from inventory |
@@ -965,7 +967,7 @@ numbering systems are the same system.
 | # | Answer |
 |---|---|
 | 42 | Yes — cost per hour and per mile |
-| 43 | Fuel, parts, oils, shop supplies, all repairs, in-house and outside labour. **Depreciation uncertain** |
+| 43 | Fuel, parts, oils, shop supplies, all repairs, in-house and outside labor. **Depreciation uncertain** |
 | 44 | No replacement schedule at present |
 | 45 | Age, reliability, repair costs |
 | 46 | **History stays in the system forever** — useful because they own multiples of the same unit |
@@ -1069,15 +1071,15 @@ off-road tax total.
 ### Operating cost & tank reconciliation — built 2026-07-27
 
 **Cost per hour / per mile** sits on each unit's Overview tab. Adds fuel, parts,
-in-house labour and outside repairs; **excludes depreciation** as instructed. The
+in-house labor and outside repairs; **excludes depreciation** as instructed. The
 denominator is the metered span actually on record — earliest fuelling reading to
 current lifetime meter — so it doesn't invent a rate from a single reading. A
 stacked bar shows where the money went, which is what makes a repair-versus-
 replace conversation concrete.
 
-Verified: unit 241 with $655.61 fuel, $2,132.55 parts, $960 labour and $2,100
+Verified: unit 241 with $655.61 fuel, $2,132.55 parts, $960 labor and $2,100
 outside over a 300-hour span reports **$19.49/hr**, split fuel 11% · parts 36% ·
-labour 16% · outside 36%.
+labor 16% · outside 36%.
 
 **Tank reconciliation** distinguishes the two cadences. Monitored Main shop tanks
 are balanced against the logs **daily**; everything else is dipped **annually**.
@@ -1137,7 +1139,7 @@ sections).
 Sections: What gets costed · Rates · Township & outside billing · FEMA claims ·
 Reporting
 
-Currently unusable in practice — labour can't be entered because employees don't
+Currently unusable in practice — labor can't be entered because employees don't
 exist yet. These questions cover everything beyond that gap.
 
 **Load-bearing questions:**
@@ -1145,7 +1147,7 @@ exist yet. These questions cover everything beyond that gap.
 - **Q8** — should old cost entries keep the rate that applied at entry time?
   *(Same rate-history decision as payroll. Answer both the same way.)*
 - **Q15** — the full FEMA claim walkthrough. Highest-value answer on the form.
-- **Q18** — is the 15.7% labour overhead still current, and where does it come
+- **Q18** — is the 15.7% labor overhead still current, and where does it come
   from? It's hardcoded as `FEMA_OVH = 1.157` in two modules.
 
 ---

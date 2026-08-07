@@ -990,7 +990,7 @@ export const createInsuranceCert = (overrides = {}) => ({
 //
 // SCOPE (confirmed 2026-07-27): this is NOT payroll. The Clerk's office runs
 // gross-to-net, withholding and direct deposit. Pinpoint holds employees, their
-// rates and their benefit loading for one purpose — costing labour to work.
+// rates and their benefit loading for one purpose — costing labor to work.
 //
 // DELIBERATELY NOT STORED: social security number, home address, date of birth.
 // Asked for and declined. Don't add them.
@@ -1248,8 +1248,8 @@ export const LOOKUP_DEFS = [
   { key:"certificationTypes", label:"Certification Types", module:"Employees",
     hint:"Warned 90 days before expiry",
     values:["CDL","DOT Medical Card","Bridge Inspector Licence","Superintendent Licence","Pesticide Applicator","CPR","Flagger","First Aid","Specialised Training"] },
-  { key:"activities", label:"Work Activities", module:"Cost Accounting",
-    hint:"Work with no project number — every hour still gets charged",
+  { key:"miscProjectTypes", label:"Miscellaneous Project Types", module:"Projects",
+    hint:"General work — snow, mowing, cemeteries. Every hour still gets charged",
     values:["Snow Removal","Mowing","Grading","Equipment Maintenance","Bridge Inspections","Building Repair","Cemeteries","Culverts — Cut","Culverts — Jack","Culverts — Inspection","Driveway Installations","Gravel Deliveries","Illegal Dumping","Paint Striping","Patching","General Road Maintenance","Seeding","Shouldering","Sign Maintenance","Snow Fence","Weed Spraying","Sylvex Patching","Trees — Cutting","Trees — Stacking","Trees — Burning","Village Work","Shop Time","Training"] },
   { key:"fuelDepartments", label:"Fuel — Other Departments", module:"Equipment",
     hint:"County departments billed for fuel",

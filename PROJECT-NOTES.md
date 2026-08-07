@@ -36,7 +36,7 @@ It replaces a mix of aging software, spreadsheets, and paper across:
 | Infrastructure | `Infrastructure.jsx` | Built and overhauled. Barrels, 0–5 ratings, road history, bridge postings |
 | Projects | `Projects.jsx` | Built. Form still out with staff |
 | Settings | `Settings.jsx` | Built. **Dropdown Lists screen added** — lists now live in `db.lookups` |
-| Employees | `Employees.jsx` | **Built 2026-07-27.** Rate history, per-person fringe, certifications, pay scales. Labour costing only — not payroll |
+| Employees | `Employees.jsx` | **Built 2026-07-27.** Rate history, per-person fringe, certifications, pay scales. Labor costing only — not payroll |
 | Vendors | `Vendors.jsx` | **Built 2026-07-27.** Payees, remit-to, insurance, bonding, contract rates, supplied items |
 
 **The two gaps matter more than they look.** `db.employees` and `db.vendors` are
@@ -183,7 +183,7 @@ adopt them anyway, on the condition that parts behave like every other inventory
 movement: anything bought is received into inventory first, then issued out.
 
 **Depreciation is excluded from operating cost.** Cost per hour is cash out the
-door — fuel, parts, labour, outside repairs — not book value.
+door — fuel, parts, labor, outside repairs — not book value.
 
 **Meters can be replaced.** Lifetime meter is `meterOffset + currentMeter`. Code
 that assumes a meter only ever climbs will break the first time one is swapped.
@@ -193,8 +193,16 @@ commodity group codes — group `228` is the 2003 140H CAT.
 
 **Employees is not payroll.** The Clerk's office runs gross-to-net, withholding
 and direct deposit. Pinpoint holds rates and benefit loading for one purpose:
-costing labour to work. SSN, home address and date of birth are deliberately
+costing labor to work. SSN, home address and date of birth are deliberately
 absent — asked for and declined. Don't add them.
+
+**Three roles:** Superintendent, Office Manager, Staff. Pay rates and loaded
+labor cost are visible to the first two; staff see everything else. `canSeeRates`
+in `App.jsx` is the single check.
+
+**General work goes on Miscellaneous projects**, not a separate "activity"
+concept. Snow removal, mowing, cemeteries, village work — each is a misc project.
+`miscProjectTypes` in lookups keeps the naming consistent.
 
 **Rates are dated series, not numbers.** A pay scale belongs to a classification
 and takes effect from a date; an employee's classification is itself a dated
