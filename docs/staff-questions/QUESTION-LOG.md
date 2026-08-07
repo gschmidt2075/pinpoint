@@ -14,7 +14,7 @@ the answers, records them below, and builds against them.
 | Module | Form | Questions | Status |
 |---|---|---|---|
 | Payroll & Employees | `Payroll-Questions.docx` | 37 | **Awaiting answers** |
-| Vendors | `Vendor-Questions.docx` | 28 | **Awaiting answers** |
+| Vendors | `Vendor-Questions.docx` | 28 | ✅ **Answered** — ⚠ 12-vs-15 conflict |
 | Settings & Administration | `Settings-Questions.docx` | 38 | **Awaiting answers** |
 | Infrastructure | `Infrastructure-Questions.docx` | 38 | ✅ **Answered** — 2 follow-ups open |
 | Equipment & Fleet | `Equipment-Questions.docx` | 47 | ✅ **Answered** — 4 follow-ups, 1 major |
@@ -25,7 +25,7 @@ the answers, records them below, and builds against them.
 | Fund Accounting — everything else | `FundAccounting-Questions.docx` | 46 | **Awaiting answers** |
 | Inventory | *(answered in chat)* | — | ✅ Complete |
 
-**236 questions outstanding across 6 forms.** Do not hand these out all at once —
+**208 questions outstanding across 5 forms.** Do not hand these out all at once —
 that's a good way to get nothing back. Give staff the one form matching whatever
 they're testing that week.
 
@@ -162,7 +162,12 @@ Example balances at 597.54 both ways.
 
 #### Claim size limit — resolved 2026-07-26
 
-**One rule only: a maximum of 15 invoices per claim, per vendor.** Beyond that it
+**⚠ DISPUTED — 12 or 15?** Greg said 15 on 2026-07-26; the Office Manager wrote
+"Claims are limited to 12 invoices" on the Vendor form 2026-07-27. She assembles
+the sheets, so her number is likely operative. **Resolve before building the
+split.**
+
+**One rule only: a maximum of N invoices per claim, per vendor.** Beyond that it
 becomes a *separate claim*, not a continuation page.
 
 Both earlier worries turned out not to apply:
@@ -202,9 +207,115 @@ Sections: Scope · Time entry · Rates & overtime · Employee records · Reporti
 
 ---
 
-## Vendors
+## Vendors — ✅ ANSWERED 2026-07-27
 
-Form issued 2026-07-25 → `Vendor-Questions.docx` (28 questions, 6 sections).
+All 28 answered. **⚠ The free-text note contradicts the claim size limit Greg
+gave — see the conflict below.**
+
+### The basics
+
+| # | Answer |
+|---|---|
+| 1 | **134–157 vendors used per year.** 424 exist in Road & Bridge overall, **including employees for payroll** |
+| 2 | **Start clean — do not import.** R&B holds a lot of vendors no longer around or used |
+| 3 | Office Manager maintains it, but **the Parts Manager also adds vendors** when she has the invoice before the account is set up |
+| 4 | Suppliers, contractors, engineering firms, utilities — **and employees for payroll. "Anyone we send money."** |
+
+### Claim form fields
+
+| # | Answer |
+|---|---|
+| 5 | **The Vendor Code box belongs to the Clerk's office.** Pinpoint shouldn't fill it. **A claim # comes back after processing and should be recorded** |
+| 6 | **Yes** — remit address should auto-fill |
+| 7 | **Yes** — some vendors have a payment address different from their main address |
+| 8 | No contact name or phone needed on the claim sheet |
+
+### Payment & compliance
+
+| # | Answer |
+|---|---|
+| 9 | No payment terms tracked |
+| 10 | 1099s — **Clerk's office does that** |
+| 11 | W-9s — **Clerk's office duty** |
+| 12 | SAM.gov / debarment — **"Not yet"** (may come with federal work) |
+| 13 | **Sales tax exemption certificates go the other way** — the county *sends* them to vendors on request, rather than collecting them |
+
+### Contractors & insurance
+
+| # | Answer |
+|---|---|
+| 14 | **Yes** — certificates required before work |
+| 15 | **General liability only** |
+| 16 | **No expiry warning wanted** |
+| 17 | **Yes** — bonding tracked on larger projects |
+| 18 | No prequalified/approved status |
+
+### Rates & purchasing
+
+| # | Answer |
+|---|---|
+| 19 | **Yes** — contract rates belong on the vendor record |
+| 20 | Set by **bid**, mostly |
+| 21 | Rates change **"sometimes"** — *the rate-history half of this question wasn't answered* |
+| 22 | POs — "yes and no… not a deal breaker." Low priority |
+| 23 | Quotes tracked **only for large purchases** |
+| 24 | **Yes** — some vendors are on state contract or a co-op |
+
+### Relationships & housekeeping
+
+| # | Answer |
+|---|---|
+| 25 | **Yes** — link vendors to inventory items, and **one product may have several vendors** (filters, oil, parts). Many-to-many |
+| 26 | One contact per vendor is enough |
+| 27 | Conflict of interest overlap — **"possibly"** |
+| 28 | **Yes** — hide unused vendors but keep them for history |
+
+### Free-text note
+
+> "Report that lists the vendor, GL Codes in a set date range.
+> **Claims are limited to 12 invoices.**"
+
+---
+
+### ⚠ CONFLICT — 12 or 15 invoices per claim?
+
+- **Greg, 2026-07-26:** *"there is a maximum of 15 invoices per claim from one vendor"*
+- **Office Manager, 2026-07-27:** *"Claims are limited to 12 invoices"*
+
+The auto-split logic depends on this number. **Unresolved — do not build the
+split until it's settled.** The office manager assembles the sheets, so her
+number is probably the operative one, but Greg should confirm rather than us
+guessing.
+
+### What this changes
+
+**Simplifications:**
+
+- **No vendor import.** Starting clean removes the crosswalk work entirely.
+- **No 1099, W-9 or expiry-warning tracking** — all Clerk's office, or not wanted.
+- **General liability only**, not the full GL/auto/workers-comp matrix.
+
+**New or corrected:**
+
+- **Employees are vendors.** "Anyone we send money." This ties the Vendors and
+  Payroll modules together — needs a decision on whether an employee record
+  doubles as a vendor or the two are separate records.
+- **Vendor Code is not ours to fill.** But a **claim number comes back from the
+  Clerk after processing** and needs somewhere to live — that's new.
+- **Separate remit-to address** required, distinct from the main address.
+- **Sales tax exemption runs outward** — the county issues certificates to
+  vendors, rather than collecting them.
+- **Vendors ↔ inventory items is many-to-many.** Several vendors can supply the
+  same filter.
+- **Bonding** tracked on larger projects.
+- **New report wanted:** vendor and GL codes across a date range.
+
+### Follow-ups
+
+1. **12 or 15 invoices per claim?** Blocks the claim split logic.
+2. **Q21** — when a contract rate changes, should scale tickets already written
+   keep the old rate? (Same rate-history question as payroll.)
+3. **Employees as vendors** — one record serving both, or two linked records?
 
 **Why this blocks things:** `db.vendors` has no management UI, so the vendor
 dropdown on the expenditure form is permanently empty. Also feeds claim sheets,
