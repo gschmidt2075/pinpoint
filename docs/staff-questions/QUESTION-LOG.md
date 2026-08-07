@@ -16,7 +16,7 @@ the answers, records them below, and builds against them.
 | Payroll & Employees | `Payroll-Questions.docx` | 37 | **Awaiting answers** |
 | Vendors | `Vendor-Questions.docx` | 28 | **Awaiting answers** |
 | Settings & Administration | `Settings-Questions.docx` | 38 | **Awaiting answers** |
-| Infrastructure | `Infrastructure-Questions.docx` | 38 | **Awaiting answers** |
+| Infrastructure | `Infrastructure-Questions.docx` | 38 | ✅ **Answered** — 5 follow-ups |
 | Equipment & Fleet | `Equipment-Questions.docx` | 47 | **Awaiting answers** |
 | Projects | `Projects-Questions.docx` | 36 | **Awaiting answers** |
 | Cost Accounting | `CostAccounting-Questions.docx` | 24 | **Awaiting answers** |
@@ -25,7 +25,7 @@ the answers, records them below, and builds against them.
 | Fund Accounting — everything else | `FundAccounting-Questions.docx` | 46 | **Awaiting answers** |
 | Inventory | *(answered in chat)* | — | ✅ Complete |
 
-**321 questions outstanding across 8 forms.** Do not hand these out all at once —
+**283 questions outstanding across 7 forms.** Do not hand these out all at once —
 that's a good way to get nothing back. Give staff the one form matching whatever
 they're testing that week.
 
@@ -300,26 +300,129 @@ Printed documents · Users, roles & approvals · Defaults · Continuity
 
 ---
 
-## Infrastructure
+## Infrastructure — ✅ ANSWERED 2026-07-26
 
-Form issued 2026-07-26 → `Infrastructure-Questions.docx` (38 questions, 5
-sections).
+37 of 38 answered. Full answers below, then what changes.
+
+### Roads
+
+| # | Question | Answer |
+|---|---|---|
+| 1 | Miles and division | **1,000 miles, one record per segment between intersections** |
+| 2 | Segment identification | **Grid address assigned at each intersection** |
+| 3 | Surface types | Concrete, bituminous, gravel, dirt |
+| 4 | Condition rating | **No** — roads are not rated |
+| 5 | Inspection frequency | Varies |
+| 6 | Last graveled / bladed / sealed | **Yes — track this** |
+| 7 | Mileage by surface type | Not required for reporting, but would be helpful |
+| 8 | State reports | Filed when seeking funding reimbursement; forms and reports vary |
+
+### Bridges
+
+| # | Question | Answer |
+|---|---|---|
+| 9 | Who inspects | County staff |
+| 10 | How results arrive | Greg pulls them from the **state database** |
+| 11 | Enter or reference? | **Reference only** — don't re-enter inspection detail |
+| 12 | What triggers action | A rating of **3 or 4** |
+| 13 | Load postings / weight limits | Yes |
+| 14 | State + county number | Both needed |
+| 15 | Bridge reporting | All through the state database — **not needed here** |
+| 16 | Scour / fracture-critical | Yes |
+| 17 | Priority list | No |
+
+### Culverts & structures
+
+| # | Question | Answer |
+|---|---|---|
+| 18 | Bridge vs structure vs culvert | **NBIS-reportable → bridge. Under 20 ft but 48 in or larger → structure. Under 48 in → culvert.** |
+| 19 | Numbering | **Township code + section number + order.** Assigned by the bridge foreman or the Highway Superintendent |
+| 20 | Inspection cycle | **Every 4 years** |
+| 21 | Condition scale | **0–5** |
+| 22 | Details that matter | Material, shape, size, length, **number of barrels**, install date, road it's under |
+| 23 | Township | Recorded, but **the township system was eliminated** — names are reference only and don't affect who pays. Noted as potentially useful if sold to a county that still has townships |
+| 24 | Priority list | No — but **culverts rated 0 take priority** |
+
+### Signs
+
+| # | Question | Answer |
+|---|---|---|
+| 25 | How many | ~**3,500** |
+| 26 | Retroreflectivity method | **Inspection** |
+| 27 | Sheeting type + install date | Yes |
+| 28 | How replacement is known | From inspections |
+| 29 | HSIP reporting | GPS, cross road or approaching road, sometimes intersection |
+| 30 | FHWA/state sign inventory | No |
+| 31 | Posts vs faces | **Tracked separately** |
+| 32 | Knocked-down sign | It gets put back up, then a **sign report** is made |
+
+### Across all assets
+
+| # | Question | Answer |
+|---|---|---|
+| 33 | GIS in use | **AppSheet GIS, Google Earth** |
+| 34 | GPS coordinates | **Yes** |
+| 35 | Photos on assets | **Yes** |
+| 36 | Asset reports today | None — but wants cost reporting **to show the Board what things actually cost** |
+| 37 | Lifetime cost per asset | **Yes** |
+| 38 | Missing asset types | *(blank)* |
+
+### Free-text note
+
+> "At some structure and culvert sites there are multiple barrels that sometimes
+> have different shapes, sizes and material."
+
+**This is a data-shape change.** A structure isn't one pipe — it's a site with one
+or more barrels, each with its own shape, size and material. Current schema holds
+a single shape/size/material on the structure record.
+
+---
+
+### What changes
+
+**Simplifications — less to build than assumed:**
+
+- **Roads aren't rated.** Drop condition rating from roads entirely.
+- **Bridge inspections are reference-only.** No NBIS data entry, no inspection
+  forms, no state reporting from Pinpoint. Store identifiers, load posting, and a
+  current rating pulled across; the state database stays the system of record.
+
+**Corrections to what's built:**
+
+- **Structure condition scale is 0–5, not 1–5.** Currently coded as 1–5 with
+  1 = Critical. Needs 0 added, and 0 is the highest-priority state.
+- **Road segments are identified by grid address**, not name/number. Needs
+  confirming what the format looks like.
+
+**New, not yet built:**
+
+- **Barrels as sub-records** on a structure — shape, size, material, each
+  independent
+- **GPS coordinates** on every asset type
+- **Photo attachments** on assets
+- **Road surface history** — last graveled, bladed, sealed
+- **Sign posts as separate records** from sign faces
+- **Sign reports** — the artifact produced after a knock-down
+- **Bridge extras** — load posting, weight limit, scour, fracture-critical flags
+- **Mileage by surface type** — useful, not required
+- **Lifetime cost per asset**, surfaced for the Board
+
+### Follow-up questions
+
+1. **What does a grid address look like?** An example or two would settle the
+   field format.
+2. **On the 0–5 scale, what does each number mean?** Specifically, is 0 "failed"
+   and 5 "excellent"? Q24 says 0 takes priority, which implies 0 is worst.
+3. **Sign posts and faces** — is it one post with several signs on it? Should a
+   face record point at a post record?
+4. **What is a "sign report"?** Who receives it, what's on it? If there's a sample
+   that would help.
+5. **Barrels** — is there a practical maximum, and do they get numbered
+   individually within a site?
 
 **Why it matters:** the module was built on assumptions rather than on how the
 department actually works — the same problem inventory had. Much of this is also
 driven by state and federal reporting that we shouldn't guess at.
-
-Sections: Roads · Bridges · Culverts & structures · Signs · Across all assets
-
-**Load-bearing questions:**
-
-- **Q1** — one record per road, or per segment? Changes the whole road data shape.
-- **Q11** — are NBIS inspection results entered here or just referenced?
-  *(Entering means duplicate work; referencing means less detail available.)*
-- **Q22** — which MUTCD retroreflectivity method is used? Determines what has to
-  be tracked to stay compliant.
-- **Q32** — should assets store GPS coordinates? Needed for the future field app;
-  cheap to add now, tedious to backfill later.
 
 ---
 
