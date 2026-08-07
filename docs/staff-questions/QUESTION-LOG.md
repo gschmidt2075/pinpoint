@@ -21,10 +21,11 @@ the answers, records them below, and builds against them.
 | Projects | `Projects-Questions.docx` | 36 | **Awaiting answers** |
 | Cost Accounting | `CostAccounting-Questions.docx` | 24 | **Awaiting answers** |
 | Reports & Printed Documents | `Reports-Questions.docx` | 27 | **Awaiting answers** |
-| Fund Accounting — claim flow | *(asked in chat)* | 4 | **Awaiting answers** |
+| Fund Accounting — claim flow | *(answered in chat)* | 4 | ✅ Complete |
+| Fund Accounting — everything else | `FundAccounting-Questions.docx` | 46 | **Awaiting answers** |
 | Inventory | *(answered in chat)* | — | ✅ Complete |
 
-**275 questions outstanding across 7 forms.** Do not hand these out all at once —
+**321 questions outstanding across 8 forms.** Do not hand these out all at once —
 that's a good way to get nothing back. Give staff the one form matching whatever
 they're testing that week.
 
