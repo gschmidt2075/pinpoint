@@ -17,7 +17,7 @@ the answers, records them below, and builds against them.
 | Vendors | `Vendor-Questions.docx` | 28 | **Awaiting answers** |
 | Settings & Administration | `Settings-Questions.docx` | 38 | **Awaiting answers** |
 | Infrastructure | `Infrastructure-Questions.docx` | 38 | ✅ **Answered** — 2 follow-ups open |
-| Equipment & Fleet | `Equipment-Questions.docx` | 47 | **Awaiting answers** |
+| Equipment & Fleet | `Equipment-Questions.docx` | 47 | ✅ **Answered** — 4 follow-ups, 1 major |
 | Projects | `Projects-Questions.docx` | 36 | **Awaiting answers** |
 | Cost Accounting | `CostAccounting-Questions.docx` | 24 | **Awaiting answers** |
 | Reports & Printed Documents | `Reports-Questions.docx` | 27 | **Awaiting answers** |
@@ -25,7 +25,7 @@ the answers, records them below, and builds against them.
 | Fund Accounting — everything else | `FundAccounting-Questions.docx` | 46 | **Awaiting answers** |
 | Inventory | *(answered in chat)* | — | ✅ Complete |
 
-**283 questions outstanding across 7 forms.** Do not hand these out all at once —
+**236 questions outstanding across 6 forms.** Do not hand these out all at once —
 that's a good way to get nothing back. Give staff the one form matching whatever
 they're testing that week.
 
@@ -493,9 +493,139 @@ driven by state and federal reporting that we shouldn't guess at.
 
 ---
 
-## Equipment & Fleet
+## Equipment & Fleet — ✅ ANSWERED 2026-07-27
 
-Form issued 2026-07-26 → `Equipment-Questions.docx` (47 questions, 7 sections).
+All 47 answered. **One answer invalidates a subsystem that's already built — see
+"They don't use work orders" below.**
+
+### The fleet
+
+| # | Answer |
+|---|---|
+| 1 | **87 units** |
+| 2 | Anything requiring regular maintenance, or that gets sold off, needs a record |
+| 3 | **Becky assigns numbers, by prefix:** `1##` loaders/tractors · `2##` graders · `3##` dump trucks, semis, semi trailers · `4##` pickups · `5##` Weed Department · `6##` implements · `7##` pickup trailers |
+| 4 | **Numbers are never reused** — otherwise you couldn't tell which machine was used historically. History follows the number |
+| 5 | VIN, serial, license plate |
+| 6 | Vendor, cost, fund. Warranty "would be nice". **Purchases are charged to projects and/or equipment numbers.** Old invoices get searched for part numbers when re-ordering — scanning invoices in "would be nice, not absolutely necessary" |
+| 7 | Equipment is based at a location but it's only noted in the detail record. Inventory locations, by contrast, must stay separate for usage tracking and year-end count |
+| 8 | Graders and some trucks have a regular operator |
+
+**Note:** the unit prefixes match the inventory commodity group codes exactly —
+group `228` is a 2003 140H CAT grader, `402` is a 1991 GMC pickup. The two
+numbering systems are the same system.
+
+### Meters & usage
+
+| # | Answer |
+|---|---|
+| 9 | **Off-road tracked by hours, on-road by miles.** Both watched closely for service intervals |
+| 10 | Becky records them. Read **every time equipment is fueled, serviced or repaired** |
+| 11 | **A replaced meter is noted with the broken one's final reading so a running lifetime total can still be worked out** |
+| 12 | Service intervals, operating cost, FEMA claims, replacement decisions |
+
+### Preventive maintenance
+
+| # | Answer |
+|---|---|
+| 13 | Hours or miles, occasionally calendar time for lightly-used equipment |
+| 14 | **On/off road trucks:** oil 5,000 mi · trans, hydraulic, fuel 40,000 mi. **On-road trucks (2):** oil 10,000 mi · trans, hydraulic, fuel 40,000 mi. **Off-road:** oil 250 hr · trans, fuel 500 hr · trans, fuel, hydraulic 1,000 hr. **Greasing** as needed, up to several times a day |
+| 15 | Meter readings determine it. Becky alerts so it can be scheduled |
+| 16 | Advance warning — *"Not really necessary?"* (uncertain, worth confirming) |
+| 17 | Yes — paperwork is filled out when a service is complete |
+| 18 | Performed as soon as it can be. No catching up, no reset |
+
+### Work orders — **they don't use them**
+
+| # | Answer |
+|---|---|
+| 19 | **"Becky processes the service paperwork … Not an actual 'work order'. All records are entered in cost accounting, or fund accounting."** |
+| 20 | Approval sought for scheduling, high repair cost, or if the unit is due for replacement |
+| 21 | Repair, PM and accident damage are distinguished |
+| 22 | Out-of-service time tracked occasionally |
+| 23 | **Our own outside shops** → recorded like any work in cost accounting. **Another company** → recorded as outside labour in fund accounting |
+| 24 | Warranty work only tracked via work orders from outside companies, scanned into the equipment file |
+| 25 | *"If we are going to use work orders, yes. **If we aren't going to use work orders, the cost and fund accounting entries will need to have a way to link all entries to a project and/or an equipment number and/or an inventory number**"* |
+| 26 | Parts entered in cost accounting, then removed from inventory |
+
+### Fuel & tanks
+
+| # | Answer |
+|---|---|
+| 27 | **8 tanks.** Kenesaw 1,500 gal diesel · Holstein 1,000 · Roseland 1,000 · Pauline 1,000 · Main 8,000 diesel + 8,000 unleaded · **402F** 100 · **430F** 100 |
+| 28 | Metered pumps, **paper logs** |
+| 29 | Main shop logs balanced against the tank monitor **daily**. Tanks dipped and reconciled **annually** |
+| 30 | Mobile tanks filled at Main and logged. Dispensing to equipment records gallons + meter reading. **Outlying sheds are filled by contracted tank wagons** — operators record fuel on weekly timesheets |
+| 31 | Cost per unit **and** per hour |
+| 32 | Off-road vs on-road tracked for tax |
+
+**The portable tanks are named after the pickups that carry them** — 402F and
+430F correspond to units 402 and 430.
+
+### Fuelling for other departments
+
+| # | Answer |
+|---|---|
+| 33 | **Weed, Sheriff, Assessor, Emergency Management, Maintenance** |
+| 34 | Paper logs in the fuel shed. Reconciled weekly, **billed monthly** |
+| 35 | **Billed back** |
+| 36 | **At cost** — no markup |
+| 37 | First of every month. A ledger of date, who, and amount |
+| 38 | They log their vehicle, mileage and fuel — but **billing is a department total.** Individual vehicles are only tracked for county highway units |
+| 39 | Yes — need to know who pumped it |
+| 40 | Revenue recognised **when the check is received** |
+| 41 | Nobody else fuels there |
+
+### Cost & replacement
+
+| # | Answer |
+|---|---|
+| 42 | Yes — cost per hour and per mile |
+| 43 | Fuel, parts, oils, shop supplies, all repairs, in-house and outside labour. **Depreciation uncertain** |
+| 44 | No replacement schedule at present |
+| 45 | Age, reliability, repair costs |
+| 46 | **History stays in the system forever** — useful because they own multiples of the same unit |
+| 47 | FEMA rates from <https://www.fema.gov/assistance/public/tools-resources/schedule-equipment-rates> |
+
+---
+
+### What this changes
+
+**1. They don't use work orders — and Equipment.jsx is built around them.**
+
+Work is recorded as cost accounting entries that reference an equipment number,
+not as work orders. Q25 puts the decision plainly: either adopt work orders as a
+new way of working, or make cost accounting entries linkable to equipment,
+project and inventory. **This is Greg's call, and the biggest open question on
+the project.**
+
+**2. Meter replacement needs modelling.** A machine's lifetime hours are the sum
+across meters — the old meter's final reading plus the new meter's current one. A
+system assuming meters only increase will produce nonsense the first time one is
+swapped.
+
+**3. PM intervals are concrete and can be built now.** Six distinct schedules
+across three equipment classes, driven by hours or miles.
+
+**4. Fuel is a bigger subsystem than modelled.** Eight tanks, daily monitor
+reconciliation at Main, annual dips, contracted tank wagons filling outlying
+sheds, operator timesheets as a fuel source, off-road vs on-road tax split, and
+monthly billing to five other departments at cost.
+
+**5. Inter-departmental fuel is revenue** — recognised on receipt of the check,
+which is cash-basis and needs a Fund Accounting path.
+
+**6. Document attachment keeps recurring** — scanned invoices (Q6), outside
+warranty work orders (Q24). Same deferral as photos: needs a backend.
+
+### Follow-ups
+
+1. **Work orders — adopt or drop?** Everything else in Equipment depends on this.
+2. **Q16** — advance PM warning was answered with a question mark. Do you want it?
+3. **Q38** — the log captures their vehicle and mileage, but billing is a
+   department total. Should Pinpoint store the per-vehicle detail even though the
+   bill doesn't itemise it?
+4. **Depreciation in cost-per-hour** — in or out?
 
 Sections: The fleet · Meters & usage · Preventive maintenance · Work orders ·
 Fuel & tanks · **Fuelling for other departments** · Cost & replacement
