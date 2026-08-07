@@ -652,14 +652,41 @@ a unit whose meter died at 8,750 hr and was replaced with one reading 412 shows
 (on/off road truck, on-road truck, off-road equipment) available as one-click
 setup rather than typing intervals per unit.
 
+### Fuel subsystem — built 2026-07-27
+
+**The eight real tanks are seeded** — Main Shop diesel and unleaded (8,000 each,
+monitored), Kenesaw 1,500, Holstein / Roseland / Pauline 1,000 each (all filled
+by contracted tank wagons), and portables 402F and 430F at 100 gallons, each
+recording the pickup that carries it.
+
+**The fuel log now asks who took it.** County equipment or one of five other
+departments. County entries capture the unit and meter reading; department
+entries capture their vehicle and mileage as written on the paper log. Both
+capture who pumped it and the off-road/on-road tax class.
+
+**Fuel is costed from the tank's most recent delivery**, so "billed at cost" is
+automatic rather than worked out by hand. A warning shows if a tank has no
+delivery cost recorded yet.
+
+**Department billing** groups a month's fuel by department with a Mark Billed /
+Mark Paid flow. Expanding a department shows every fill-up — date, vehicle,
+mileage, gallons, rate, amount, who pumped it — which is the answer to a
+challenge. The bill itself stays a department total.
+
+**Meter readings carry through.** Logging fuel updates the unit's meter, since
+it's read at every fuelling anyway. It only moves forward, so a typo or a
+post-swap gauge won't wind the clock backwards.
+
+Verified: two Sheriff fill-ups and one Weed fill-up in July, at a $3.42 delivery
+cost, bill as Sheriff $114.91 / Weed $106.02, total $220.93 across 64.6 gallons.
+The county grader's 62.5 gallons is excluded from billing but counted in the
+off-road tax total.
+
 ### Still to build from this form
 
-- **Fuel subsystem** — 8 tanks, daily monitor reconciliation at Main, annual
-  dips, contracted tank wagons filling outlying sheds, operator timesheets as a
-  fuel source, off-road/on-road tax split
-- **Inter-departmental fuel billing** — five departments, monthly, at cost,
-  per-vehicle detail retained for challenges, revenue recognised on receipt of
-  the check
+- **Tank reconciliation** — daily monitor balance at Main, annual dip
+- **Operator timesheets as a fuel source** — outlying sheds are recorded on
+  weekly timesheets, not at a pump
 - **Cost per hour / per mile** — fuel, parts, oils, shop supplies, all repairs,
   in-house and outside labour. **No depreciation**
 - **Document attachment** — scanned invoices and outside warranty orders.

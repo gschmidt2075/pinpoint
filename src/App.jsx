@@ -7,7 +7,7 @@ import Infrastructure from "./modules/Infrastructure.jsx";
 import Projects from "./modules/Projects.jsx";
 import Settings from "./modules/Settings.jsx";
 import { FISCAL_YEAR } from "./data/accountCodes.js";
-import { DEFAULT_STORAGE_LOCATIONS, DEFAULT_TOWNSHIPS, DEFAULT_LOOKUPS } from "./data/schema.js";
+import { DEFAULT_STORAGE_LOCATIONS, DEFAULT_TOWNSHIPS, DEFAULT_LOOKUPS, DEFAULT_TANKS } from "./data/schema.js";
 import { INITIAL_INVENTORY_ITEMS, INITIAL_INVENTORY_BATCHES, INITIAL_INVENTORY_TRANSACTIONS } from "./data/inventoryData.js";
 import { Icon } from "./components/shared.jsx";
 
@@ -35,7 +35,7 @@ const initialState = {
   workOrders:         [],   // createWorkOrder[] — repair/maintenance events per unit
 
   // ── Fuel & Tanks ─────────────────────────────────────────────────────────
-  tanks:              [],   // createTank[]
+  tanks:              DEFAULT_TANKS,   // createTank[] — the 8 real tanks
   tankTransactions:   [],   // createTankTransaction[]
   fuelDispensing:     [],   // createFuelDispensing[]
 
@@ -466,7 +466,15 @@ function reducer(state, action) {
       const tanks = state.tanks.map(t =>
         t.id !== fd.sourceTankId ? t : { ...t, currentLevel: Math.max(0, t.currentLevel - fd.gallons) }
       );
-      return { ...state, tanks, fuelDispensing: [...state.fuelDispensing, fd] };
+      // Meters are read at every fuelling — carry the reading onto the unit so PM
+      // due dates stay current without anyone entering it twice. Only move it
+      // forward; a lower number means a typo or a meter that's since been swapped.
+      const equipment = fd.equipmentId && fd.meterReading > 0
+        ? state.equipment.map(u =>
+            u.id !== fd.equipmentId ? u
+              : (fd.meterReading > (u.currentMeter || 0) ? { ...u, currentMeter: fd.meterReading } : u))
+        : state.equipment;
+      return { ...state, tanks, equipment, fuelDispensing: [...state.fuelDispensing, fd] };
     }
     case "UPDATE_FUEL_DISPENSING":
       return { ...state, fuelDispensing: state.fuelDispensing.map(f => f.id === action.payload.id ? action.payload : f) };

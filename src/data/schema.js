@@ -609,17 +609,37 @@ export const createWorkOrderServiceEntry = (overrides = {}) => ({
 
 export const createTank = (overrides = {}) => ({
   id:              uid(),
-  name:            "",           // e.g. "Main Shop Diesel", "Portable Tank 1"
+  name:            "",           // e.g. "Main Shop Diesel", "402F"
   location:        "",           // Main Shop | Pauline | Kenesaw | Roseland | Holstein | Portable
   fuelType:        "diesel",     // diesel | unleaded
-  tankType:        "underground",// underground | above_ground | portable
+  tankType:        "above_ground",// underground | above_ground | portable
   capacityGallons: 0,
   currentLevel:    0,            // calculated from transactions
+  // Main shop tanks have an electronic monitor, balanced against the paper logs
+  // daily. Outlying sheds don't — they're dipped once a year.
+  hasMonitor:      false,
+  // Outlying sheds are filled by contracted tank wagons owned by other companies,
+  // not from our own stock.
+  filledByContractor: false,
+  // Portable tanks ride on a pickup and are named after it — 402F is on unit 402.
+  carriedByUnit:   "",
   status:          "active",     // active | out_of_service
   notes:           "",
   createdAt:       now(),
   ...overrides,
 });
+
+// The eight real tanks, confirmed 2026-07-27.
+export const DEFAULT_TANKS = [
+  { name:"Main Shop Diesel",   location:"Main Shop", fuelType:"diesel",   capacityGallons:8000, hasMonitor:true },
+  { name:"Main Shop Unleaded", location:"Main Shop", fuelType:"unleaded", capacityGallons:8000, hasMonitor:true },
+  { name:"Kenesaw",            location:"Kenesaw",   fuelType:"diesel",   capacityGallons:1500, filledByContractor:true },
+  { name:"Holstein",           location:"Holstein",  fuelType:"diesel",   capacityGallons:1000, filledByContractor:true },
+  { name:"Roseland",           location:"Roseland",  fuelType:"diesel",   capacityGallons:1000, filledByContractor:true },
+  { name:"Pauline",            location:"Pauline",   fuelType:"diesel",   capacityGallons:1000, filledByContractor:true },
+  { name:"402F",               location:"Portable",  fuelType:"diesel",   capacityGallons:100, tankType:"portable", carriedByUnit:"402" },
+  { name:"430F",               location:"Portable",  fuelType:"diesel",   capacityGallons:100, tankType:"portable", carriedByUnit:"430" },
+].map(t => createTank(t));
 
 // Tank transaction (delivery, dispense, portable fill, dip reading)
 export const createTankTransaction = (overrides = {}) => ({
@@ -651,18 +671,40 @@ export const createTankTransaction = (overrides = {}) => ({
 export const createFuelDispensing = (overrides = {}) => ({
   id:              uid(),
   date:            today(),
+  // Who took the fuel. Five other county departments fuel at the shop and are
+  // billed monthly at cost.
+  consumer:        "county_equipment", // county_equipment | other_department
+  // — county equipment —
   equipmentId:     null,
   unitNumber:      "",
+  meterReading:    0,            // hour meter OR odometer, read at every fuelling
+  meterType:       "hours",      // hours | miles (from the equipment record)
+  // — other department —
+  departmentName:  "",           // Weed | Sheriff | Assessor | Emergency Management | Maintenance
+  outsideVehicle:  "",           // their vehicle, as written on the log
+  outsideOdometer: "",           // their mileage, as written on the log
+  // Common
   fuelType:        "diesel",
   gallons:         0,
-  meterReading:    0,            // hour meter OR odometer reading
-  meterType:       "hours",      // hours | odometer (from equipment record)
+  pumpedBy:        "",           // who actually pumped it
+  taxClass:        "off_road",   // off_road | on_road — tracked for fuel tax
+  unitCost:        0,            // $/gal at time of dispensing, from the tank
+  totalCost:       0,
   sourceTankId:    null,
   sourceTankName:  "",
+  // Billing — other departments only. Reconciled weekly, billed the 1st monthly.
+  billingPeriod:   "",           // "2026-07" — the month being billed
+  billedDate:      "",           // when the bill went out
+  paidDate:        "",           // revenue is recognised when the check arrives
   notes:           "",
   createdAt:       now(),
   ...overrides,
 });
+
+// Departments that fuel at the shop. Editable in Settings.
+export const DEFAULT_FUEL_DEPARTMENTS = [
+  "Weed", "Sheriff", "Assessor", "Emergency Management", "Maintenance",
+];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // INFRASTRUCTURE — ROADS
@@ -1010,6 +1052,9 @@ export const LOOKUP_DEFS = [
     values:["low","normal","high","urgent"] },
   { key:"pmTasks",         label:"PM Tasks", module:"Equipment",
     values:["Oil & Filter","Grease","Hydraulic Service","Air Filter","Fuel Filter","Annual Inspection","Tire Rotation","Coolant","Other"] },
+  { key:"fuelDepartments", label:"Fuel — Other Departments", module:"Equipment",
+    hint:"County departments billed for fuel",
+    values:["Weed","Sheriff","Assessor","Emergency Management","Maintenance"] },
   { key:"unitsOfMeasure",  label:"Units of Measure", module:"Inventory",
     values:["TON","CY","LF","EA","LB","GAL","QT","SF","BX","CS","RL","SET","PR","KIT","OTH"] },
   { key:"haulTypes",       label:"Haul Types", module:"Inventory",

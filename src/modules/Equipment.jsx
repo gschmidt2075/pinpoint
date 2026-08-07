@@ -165,7 +165,7 @@ export default function Equipment({ db, dispatch }) {
 
       {tab==="fleet"      && <FleetTab      units={units} workOrders={workOrders} dispensing={dispensing} dispatch={dispatch} onSelect={id=>setSelectedUnitId(id)} />}
       {tab==="workorders" && <WorkOrdersTab workOrders={workOrders} units={units} dispatch={dispatch} onOpen={id=>setSelectedWOId(id)} />}
-      {tab==="fuel"       && <FuelLogTab    dispensing={dispensing} units={units} tanks={tanks} dispatch={dispatch} />}
+      {tab==="fuel"       && <FuelLogTab    dispensing={dispensing} units={units} tanks={tanks} tankTx={tankTx} departments={db?.lookups?.fuelDepartments || []} dispatch={dispatch} />}
       {tab==="tanks"      && <TanksTab      tanks={tanks} tankTx={tankTx} dispensing={dispensing} dispatch={dispatch} />}
     </div>
   );
@@ -1220,91 +1220,375 @@ function WorkOrdersTab({ workOrders, units, dispatch, onOpen }) {
 }
 
 // ── Fuel Log Tab ──────────────────────────────────────────────────────────────
-function FuelLogTab({ dispensing, units, tanks, dispatch }) {
+function FuelLogTab({ dispensing, units, tanks, tankTx, departments, dispatch }) {
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ date:"", equipmentId:"", fuelType:"diesel", gallons:"", meterReading:"", sourceTankId:"", notes:"" });
+  const [view, setView]         = useState("log");   // log | billing
+  const EMPTY = {
+    date:"", consumer:"county_equipment",
+    equipmentId:"", meterReading:"",
+    departmentName:"", outsideVehicle:"", outsideOdometer:"",
+    fuelType:"diesel", gallons:"", pumpedBy:"", taxClass:"off_road",
+    sourceTankId:"", notes:"",
+  };
+  const [form, setForm] = useState(EMPTY);
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
-  const selectedUnit = units.find(u=>u.id===form.equipmentId);
-  const selectedTank = tanks.find(t=>t.id===form.sourceTankId);
+  const isOutside     = form.consumer === "other_department";
+  const selectedUnit  = units.find(u=>u.id===form.equipmentId);
+  const selectedTank  = tanks.find(t=>t.id===form.sourceTankId);
+
+  // Fuel is billed at cost — the rate comes from the tank's most recent delivery.
+  const tankUnitCost = (tankId) => {
+    const deliveries = (tankTx||[])
+      .filter(t => t.tankId === tankId && t.type === "delivery" && t.unitCost)
+      .sort((a,b) => (b.date||"").localeCompare(a.date||""));
+    return deliveries[0]?.unitCost || 0;
+  };
+  const unitCost  = form.sourceTankId ? tankUnitCost(form.sourceTankId) : 0;
+  const gallons   = parseFloat(form.gallons) || 0;
+  const totalCost = unitCost * gallons;
+
+  const canSave = form.date && gallons > 0 &&
+    (isOutside ? form.departmentName : form.equipmentId);
 
   const handleSave = () => {
-    if (!form.date||!form.equipmentId||!form.gallons) return;
+    if (!canSave) return;
     dispatch({ type:"ADD_FUEL_DISPENSING", payload:{
       id:`${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
-      date:form.date, equipmentId:form.equipmentId,
-      unitNumber:selectedUnit?.unitNumber||"",
-      fuelType:form.fuelType, gallons:parseFloat(form.gallons)||0,
-      meterReading:parseFloat(form.meterReading)||0,
-      meterType:selectedUnit?.meterType||"hours",
-      sourceTankId:form.sourceTankId||null,
-      sourceTankName:selectedTank?.name||"",
-      notes:form.notes, createdAt:new Date().toISOString(),
+      date: form.date,
+      consumer: form.consumer,
+      equipmentId:    isOutside ? null : form.equipmentId,
+      unitNumber:     isOutside ? "" : (selectedUnit?.unitNumber||""),
+      meterReading:   isOutside ? 0 : (parseFloat(form.meterReading)||0),
+      meterType:      selectedUnit?.meterType||"hours",
+      departmentName: isOutside ? form.departmentName : "",
+      outsideVehicle: isOutside ? form.outsideVehicle : "",
+      outsideOdometer:isOutside ? form.outsideOdometer : "",
+      fuelType: form.fuelType,
+      gallons,
+      pumpedBy: form.pumpedBy,
+      taxClass: form.taxClass,
+      unitCost, totalCost,
+      sourceTankId: form.sourceTankId||null,
+      sourceTankName: selectedTank?.name||"",
+      billingPeriod: isOutside && form.date ? form.date.slice(0,7) : "",
+      billedDate:"", paidDate:"",
+      notes: form.notes, createdAt:new Date().toISOString(),
     }});
-    setForm({ date:"", equipmentId:"", fuelType:"diesel", gallons:"", meterReading:"", sourceTankId:"", notes:"" });
+    setForm(EMPTY);
     setShowForm(false);
   };
 
-  const sorted = [...dispensing].sort((a,b)=>b.date.localeCompare(a.date));
+  const sorted = [...dispensing].sort((a,b)=>(b.date||"").localeCompare(a.date||""));
   const totalGallons = dispensing.reduce((s,f)=>s+(f.gallons||0),0);
+  const outsideGallons = dispensing.filter(f=>f.consumer==="other_department").reduce((s,f)=>s+(f.gallons||0),0);
+  const offRoadGal = dispensing.filter(f=>f.taxClass==="off_road").reduce((s,f)=>s+(f.gallons||0),0);
+  const onRoadGal  = dispensing.filter(f=>f.taxClass==="on_road").reduce((s,f)=>s+(f.gallons||0),0);
 
   return (
     <div>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
-        <div style={{ fontSize:13 }}>
-          {dispensing.length} entries · <strong>{totalGallons.toFixed(1)} gal</strong> total dispensed
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16, flexWrap:"wrap", gap:10 }}>
+        <div style={{ display:"flex", border:"1px solid #ccc", borderRadius:6, overflow:"hidden" }}>
+          {[["log","Fuel Log"],["billing","Department Billing"]].map(([id,label])=>(
+            <button key={id} onClick={()=>setView(id)} style={{ padding:"7px 14px", fontSize:12, fontWeight:600, border:"none", cursor:"pointer", background:view===id?"#1a5a3a":"#fff", color:view===id?"#fff":"#555" }}>{label}</button>
+          ))}
         </div>
-        <button onClick={()=>setShowForm(s=>!s)} style={btn.primary}>{showForm?"Cancel":"+ Log Fuel"}</button>
+        {view==="log" && <button onClick={()=>setShowForm(s=>!s)} style={btn.primary}>{showForm?"Cancel":"+ Log Fuel"}</button>}
       </div>
 
-      {showForm && (
-        <div style={{ background:"#f7f7f5", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:16 }}>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr 1fr 1fr 1fr", gap:12, marginBottom:12 }}>
-            <Field label="Date"><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
-            <Field label="Unit">
-              <select value={form.equipmentId} onChange={e=>set("equipmentId",e.target.value)} style={{ ...inp, margin:0 }}>
-                <option value="">Select…</option>
-                {units.filter(u=>u.status!=="sold").map(u=><option key={u.id} value={u.id}>{u.unitNumber?`${u.unitNumber} — `:""}{u.year} {u.make} {u.model}</option>)}
-              </select>
-            </Field>
-            <Field label="Fuel Type">
-              <select value={form.fuelType} onChange={e=>set("fuelType",e.target.value)} style={{ ...inp, margin:0 }}>
-                <option value="diesel">Diesel</option>
-                <option value="unleaded">Unleaded</option>
-              </select>
-            </Field>
-            <Field label="Gallons"><input type="number" min="0" step="0.1" value={form.gallons} onChange={e=>set("gallons",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
-            <Field label={`Meter (${selectedUnit?.meterType||"hours"})`}><input type="number" min="0" step="any" value={form.meterReading} onChange={e=>set("meterReading",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
-            <Field label="Tank">
-              <select value={form.sourceTankId} onChange={e=>set("sourceTankId",e.target.value)} style={{ ...inp, margin:0 }}>
-                <option value="">Not specified</option>
-                {tanks.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-            </Field>
-          </div>
-          <div style={{ display:"flex", gap:10 }}>
-            <Field label="Notes" style={{ flex:1 }}><input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
-            <button onClick={handleSave} style={{ ...btn.primary, marginTop:20 }}>Log</button>
-          </div>
-        </div>
-      )}
+      {view==="billing" && <FuelBilling dispensing={dispensing} dispatch={dispatch} />}
 
-      <Table
-        headers={[{label:"Date"},{label:"Unit"},{label:"Fuel"},{label:"Gallons"},{label:"Meter"},{label:"Tank"},{label:"Notes"}]}
-        rows={sorted.map(e=>{
-          const u = units.find(u=>u.id===e.equipmentId);
-          return [
-            <span style={{fontFamily:"monospace",fontSize:12}}>{fmtDate(e.date)}</span>,
-            <span style={{fontSize:12}}>{u?`${u.unitNumber||""} ${u.make||""} ${u.model||""}`.trim():e.unitNumber||"—"}</span>,
-            <span style={{fontSize:12,textTransform:"capitalize"}}>{e.fuelType||"diesel"}</span>,
-            <span style={{fontFamily:"monospace",fontWeight:700}}>{e.gallons}</span>,
-            <span style={{fontFamily:"monospace",color:"#888"}}>{e.meterReading||"—"}</span>,
-            <span style={{fontSize:12,color:"#888"}}>{e.sourceTankName||"—"}</span>,
-            <span style={{fontSize:12,color:"#888"}}>{e.notes||"—"}</span>,
-          ];
-        })}
-        emptyMessage="No fuel records yet"
-      />
+      {view==="log" && (
+        <>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:16 }}>
+            <KPICard label="Total Dispensed"  value={`${totalGallons.toFixed(1)} gal`} sub={`${dispensing.length} entries`} accent="#1a3a5c" icon="droplet" />
+            <KPICard label="Off-Road"         value={`${offRoadGal.toFixed(1)} gal`}   sub="Tax exempt"                     accent="#1a5a3a" icon="tractor" />
+            <KPICard label="On-Road"          value={`${onRoadGal.toFixed(1)} gal`}    sub="Taxable"                        accent="#d97706" icon="truck" />
+            <KPICard label="Other Departments" value={`${outsideGallons.toFixed(1)} gal`} sub="Billable"                    accent="#5a1a8a" icon="building-community" />
+          </div>
+
+          {showForm && (
+            <div style={{ background:"#f7f7f5", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:16 }}>
+              {/* Who took it */}
+              <div style={{ display:"flex", gap:8, marginBottom:14 }}>
+                {[["county_equipment","County Equipment"],["other_department","Other Department"]].map(([v,l])=>(
+                  <button key={v} onClick={()=>set("consumer",v)} style={{
+                    ...btn.small, fontSize:12, padding:"7px 14px",
+                    background: form.consumer===v ? "#1a5a3a" : "#eee",
+                    color:      form.consumer===v ? "#fff"    : "#555",
+                  }}>{l}</button>
+                ))}
+              </div>
+
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr 1fr", gap:12, marginBottom:12 }}>
+                <Field label="Date" required><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+
+                {!isOutside ? (
+                  <>
+                    <Field label="Unit" required>
+                      <select value={form.equipmentId} onChange={e=>set("equipmentId",e.target.value)} style={{ ...inp, margin:0 }}>
+                        <option value="">Select…</option>
+                        {units.filter(u=>u.status!=="sold").map(u=><option key={u.id} value={u.id}>{u.unitNumber?`${u.unitNumber} — `:""}{u.year} {u.make} {u.model}</option>)}
+                      </select>
+                    </Field>
+                    <Field label={`Meter (${selectedUnit?.meterType==="miles"?"miles":"hours"})`}>
+                      <input type="number" min="0" step="any" value={form.meterReading} onChange={e=>set("meterReading",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} />
+                    </Field>
+                  </>
+                ) : (
+                  <>
+                    <Field label="Department" required>
+                      <select value={form.departmentName} onChange={e=>set("departmentName",e.target.value)} style={{ ...inp, margin:0 }}>
+                        <option value="">Select…</option>
+                        {departments.map(d=><option key={d}>{d}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Their Vehicle">
+                      <input type="text" value={form.outsideVehicle} onChange={e=>set("outsideVehicle",e.target.value)} style={{ ...inp, margin:0 }} placeholder="As written on the log" />
+                    </Field>
+                  </>
+                )}
+
+                <Field label={isOutside ? "Their Mileage" : "Fuel Type"}>
+                  {isOutside ? (
+                    <input type="text" value={form.outsideOdometer} onChange={e=>set("outsideOdometer",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} />
+                  ) : (
+                    <select value={form.fuelType} onChange={e=>set("fuelType",e.target.value)} style={{ ...inp, margin:0 }}>
+                      <option value="diesel">Diesel</option>
+                      <option value="unleaded">Unleaded</option>
+                    </select>
+                  )}
+                </Field>
+              </div>
+
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr", gap:12, marginBottom:12 }}>
+                {isOutside && (
+                  <Field label="Fuel Type">
+                    <select value={form.fuelType} onChange={e=>set("fuelType",e.target.value)} style={{ ...inp, margin:0 }}>
+                      <option value="diesel">Diesel</option>
+                      <option value="unleaded">Unleaded</option>
+                    </select>
+                  </Field>
+                )}
+                <Field label="Gallons" required><input type="number" min="0" step="0.1" value={form.gallons} onChange={e=>set("gallons",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+                <Field label="Tank">
+                  <select value={form.sourceTankId} onChange={e=>set("sourceTankId",e.target.value)} style={{ ...inp, margin:0 }}>
+                    <option value="">Not specified</option>
+                    {tanks.filter(t=>t.status!=="out_of_service").map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                </Field>
+                <Field label="Pumped By"><input type="text" value={form.pumpedBy} onChange={e=>set("pumpedBy",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+                <Field label="Tax Class">
+                  <select value={form.taxClass} onChange={e=>set("taxClass",e.target.value)} style={{ ...inp, margin:0 }}>
+                    <option value="off_road">Off-Road (exempt)</option>
+                    <option value="on_road">On-Road (taxable)</option>
+                  </select>
+                </Field>
+                <Field label="Cost">
+                  <div style={{ ...inp, margin:0, background:"#fff", fontFamily:"monospace", fontWeight:700, color: totalCost ? "#1a3a5c" : "#bbb" }}>
+                    {totalCost ? fmtSm(totalCost) : "—"}
+                  </div>
+                </Field>
+              </div>
+
+              {form.sourceTankId && !unitCost && (
+                <div style={{ background:"#fef3cd", border:"1px solid #f0d080", borderRadius:5, padding:"8px 11px", marginBottom:12, fontSize:11, color:"#7a4f00" }}>
+                  No delivery cost recorded for {selectedTank?.name} yet — log a delivery on the Tanks tab so fuel can be costed and billed.
+                </div>
+              )}
+
+              <div style={{ display:"flex", gap:10 }}>
+                <Field label="Notes" style={{ flex:1 }}><input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+                <button onClick={handleSave} disabled={!canSave} style={{ ...btn.primary, marginTop:20, opacity: canSave?1:0.4 }}>Log</button>
+              </div>
+            </div>
+          )}
+
+          <Table
+            headers={[{label:"Date"},{label:"Who"},{label:"Vehicle / Unit"},{label:"Fuel"},{label:"Gallons"},{label:"Meter"},{label:"Tax"},{label:"Cost"},{label:"Pumped By"}]}
+            rows={sorted.map(e=>{
+              const u = units.find(u=>u.id===e.equipmentId);
+              const outside = e.consumer === "other_department";
+              return [
+                <span style={{fontFamily:"monospace",fontSize:12}}>{fmtDate(e.date)}</span>,
+                outside
+                  ? <span style={{ background:"#f3ecfa", color:"#5a1a8a", border:"1px solid #d9c6ee", borderRadius:4, padding:"1px 7px", fontSize:11, fontWeight:700 }}>{e.departmentName||"Dept"}</span>
+                  : <span style={{ fontSize:11, color:"#888" }}>County</span>,
+                <span style={{fontSize:12}}>
+                  {outside ? (e.outsideVehicle||"—") : (u?`${u.unitNumber||""} ${u.make||""} ${u.model||""}`.trim():e.unitNumber||"—")}
+                </span>,
+                <span style={{fontSize:12,textTransform:"capitalize"}}>{e.fuelType||"diesel"}</span>,
+                <span style={{fontFamily:"monospace",fontWeight:700}}>{e.gallons}</span>,
+                <span style={{fontFamily:"monospace",color:"#888"}}>{outside ? (e.outsideOdometer||"—") : (e.meterReading||"—")}</span>,
+                <span style={{fontSize:10,fontWeight:700,color:e.taxClass==="on_road"?"#d97706":"#1a6b35"}}>{e.taxClass==="on_road"?"ON":"OFF"}</span>,
+                <span style={{fontFamily:"monospace"}}>{e.totalCost?fmtSm(e.totalCost):"—"}</span>,
+                <span style={{fontSize:12,color:"#888"}}>{e.pumpedBy||"—"}</span>,
+              ];
+            })}
+            emptyMessage="No fuel records yet"
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Department fuel billing ───────────────────────────────────────────────────
+// Five county departments fuel at the shop. Logs are reconciled weekly and billed
+// on the 1st of the month, at cost. The bill is a ledger of date, who, and amount
+// — but the per-vehicle detail is kept so a challenge can be answered.
+function FuelBilling({ dispensing, dispatch }) {
+  const outside = dispensing.filter(f => f.consumer === "other_department");
+
+  const periods = [...new Set(outside.map(f => f.billingPeriod || (f.date||"").slice(0,7)).filter(Boolean))]
+    .sort().reverse();
+  const [period, setPeriod] = useState(periods[0] || "");
+  const [expanded, setExpanded] = useState(null);
+
+  const inPeriod = outside.filter(f => (f.billingPeriod || (f.date||"").slice(0,7)) === period);
+
+  const byDept = {};
+  inPeriod.forEach(f => {
+    const d = f.departmentName || "Unassigned";
+    if (!byDept[d]) byDept[d] = { gallons:0, cost:0, entries:[], billed:0 };
+    byDept[d].gallons += f.gallons || 0;
+    byDept[d].cost    += f.totalCost || 0;
+    if (f.billedDate) byDept[d].billed++;
+    byDept[d].entries.push(f);
+  });
+  const rows = Object.entries(byDept).sort((a,b)=>b[1].cost-a[1].cost);
+  const grandGal  = rows.reduce((s,[,d])=>s+d.gallons,0);
+  const grandCost = rows.reduce((s,[,d])=>s+d.cost,0);
+
+  const markBilled = (dept) => {
+    const today = new Date().toISOString().split("T")[0];
+    byDept[dept].entries.filter(e=>!e.billedDate).forEach(e =>
+      dispatch({ type:"UPDATE_FUEL_DISPENSING", payload:{ ...e, billedDate: today } }));
+  };
+  const markPaid = (dept) => {
+    const today = new Date().toISOString().split("T")[0];
+    byDept[dept].entries.filter(e=>!e.paidDate).forEach(e =>
+      dispatch({ type:"UPDATE_FUEL_DISPENSING", payload:{ ...e, paidDate: today } }));
+  };
+
+  const fmtPeriod = (p) => {
+    if (!p) return "—";
+    const [y,m] = p.split("-");
+    return new Date(Number(y), Number(m)-1, 1).toLocaleDateString(undefined,{ month:"long", year:"numeric" });
+  };
+
+  if (!outside.length) {
+    return (
+      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:36, textAlign:"center" }}>
+        <div style={{ fontSize:14, fontWeight:600, color:"#555", marginBottom:6 }}>No department fuel logged yet</div>
+        <div style={{ fontSize:12, color:"#888" }}>
+          Log fuel with "Other Department" selected and it will appear here for monthly billing.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", marginBottom:14, flexWrap:"wrap", gap:10 }}>
+        <div>
+          <div style={{ fontSize:15, fontWeight:700 }}>Department Fuel Billing</div>
+          <div style={{ fontSize:12, color:"#888", marginTop:2 }}>Billed at cost on the 1st. Click a department to see the vehicle detail.</div>
+        </div>
+        <Field label="Billing Period">
+          <select value={period} onChange={e=>{setPeriod(e.target.value); setExpanded(null);}} style={{ ...inp, margin:0, minWidth:180 }}>
+            {periods.map(p=><option key={p} value={p}>{fmtPeriod(p)}</option>)}
+          </select>
+        </Field>
+      </div>
+
+      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, overflow:"hidden" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+          <thead>
+            <tr style={{ background:"#f7f7f5" }}>
+              {["Department","Fill-ups","Gallons","Amount","Status",""].map(h=>(
+                <th key={h} style={{ padding:"9px 14px", textAlign:["Gallons","Amount","Fill-ups"].includes(h)?"right":"left", fontWeight:600, fontSize:11, textTransform:"uppercase", letterSpacing:"0.05em", color:"#666", borderBottom:"1px solid #eee" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(([dept, d], i) => {
+              const allBilled = d.entries.every(e=>e.billedDate);
+              const allPaid   = d.entries.every(e=>e.paidDate);
+              const isOpen    = expanded === dept;
+              return (
+                <>
+                  <tr key={dept} onClick={()=>setExpanded(isOpen?null:dept)}
+                    style={{ borderTop:"1px solid #eee", background:isOpen?"#f0f8f4":i%2===0?"#fff":"#fafaf8", cursor:"pointer" }}>
+                    <td style={{ padding:"10px 14px", fontWeight:700 }}>
+                      <Icon name={isOpen?"chevron-down":"chevron-right"} size={12} color="#888" /> {dept}
+                    </td>
+                    <td style={{ padding:"10px 14px", textAlign:"right", fontFamily:"monospace", color:"#888" }}>{d.entries.length}</td>
+                    <td style={{ padding:"10px 14px", textAlign:"right", fontFamily:"monospace", fontWeight:600 }}>{d.gallons.toFixed(1)}</td>
+                    <td style={{ padding:"10px 14px", textAlign:"right", fontFamily:"monospace", fontWeight:700 }}>{fmtSm(d.cost)}</td>
+                    <td style={{ padding:"10px 14px" }}>
+                      {allPaid
+                        ? <span style={{ background:"#e6f4ec", color:"#1a6b35", border:"1px solid #a8d5b5", borderRadius:99, padding:"2px 9px", fontSize:11, fontWeight:700 }}>Paid</span>
+                        : allBilled
+                        ? <span style={{ background:"#fef3cd", color:"#7a4f00", border:"1px solid #f0d080", borderRadius:99, padding:"2px 9px", fontSize:11, fontWeight:700 }}>Billed</span>
+                        : <span style={{ background:"#f4f4f2", color:"#888", border:"1px solid #ddd", borderRadius:99, padding:"2px 9px", fontSize:11, fontWeight:700 }}>Unbilled</span>}
+                    </td>
+                    <td style={{ padding:"10px 14px", textAlign:"right" }} onClick={e=>e.stopPropagation()}>
+                      {!allBilled && <button onClick={()=>markBilled(dept)} style={{ ...btn.small, fontSize:10, padding:"4px 10px" }}>Mark Billed</button>}
+                      {allBilled && !allPaid && <button onClick={()=>markPaid(dept)} style={{ ...btn.small, background:"#1a6b35", fontSize:10, padding:"4px 10px" }}>Mark Paid</button>}
+                    </td>
+                  </tr>
+                  {isOpen && (
+                    <tr key={`${dept}-detail`}>
+                      <td colSpan={6} style={{ padding:"0 14px 14px", background:"#f0f8f4" }}>
+                        <div style={{ fontSize:11, color:"#1a5a3a", padding:"8px 0 6px", fontWeight:600 }}>
+                          Vehicle detail — kept in case the numbers are challenged
+                        </div>
+                        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12, background:"#fff", borderRadius:6, overflow:"hidden" }}>
+                          <thead>
+                            <tr style={{ background:"#e6f4ec" }}>
+                              {["Date","Vehicle","Mileage","Fuel","Gallons","Rate","Amount","Pumped By"].map(h=>(
+                                <th key={h} style={{ padding:"6px 10px", textAlign:["Gallons","Rate","Amount"].includes(h)?"right":"left", fontWeight:600, fontSize:10, color:"#1a5a3a" }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {d.entries.sort((a,b)=>(a.date||"").localeCompare(b.date||"")).map(e=>(
+                              <tr key={e.id} style={{ borderTop:"1px solid #e6f4ec" }}>
+                                <td style={{ padding:"6px 10px", fontFamily:"monospace" }}>{fmtDate(e.date)}</td>
+                                <td style={{ padding:"6px 10px" }}>{e.outsideVehicle||"—"}</td>
+                                <td style={{ padding:"6px 10px", fontFamily:"monospace", color:"#888" }}>{e.outsideOdometer||"—"}</td>
+                                <td style={{ padding:"6px 10px", textTransform:"capitalize" }}>{e.fuelType}</td>
+                                <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:"monospace" }}>{e.gallons}</td>
+                                <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:"monospace", color:"#888" }}>{e.unitCost?fmtSm(e.unitCost):"—"}</td>
+                                <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:"monospace", fontWeight:600 }}>{e.totalCost?fmtSm(e.totalCost):"—"}</td>
+                                <td style={{ padding:"6px 10px", color:"#888" }}>{e.pumpedBy||"—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                  )}
+                </>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr style={{ borderTop:"2px solid #ddd", background:"#f7f7f5" }}>
+              <td colSpan={2} style={{ padding:"10px 14px", fontWeight:700, textAlign:"right" }}>{fmtPeriod(period)} total</td>
+              <td style={{ padding:"10px 14px", textAlign:"right", fontFamily:"monospace", fontWeight:700 }}>{grandGal.toFixed(1)}</td>
+              <td style={{ padding:"10px 14px", textAlign:"right", fontFamily:"monospace", fontWeight:700, fontSize:14 }}>{fmtSm(grandCost)}</td>
+              <td colSpan={2}></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <div style={{ fontSize:11, color:"#888", marginTop:10, lineHeight:1.6 }}>
+        Marking a department <strong>Paid</strong> is when the money is actually earned — revenue is
+        recognised on receipt of the check, not when the bill goes out.
+      </div>
     </div>
   );
 }
