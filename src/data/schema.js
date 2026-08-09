@@ -608,6 +608,12 @@ export const createWorkOrder = (overrides = {}) => ({
   unitDescription:  "",          // e.g. "2007 Gradall 4100II"
   description:      "",          // what is being done (e.g. "Replace hydraulic pump")
   category:         "other",     // engine | hydraulic | electrical | tires | body | preventive | accident | inspection | other
+  // A PM is a work order like any other — parts come out of inventory, labor is
+  // costed, and it rolls into the unit's operating cost. These two fields link it
+  // back to the schedule it satisfies so closing it can reset the interval.
+  // Kept as a distinct category so repair analysis can exclude routine service.
+  pmScheduleId:     null,
+  pmService:        "",          // "Oil & Filter", "Hydraulic Service", …
   priority:         "routine",   // routine | urgent | down (down = machine out of service)
   openedDate:       today(),
   closedDate:       "",

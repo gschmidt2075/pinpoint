@@ -141,6 +141,7 @@ export default function Equipment({ db, dispatch }) {
 
   const TABS = [
     { id:"fleet",       label:"Fleet",         icon:"truck" },
+    { id:"pmdue",       label:"PM Due",        icon:"alarm" },
     { id:"workorders",  label:"Work Orders",   icon:"clipboard-check" },
     { id:"fuel",        label:"Fuel Log",      icon:"droplet" },
     { id:"tanks",       label:"Tanks",         icon:"building-warehouse" },
@@ -164,6 +165,7 @@ export default function Equipment({ db, dispatch }) {
       </div>
 
       {tab==="fleet"      && <FleetTab      units={units} workOrders={workOrders} dispensing={dispensing} dispatch={dispatch} onSelect={id=>setSelectedUnitId(id)} />}
+      {tab==="pmdue"      && <PMDueTab      units={units} dispatch={dispatch} onOpen={id=>setSelectedWOId(id)} />}
       {tab==="workorders" && <WorkOrdersTab workOrders={workOrders} units={units} dispatch={dispatch} onOpen={id=>setSelectedWOId(id)} />}
       {tab==="fuel"       && <FuelLogTab    dispensing={dispensing} units={units} tanks={tanks} tankTx={tankTx} departments={db?.lookups?.fuelDepartments || []} dispatch={dispatch} />}
       {tab==="tanks"      && <TanksTab      tanks={tanks} tankTx={tankTx} dispensing={dispensing} dispatch={dispatch} />}
@@ -2040,6 +2042,147 @@ function UnitForm({ unit, onSave, onCancel }) {
         <button onClick={()=>onSave(form)} style={btn.primary}>{unit?"Save Changes":"Add Unit"}</button>
         <button onClick={onCancel} style={btn.ghost}>Cancel</button>
       </div>
+    </div>
+  );
+}
+
+// ── PM Due — batch work order creation ────────────────────────────────────────
+// A PM is a work order like any other: parts come out of inventory, labor is
+// costed, and it rolls into the unit's operating cost. What makes the volume
+// workable is that entry is batched — the shop does six oil changes on a Tuesday
+// and that's one screen, not six forms.
+function PMDueTab({ units, dispatch, onOpen }) {
+  const due = pmDueList(units);
+  const [selected, setSelected] = useState([]);
+  const [form, setForm] = useState({ date: new Date().toISOString().split("T")[0], reportedBy:"", notes:"" });
+  const set = (k,v) => setForm(f=>({...f,[k]:v}));
+
+  const overdue = due.filter(d => d.status.state === "overdue");
+  const key = (d) => `${d.unit.id}::${d.sched.id}`;
+  const toggle = (d) => setSelected(s => s.includes(key(d)) ? s.filter(x=>x!==key(d)) : [...s, key(d)]);
+  const chosen = due.filter(d => selected.includes(key(d)));
+
+  const nextWONumber = (offset) => {
+    const y = new Date().getFullYear();
+    return `PM-${y}-${String(Date.now() % 10000 + offset).padStart(4,"0")}`;
+  };
+
+  const createBatch = () => {
+    if (!chosen.length) return;
+    const ids = [];
+    chosen.forEach((d, i) => {
+      const wo = createWorkOrder({
+        workOrderNumber: nextWONumber(i),
+        unitId:          d.unit.id,
+        unitNumber:      d.unit.unitNumber || "",
+        unitDescription: [d.unit.year, d.unit.make, d.unit.model].filter(Boolean).join(" "),
+        description:     d.sched.service,
+        category:        "preventive",
+        priority:        d.status.state === "overdue" ? "urgent" : "routine",
+        openedDate:      form.date,
+        meterReadingOpen: lifetimeMeter(d.unit),
+        pmScheduleId:    d.sched.id,
+        pmService:       d.sched.service,
+        reportedBy:      form.reportedBy,
+        notes:           form.notes,
+      });
+      ids.push(wo.id);
+      dispatch({ type:"ADD_WORK_ORDER", payload: wo });
+    });
+    setSelected([]);
+    setForm(f => ({ ...f, notes:"" }));
+    // One selected? Go straight into it so parts can be added.
+    if (ids.length === 1) onOpen(ids[0]);
+  };
+
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", marginBottom:16, flexWrap:"wrap", gap:12 }}>
+        <div>
+          <div style={{ fontSize:16, fontWeight:700 }}>Preventive Maintenance Due</div>
+          <div style={{ fontSize:13, color:"#888", marginTop:3 }}>
+            Driven by meter readings. Tick what's been done and raise the work orders in one go.
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:18 }}>
+        <KPICard label="Coming Due" value={due.length - overdue.length} sub="Within the warning window" accent="#d97706" icon="clock" />
+        <KPICard label="Overdue"    value={overdue.length}             sub="Past the interval"         accent={overdue.length?"#c0392b":"#888"} icon="alert-triangle" />
+        <KPICard label="Selected"   value={chosen.length}              sub="Ready to raise"            accent={chosen.length?"#1a5a3a":"#888"} icon="clipboard-check" />
+      </div>
+
+      {due.length === 0 && (
+        <div style={{ background:"#e6f4ec", border:"1px solid #a8d5b5", borderRadius:8, padding:28, textAlign:"center", color:"#1a5a3a", fontSize:13 }}>
+          ✓ Nothing due. Warnings appear as meter readings come in — logging fuel updates them automatically.
+        </div>
+      )}
+
+      {due.length > 0 && (
+        <>
+          {/* Batch entry */}
+          <div style={{ background: chosen.length ? "#f0f8f4" : "#f7f7f5", border:`1px solid ${chosen.length?"#a8d5b5":"#ddd"}`, borderRadius:8, padding:16, marginBottom:16 }}>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1.5fr 2fr auto", gap:12, alignItems:"end" }}>
+              <Field label="Date performed">
+                <input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} />
+              </Field>
+              <Field label="Performed by">
+                <input type="text" value={form.reportedBy} onChange={e=>set("reportedBy",e.target.value)} style={{ ...inp, margin:0 }} />
+              </Field>
+              <Field label="Notes (applied to all)">
+                <input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={{ ...inp, margin:0 }} />
+              </Field>
+              <button onClick={createBatch} disabled={!chosen.length}
+                style={{ ...btn.primary, opacity: chosen.length?1:0.4, whiteSpace:"nowrap" }}>
+                Raise {chosen.length || ""} Work Order{chosen.length===1?"":"s"}
+              </button>
+            </div>
+            <div style={{ fontSize:11, color:"#888", marginTop:10 }}>
+              Each becomes its own work order against its machine, so parts and labor cost to the right unit.
+              Add parts on the work order — they come out of inventory at FIFO cost. Closing it stamps the meter and resets the interval.
+            </div>
+          </div>
+
+          <div style={{ display:"flex", gap:10, marginBottom:12 }}>
+            <button onClick={()=>setSelected(due.map(key))} style={{ ...btn.small, fontSize:11 }}>Select All</button>
+            <button onClick={()=>setSelected(overdue.map(key))} style={{ ...btn.small, background:"#c0392b", fontSize:11 }}>Select Overdue</button>
+            <button onClick={()=>setSelected([])} style={{ ...btn.small, background:"#aaa", fontSize:11 }}>Clear</button>
+          </div>
+
+          <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, overflow:"hidden" }}>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+              <thead>
+                <tr style={{ background:"#f7f7f5" }}>
+                  {["","Unit","Equipment","Service","Interval","Meter","Status"].map(h=>(
+                    <th key={h} style={{ padding:"9px 12px", textAlign:h==="Meter"?"right":"left", fontWeight:600, fontSize:11, textTransform:"uppercase", letterSpacing:"0.05em", color:"#666", borderBottom:"1px solid #eee" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {due.map((d,i)=>{
+                  const checked = selected.includes(key(d));
+                  return (
+                    <tr key={key(d)} onClick={()=>toggle(d)}
+                      style={{ borderTop:"1px solid #eee", background: checked ? "#f0f8f4" : i%2===0?"#fff":"#fafaf8", cursor:"pointer" }}>
+                      <td style={{ padding:"9px 12px 9px 16px" }}>
+                        <input type="checkbox" checked={checked} onChange={()=>toggle(d)} onClick={e=>e.stopPropagation()} />
+                      </td>
+                      <td style={{ padding:"9px 12px", fontFamily:"monospace", fontWeight:700, color:"#1a3a5c" }}>{d.unit.unitNumber||"—"}</td>
+                      <td style={{ padding:"9px 12px" }}>{[d.unit.year,d.unit.make,d.unit.model].filter(Boolean).join(" ")||"—"}</td>
+                      <td style={{ padding:"9px 12px", fontWeight:600 }}>{d.sched.service||"—"}</td>
+                      <td style={{ padding:"9px 12px", color:"#888", fontSize:12 }}>
+                        every {Number(d.sched.interval).toLocaleString()} {d.sched.intervalType==="miles"?"mi":d.sched.intervalType==="hours"?"hr":"mo"}
+                      </td>
+                      <td style={{ padding:"9px 12px", textAlign:"right", fontFamily:"monospace" }}>{lifetimeMeter(d.unit).toLocaleString()}</td>
+                      <td style={{ padding:"9px 12px" }}><PMBadge status={d.status} /></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -1362,8 +1362,36 @@ start so they can be separated later if wanted.
 
 ### Agreed sequence
 
-1. ✅ Revenue
-2. Settings — townships, storage locations, tanks
-3. PM work orders with batch entry
+1. ✅ **Revenue** — Treasurer receipt flow, editable, no claim cycle
+2. ✅ **Settings** — townships and storage locations were writing where nothing
+   read; both fixed, tanks section added, county hardcoding removed
+3. ✅ **PM work orders with batch entry**
 4. Work orders as cost targets
 5. CSV import — any time before go-live
+
+### PM work orders — built 2026-07-27
+
+A PM is a work order like any other, so parts come out of inventory at FIFO cost
+and everything rolls into the unit's operating cost. Two fields link it back:
+`pmScheduleId` and `pmService`.
+
+**New PM Due tab.** Everything overdue or approaching across the fleet, worst
+first. Tick what's been done, set the date and who did it once, and raise all the
+work orders in one go — the shop's six Tuesday oil changes are one screen, not
+six forms. Each still becomes its own work order against its own machine, so
+costing stays per-unit. Select All and Select Overdue for speed. Picking a single
+one opens it straight away so parts can be added.
+
+**Overdue items open as urgent**, everything else routine.
+
+**Closing a PM work order stamps the schedule** — `lastDoneMeter` and
+`lastDoneDate` — so the interval resets and the warning stops firing for work
+already done. Uses lifetime meter, so a replaced gauge doesn't reset the clock.
+
+**Category stays `preventive`**, so repair analysis can exclude routine service —
+"what is this grader costing me in breakdowns" shouldn't include oil changes.
+
+Verified end to end: three units due (one overdue), batched into three work
+orders one per machine, closing unit 241's at meter 3,480 stamps the schedule and
+pushes the next oil change to 3,730, that unit drops off the due list, and a
+separate hydraulic failure is the only work order counted as a repair.

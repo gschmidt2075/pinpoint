@@ -424,8 +424,36 @@ function reducer(state, action) {
       return { ...state, workOrders: [...state.workOrders, action.payload] };
     case "UPDATE_WORK_ORDER":
       return { ...state, workOrders: state.workOrders.map(w => w.id === action.payload.id ? action.payload : w) };
-    case "CLOSE_WORK_ORDER":
-      return { ...state, workOrders: state.workOrders.map(w => w.id === action.payload.id ? { ...w, status: "closed", closedDate: action.payload.closedDate || new Date().toISOString().split("T")[0] } : w) };
+    // Closing a work order. If it satisfies a PM schedule, stamp the schedule so
+    // the interval resets — otherwise the due warnings would keep firing for work
+    // that's already been done.
+    case "CLOSE_WORK_ORDER": {
+      const closedDate = action.payload.closedDate || new Date().toISOString().split("T")[0];
+      const wo = state.workOrders.find(w => w.id === action.payload.id);
+      const meterAtClose = action.payload.meterReadingClose ?? wo?.meterReadingClose ?? 0;
+
+      const workOrders = state.workOrders.map(w =>
+        w.id !== action.payload.id ? w
+          : { ...w, status:"closed", closedDate,
+              meterReadingClose: meterAtClose || w.meterReadingClose });
+
+      let equipment = state.equipment;
+      if (wo?.pmScheduleId && wo.unitId) {
+        equipment = state.equipment.map(u => {
+          if (u.id !== wo.unitId) return u;
+          // Lifetime meter, so a replaced gauge doesn't reset the clock
+          const lifetime = (Number(u.meterOffset)||0) + (meterAtClose || Number(u.currentMeter)||0);
+          return {
+            ...u,
+            currentMeter: Math.max(Number(u.currentMeter)||0, meterAtClose||0),
+            pmSchedule: (u.pmSchedule||[]).map(sc =>
+              sc.id !== wo.pmScheduleId ? sc
+                : { ...sc, lastDoneMeter: lifetime, lastDoneDate: closedDate }),
+          };
+        });
+      }
+      return { ...state, workOrders, equipment };
+    }
     case "VOID_WORK_ORDER":
       return { ...state, workOrders: state.workOrders.map(w => w.id === action.payload ? { ...w, status: "void" } : w) };
 
