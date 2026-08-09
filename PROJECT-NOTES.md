@@ -35,6 +35,7 @@ It replaces a mix of aging software, spreadsheets, and paper across:
 | Equipment | `Equipment.jsx` | Built and overhauled. Parts issue from inventory, PM warnings, fuel & department billing, operating cost |
 | Infrastructure | `Infrastructure.jsx` | Built and overhauled. Barrels, 0–5 ratings, road history, bridge postings |
 | Projects | `Projects.jsx` | Built. Form still out with staff |
+| Reporting | `Reporting.jsx` | **Built 2026-07-27.** Board annual report and ACPC supporting records |
 | Settings | `Settings.jsx` | Built. **Dropdown Lists screen added** — lists now live in `db.lookups` |
 | Employees | `Employees.jsx` | **Built 2026-07-27.** Rate history, per-person fringe, certifications, pay scales. Labor costing only — not payroll |
 | Vendors | `Vendors.jsx` | **Built 2026-07-27.** Payees, remit-to, insurance, bonding, contract rates, supplied items |
@@ -92,6 +93,13 @@ transfer unchanged.
 Things that aren't obvious from the code.
 
 **Fiscal year** — July 1 to June 30. FY2027 = 2026-07-01 through 2027-06-30.
+
+**Annual Certification of Program Compliance (ACPC)** — filed with the Nebraska
+Board of Public Roads Classifications and Standards by 31 October. Failure to
+file suspends Highway Allocation funds. **Pinpoint must never generate the form**
+— NBCS states recreations are not accepted, and the Clerk receives it anyway.
+Four of its nine certifications describe systems Pinpoint provides, so Reporting
+produces the supporting records instead.
 
 **Claim cycles** — the County Board approves payments on the 1st and 3rd Tuesday.
 Expenditures are assigned to a cycle; approval happens at the *cycle* level, not

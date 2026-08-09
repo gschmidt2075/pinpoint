@@ -1209,3 +1209,66 @@ Day to day · What you wish you had
 - **Asset reports for the Board.** The cost linkage exists via
   `AssetCostHistory`; what the Board actually wants to see belongs to the Reports
   form, still outstanding.
+
+
+---
+
+## Year-end reporting — researched 2026-07-27
+
+### Annual Certification of Program Compliance (ACPC)
+
+Filed with the **Nebraska Board of Public Roads Classifications and Standards**
+by **31 October** each year. Signed by the County Board Chairperson with a Board
+resolution authorising the signing; the Highway Superintendent's signature is
+optional but recommended. Statutes: §§39-2115, 39-2119, 39-2120, 39-2121,
+39-2510(2).
+
+**Failure to file suspends Highway Allocation funds.**
+
+**Greg's decision 2026-07-27: Pinpoint does NOT touch the form.** The Clerk
+receives it from NBCS each year and it goes to the Board for approval. NBCS also
+states plainly that *"recreations will not be accepted"*, so producing it would
+be actively wrong.
+
+**Four of the nine certifications describe what Pinpoint does:**
+
+> · *"uses a system of revenue and costs accounting which clearly includes a
+>    comparison of receipts and expenditures for approved budgets…"*
+> · *"uses a system of budgeting which reflects uses and sources of funds…"*
+> · *"uses an accounting system including an inventory of machinery, equipment,
+>    and supplies"*
+> · *"uses an accounting system that tracks equipment operation costs"*
+
+### Also in scope
+
+- **One- and Six-Year Plan** annual reporting — 428 NAC 3
+- **Standardized System of Annual Reporting for Roads, Street and Highway
+  Programs** — 428 NAC 4, financial and inventory data. **Greg is retrieving a
+  copy from his work computer.** Not scoped until then.
+- **§39-2510(2)** — a determination of motor vehicle sales and use tax revenue to
+  be expended, kept as a public record
+
+### Built 2026-07-27
+
+`Reporting.jsx`, replacing the "coming soon" nav slot. Fiscal year selector
+(1 July – 30 June) and print CSS on both views.
+
+**Annual Report** — the synopsis for the Board. Headline figures, where the money
+went with a proportional bar, the road system by surface type with mileage, how
+many segments were graveled/bladed/sealed this year, asset counts, fleet and fuel
+including what was billed to other departments, and projects completed with their
+costs.
+
+**Compliance Support** — the evidence behind the four certifications, each quoted
+verbatim against the report that backs it. Receipts vs expenditures; machinery,
+equipment and supplies with the full equipment inventory and FIFO stock value;
+and equipment operation costs per unit broken into fuel, parts, labor and outside
+repairs.
+
+Verified: the FY window includes 2025-07-01 through 2026-06-30 and excludes the
+days either side; equipment costs roll up correctly per unit and exclude work
+orders from prior years.
+
+### Still open
+
+- **428 NAC 4 annual report** — awaiting a copy

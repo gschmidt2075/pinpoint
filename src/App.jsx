@@ -8,6 +8,7 @@ import Projects from "./modules/Projects.jsx";
 import Settings from "./modules/Settings.jsx";
 import Vendors from "./modules/Vendors.jsx";
 import Employees from "./modules/Employees.jsx";
+import Reporting from "./modules/Reporting.jsx";
 import { FISCAL_YEAR } from "./data/accountCodes.js";
 import { DEFAULT_STORAGE_LOCATIONS, DEFAULT_TOWNSHIPS, DEFAULT_LOOKUPS, DEFAULT_TANKS } from "./data/schema.js";
 import { INITIAL_INVENTORY_ITEMS, INITIAL_INVENTORY_BATCHES, INITIAL_INVENTORY_TRANSACTIONS } from "./data/inventoryData.js";
@@ -573,7 +574,7 @@ const NAV_GROUPS = [
     label: "Admin",
     items: [
       { id:"permitting",     label:"Permitting",        icon:"ti-license",      soon:true },
-      { id:"reporting",      label:"Reporting",         icon:"ti-chart-bar",    soon:true },
+      { id:"reporting",      label:"Reporting",         icon:"ti-chart-bar" },
       { id:"settings",       label:"Settings",          icon:"ti-settings",     adminOnly:true },
     ],
   },
@@ -716,8 +717,9 @@ export default function App() {
           {activeTab==="projects"       && <Projects         db={db} dispatch={dispatch} />}
           {activeTab==="vendors"        && <Vendors          db={db} dispatch={dispatch} />}
           {activeTab==="payroll"        && <Employees        db={db} dispatch={dispatch} role={role} />}
+          {activeTab==="reporting"      && <Reporting        db={db} dispatch={dispatch} role={role} />}
           {activeTab==="settings"       && <Settings         db={db} dispatch={dispatch} />}
-          {!["fund","cost","inventory","equipment","infrastructure","projects","vendors","payroll","settings"].includes(activeTab) && <ComingSoon tab={currentTab} />}
+          {!["fund","cost","inventory","equipment","infrastructure","projects","vendors","payroll","reporting","settings"].includes(activeTab) && <ComingSoon tab={currentTab} />}
         </div>
       </div>
 
