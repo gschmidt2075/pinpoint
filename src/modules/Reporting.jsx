@@ -160,7 +160,7 @@ function useYearFigures(db, range) {
 // ── Annual report to the Board ────────────────────────────────────────────────
 function AnnualReport({ db, range }) {
   const f = useYearFigures(db, range);
-  const county = db.countyInfo?.name || "Adams County";
+  const county = db.countyInfo?.name || db.countyInfo?.countyName || "County";
 
   const roads      = (db.roads||[]).filter(r=>r.status!=="inactive");
   const structures = db.structures || [];
@@ -351,7 +351,7 @@ function AnnualReport({ db, range }) {
 // ── ACPC supporting reports ───────────────────────────────────────────────────
 function ComplianceSupport({ db, range, role }) {
   const f = useYearFigures(db, range);
-  const county = db.countyInfo?.name || "Adams County";
+  const county = db.countyInfo?.name || db.countyInfo?.countyName || "County";
   const items  = db.inventoryItems || [];
   const batches= db.inventoryBatches || [];
   const equipment = (db.equipment||[]).filter(u=>u.status!=="sold");

@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { Field, SectionCard, Table, Icon, AlertBar, inp, btn, fmt, fmtSm } from "../components/shared.jsx";
 import { EXPENDITURE_CODES, REVENUE_CODES, FISCAL_YEAR } from "../data/accountCodes.js";
-import { LOOKUP_DEFS } from "../data/schema.js";
+import { LOOKUP_DEFS, createTownship, createStorageLocation, createTank } from "../data/schema.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const DEFAULT_TOWNSHIPS = [
@@ -125,7 +125,7 @@ function CountyInfo({ db, dispatch }) {
         <div style={{ padding:"18px 22px" }}>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
             <Field label="County Name" required>
-              <input type="text" placeholder="e.g. Adams County" value={form.countyName} onChange={e=>set("countyName",e.target.value)} style={inp} />
+              <input type="text" placeholder="County name…" value={form.countyName} onChange={e=>set("countyName",e.target.value)} style={inp} />
             </Field>
             <Field label="Department Name">
               <input type="text" value={form.deptName} onChange={e=>set("deptName",e.target.value)} style={inp} />
@@ -619,12 +619,14 @@ function SystemSettings({ db, dispatch }) {
 
   const townships    = db.townships    || DEFAULT_TOWNSHIPS;
   const customFunds  = db.customFunds  || [];
-  const locations    = db.locations    || DEFAULT_LOCATIONS;
+  const locations    = db.storageLocations || [];
+  const tanks        = db.tanks || [];
 
   const sections = [
     { id:"lists",     label:"Dropdown Lists",   icon:"list" },
     { id:"townships", label:"Townships",        icon:"map-pin" },
-    { id:"locations", label:"Inventory Locations",icon:"building-warehouse" },
+    { id:"locations", label:"Storage Locations", icon:"building-warehouse" },
+    { id:"tanks",     label:"Fuel Tanks",        icon:"gas-station" },
     { id:"funds",     label:"Custom Funds",     icon:"coin" },
     { id:"fema",      label:"FEMA Rates",       icon:"alert-octagon" },
   ];
@@ -657,58 +659,38 @@ function SystemSettings({ db, dispatch }) {
       {activeSection==="lists" && <LookupLists db={db} dispatch={dispatch} />}
 
       {activeSection==="townships" && (
-        <SectionCard title="Townships" subtitle={`${townships.length} townships configured`} icon="map-pin">
-          <div style={{ padding:"16px 18px", borderBottom:"1px solid #eee" }}>
-            <div style={{ display:"flex", gap:10 }}>
-              <input type="text" placeholder="Add township name…" value={newTownship} onChange={e=>setNewTownship(e.target.value)} onKeyDown={e=>{ if(e.key==="Enter"&&newTownship.trim()){ dispatch({type:"ADD_TOWNSHIP",payload:newTownship.trim()}); setNewTownship(""); } }} style={{ ...inp, flex:1 }} />
-              <button onClick={()=>{ if(newTownship.trim()){ dispatch({type:"ADD_TOWNSHIP",payload:newTownship.trim()}); setNewTownship(""); } }} style={{ ...btn.primary }}>
-                <Icon name="plus" size={14} color="#fff" /> Add
-              </button>
-            </div>
-          </div>
-          <div style={{ padding:"8px 18px", display:"flex", flexWrap:"wrap", gap:8 }}>
-            {townships.map((t,i)=>(
-              <div key={i} style={{ background:"#f0f0ee", borderRadius:20, padding:"6px 14px", fontSize:13, display:"flex", alignItems:"center", gap:8 }}>
-                <Icon name="map-pin" size={12} color="#888" />
-                {t}
-                <button onClick={()=>dispatch({type:"REMOVE_TOWNSHIP",payload:t})} style={{ background:"none", border:"none", color:"#aaa", cursor:"pointer", padding:0, fontSize:14, lineHeight:1 }}>×</button>
-              </div>
-            ))}
-          </div>
-        </SectionCard>
+        <ListEditor
+          title="Townships"
+          subtitle="Reference only — used on structures and scale tickets"
+          icon="map-pin"
+          items={townships}
+          placeholder="Add township name…"
+          onAdd={name => dispatch({ type:"ADD_TOWNSHIP", payload: createTownship({ name }) })}
+          onRename={(item,name) => dispatch({ type:"UPDATE_TOWNSHIP", payload:{ ...item, name } })}
+          onRemove={item => dispatch({ type:"REMOVE_TOWNSHIP", payload:item.id })}
+        />
       )}
 
-      {/* Inventory Locations */}
+
       {activeSection==="locations" && (
-        <SectionCard title="Inventory Locations" subtitle={`${locations.length} locations`} icon="building-warehouse">
-          <div style={{ padding:"16px 18px", borderBottom:"1px solid #eee" }}>
-            <div style={{ display:"flex", gap:10 }}>
-              <input type="text" placeholder="Add location name… (e.g. New Shed)" value={newLocation} onChange={e=>setNewLocation(e.target.value)} onKeyDown={e=>{ if(e.key==="Enter"&&newLocation.trim()){ dispatch({type:"ADD_LOCATION",payload:{ id:newLocation.toLowerCase().replace(/\s+/g,"_"), name:newLocation.trim(), shelves:["A1","A2","B1","B2"] }}); setNewLocation(""); } }} style={{ ...inp, flex:1 }} />
-              <button onClick={()=>{ if(newLocation.trim()){ dispatch({type:"ADD_LOCATION",payload:{ id:newLocation.toLowerCase().replace(/\s+/g,"_"), name:newLocation.trim(), shelves:["A1","A2","B1","B2"] }}); setNewLocation(""); } }} style={{ ...btn.primary }}>
-                <Icon name="plus" size={14} color="#fff" /> Add
-              </button>
-            </div>
-          </div>
-          <div style={{ padding:"8px 18px" }}>
-            {locations.map((l,i)=>(
-              <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 0", borderBottom:"1px solid #f0f0ee" }}>
-                <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                  <Icon name="building-warehouse" size={15} color="#1a3a5c" />
-                  <div>
-                    <div style={{ fontSize:13, fontWeight:600 }}>{l.name}</div>
-                    <div style={{ fontSize:11, color:"#888", marginTop:2 }}>{l.shelves?.length||0} shelves: {l.shelves?.slice(0,5).join(", ")}{(l.shelves?.length||0)>5?"…":""}</div>
-                  </div>
-                </div>
-                {!["main"].includes(l.id) && (
-                  <button onClick={()=>dispatch({type:"REMOVE_LOCATION",payload:l.id})} style={{ ...btn.small, background:"#c0392b", fontSize:10, padding:"3px 8px" }}>
-                    <Icon name="trash" size={11} color="#fff" /> Remove
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        </SectionCard>
+        <ListEditor
+          title="Storage Locations"
+          subtitle="Sheds hold stock. Stockpiles fill from scale tickets; portable tanks from the tank workflow."
+          icon="building-warehouse"
+          items={locations}
+          placeholder="Add location name…"
+          typeOptions={[["shed","Shed"],["stockpile","Stockpile"],["portable_tank","Portable Tank"]]}
+          onAdd={(name,type) => dispatch({ type:"ADD_STORAGE_LOCATION", payload: createStorageLocation({ name, type: type||"shed" }) })}
+          onRename={(item,name) => dispatch({ type:"UPDATE_STORAGE_LOCATION", payload:{ ...item, name } })}
+          onRetype={(item,type) => dispatch({ type:"UPDATE_STORAGE_LOCATION", payload:{ ...item, type } })}
+          onRemove={item => dispatch({ type:"REMOVE_STORAGE_LOCATION", payload:item.id })}
+        />
       )}
+
+      {activeSection==="tanks" && (
+        <TankSettings tanks={tanks} dispatch={dispatch} />
+      )}
+
 
       {/* Custom Funds */}
       {activeSection==="funds" && (
@@ -911,5 +893,200 @@ function LookupLists({ db, dispatch }) {
         </div>
       ))}
     </div>
+  );
+}
+
+// ── Generic list editor ───────────────────────────────────────────────────────
+// Townships and storage locations are lists of objects, not strings. Editing one
+// used to appear to do nothing, because Settings pushed raw strings into an
+// object array and edited a `locations` alias no module ever read.
+function ListEditor({ title, subtitle, icon, items, placeholder, typeOptions, onAdd, onRename, onRetype, onRemove }) {
+  const [draft, setDraft]     = useState("");
+  const [draftType, setDraftType] = useState(typeOptions?.[0]?.[0] || "");
+  const [editing, setEditing] = useState(null);
+  const [editText, setEditText] = useState("");
+
+  const add = () => {
+    const v = draft.trim();
+    if (!v) return;
+    onAdd(v, draftType);
+    setDraft("");
+  };
+  const commit = () => {
+    const v = editText.trim();
+    if (v && editing) onRename(editing, v);
+    setEditing(null); setEditText("");
+  };
+
+  return (
+    <SectionCard title={title} subtitle={subtitle || `${items.length} configured`} icon={icon}>
+      <div style={{ padding:"16px 18px", borderBottom:"1px solid #eee" }}>
+        <div style={{ display:"flex", gap:10 }}>
+          <input
+            type="text" value={draft} placeholder={placeholder}
+            onChange={e=>setDraft(e.target.value)}
+            onKeyDown={e=>{ if(e.key==="Enter") add(); }}
+            style={{ ...inp, flex:1, margin:0 }}
+          />
+          {typeOptions && (
+            <select value={draftType} onChange={e=>setDraftType(e.target.value)} style={{ ...inp, margin:0, width:150 }}>
+              {typeOptions.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+            </select>
+          )}
+          <button onClick={add} style={btn.primary}>
+            <Icon name="plus" size={14} color="#fff" /> Add
+          </button>
+        </div>
+      </div>
+
+      <div style={{ padding:"8px 18px" }}>
+        {items.length === 0 && (
+          <div style={{ padding:"18px 0", textAlign:"center", color:"#aaa", fontSize:13 }}>
+            None yet — add the first above.
+          </div>
+        )}
+        {items.map((item)=>(
+          <div key={item.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"9px 0", borderBottom:"1px solid #f0f0ee", gap:10 }}>
+            {editing?.id === item.id ? (
+              <>
+                <input
+                  autoFocus value={editText}
+                  onChange={e=>setEditText(e.target.value)}
+                  onKeyDown={e=>{ if(e.key==="Enter") commit(); if(e.key==="Escape"){ setEditing(null); setEditText(""); } }}
+                  style={{ ...inp, margin:0, flex:1 }}
+                />
+                <button onClick={commit} style={{ ...btn.small, background:"#1a5a3a", fontSize:10, padding:"4px 10px" }}>Save</button>
+                <button onClick={()=>{setEditing(null); setEditText("");}} style={{ ...btn.small, background:"#aaa", fontSize:10, padding:"4px 10px" }}>Cancel</button>
+              </>
+            ) : (
+              <>
+                <div style={{ display:"flex", alignItems:"center", gap:10, flex:1 }}>
+                  <Icon name={icon} size={15} color="#1a3a5c" />
+                  <span style={{ fontSize:13, fontWeight:600 }}>{item.name}</span>
+                  {typeOptions && onRetype && (
+                    <select
+                      value={item.type} onChange={e=>onRetype(item, e.target.value)}
+                      style={{ ...inp, margin:0, width:140, fontSize:11, padding:"3px 6px" }}
+                    >
+                      {typeOptions.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+                    </select>
+                  )}
+                </div>
+                <button onClick={()=>{ setEditing(item); setEditText(item.name); }} style={{ ...btn.small, background:"#1a3a5c", fontSize:10, padding:"4px 10px" }}>Rename</button>
+                <button
+                  onClick={()=>{ if(window.confirm(`Remove "${item.name}"?\n\nRecords already using it keep the value — it just won't be offered on new entries.`)) onRemove(item); }}
+                  style={{ ...btn.small, background:"#c0392b", fontSize:10, padding:"4px 10px" }}
+                >Remove</button>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+    </SectionCard>
+  );
+}
+
+// ── Fuel tanks ────────────────────────────────────────────────────────────────
+function TankSettings({ tanks, dispatch }) {
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({
+    name:"", location:"", fuelType:"diesel", tankType:"above_ground",
+    capacityGallons:"", hasMonitor:false, filledByContractor:false, carriedByUnit:"",
+  });
+  const set = (k,v) => setForm(f=>({...f,[k]:v}));
+
+  const add = () => {
+    if (!form.name) return;
+    dispatch({ type:"ADD_TANK", payload: createTank({ ...form, capacityGallons: parseFloat(form.capacityGallons)||0 }) });
+    setForm({ name:"", location:"", fuelType:"diesel", tankType:"above_ground", capacityGallons:"", hasMonitor:false, filledByContractor:false, carriedByUnit:"" });
+    setShowForm(false);
+  };
+
+  const toggle = (t,k) => dispatch({ type:"UPDATE_TANK", payload:{ ...t, [k]: !t[k] } });
+
+  return (
+    <SectionCard
+      title="Fuel Tanks"
+      subtitle={`${tanks.length} tanks · monitored tanks reconcile daily, the rest are dipped annually`}
+      icon="gas-station"
+    >
+      <div style={{ padding:"14px 18px", borderBottom:"1px solid #eee" }}>
+        <button onClick={()=>setShowForm(s=>!s)} style={btn.primary}>{showForm?"Cancel":"+ Add Tank"}</button>
+      </div>
+
+      {showForm && (
+        <div style={{ padding:18, background:"#f7f7f5", borderBottom:"1px solid #eee" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"2fr 1.5fr 1fr 1fr 1fr", gap:12, marginBottom:12 }}>
+            <Field label="Name" required><input type="text" value={form.name} onChange={e=>set("name",e.target.value)} style={{ ...inp, margin:0 }} placeholder="Main Shop Diesel" /></Field>
+            <Field label="Location"><input type="text" value={form.location} onChange={e=>set("location",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <Field label="Fuel">
+              <select value={form.fuelType} onChange={e=>set("fuelType",e.target.value)} style={{ ...inp, margin:0 }}>
+                <option value="diesel">Diesel</option><option value="unleaded">Unleaded</option>
+              </select>
+            </Field>
+            <Field label="Type">
+              <select value={form.tankType} onChange={e=>set("tankType",e.target.value)} style={{ ...inp, margin:0 }}>
+                <option value="above_ground">Above ground</option>
+                <option value="underground">Underground</option>
+                <option value="portable">Portable</option>
+              </select>
+            </Field>
+            <Field label="Capacity (gal)"><input type="number" min="0" value={form.capacityGallons} onChange={e=>set("capacityGallons",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+          </div>
+          <div style={{ display:"flex", gap:20, alignItems:"center", flexWrap:"wrap" }}>
+            <label style={{ display:"flex", alignItems:"center", gap:7, fontSize:12, cursor:"pointer" }}>
+              <input type="checkbox" checked={form.hasMonitor} onChange={e=>set("hasMonitor",e.target.checked)} />
+              Has an electronic monitor <span style={{ color:"#888" }}>— reconciles daily</span>
+            </label>
+            <label style={{ display:"flex", alignItems:"center", gap:7, fontSize:12, cursor:"pointer" }}>
+              <input type="checkbox" checked={form.filledByContractor} onChange={e=>set("filledByContractor",e.target.checked)} />
+              Filled by contractor tank wagon
+            </label>
+            {form.tankType === "portable" && (
+              <Field label="Carried by unit"><input type="text" value={form.carriedByUnit} onChange={e=>set("carriedByUnit",e.target.value)} style={{ ...inp, margin:0, width:90, fontFamily:"monospace" }} placeholder="402" /></Field>
+            )}
+            <button onClick={add} disabled={!form.name} style={{ ...btn.primary, opacity:form.name?1:0.4, marginLeft:"auto" }}>Add Tank</button>
+          </div>
+        </div>
+      )}
+
+      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+        <thead>
+          <tr style={{ background:"#f7f7f5" }}>
+            {["Tank","Location","Fuel","Capacity","Monitor","Contractor Filled","Carried By",""].map(h=>(
+              <th key={h} style={{ padding:"9px 14px", textAlign:h==="Capacity"?"right":"left", fontWeight:600, fontSize:11, textTransform:"uppercase", letterSpacing:"0.05em", color:"#666", borderBottom:"1px solid #eee" }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {tanks.length===0 && (
+            <tr><td colSpan={8} style={{ padding:28, textAlign:"center", color:"#aaa", fontSize:13 }}>No tanks configured</td></tr>
+          )}
+          {tanks.map((t,i)=>(
+            <tr key={t.id} style={{ borderTop:"1px solid #eee", background:i%2===0?"#fff":"#fafaf8" }}>
+              <td style={{ padding:"9px 14px", fontWeight:600 }}>{t.name}</td>
+              <td style={{ padding:"9px 14px", fontSize:12, color:"#666" }}>{t.location||"—"}</td>
+              <td style={{ padding:"9px 14px", fontSize:12, textTransform:"capitalize" }}>{t.fuelType}</td>
+              <td style={{ padding:"9px 14px", textAlign:"right", fontFamily:"monospace" }}>{t.capacityGallons?.toLocaleString()||"—"}</td>
+              <td style={{ padding:"9px 14px" }}>
+                <label style={{ cursor:"pointer", fontSize:12 }}>
+                  <input type="checkbox" checked={!!t.hasMonitor} onChange={()=>toggle(t,"hasMonitor")} /> {t.hasMonitor?"daily":"annual dip"}
+                </label>
+              </td>
+              <td style={{ padding:"9px 14px" }}>
+                <input type="checkbox" checked={!!t.filledByContractor} onChange={()=>toggle(t,"filledByContractor")} />
+              </td>
+              <td style={{ padding:"9px 14px", fontFamily:"monospace", fontSize:12, color:"#888" }}>{t.carriedByUnit||"—"}</td>
+              <td style={{ padding:"9px 14px", textAlign:"right" }}>
+                <button
+                  onClick={()=>{ if(window.confirm(`Remove ${t.name}?\n\nFuel already logged against it is kept.`)) dispatch({ type:"REMOVE_TANK", payload:t.id }); }}
+                  style={{ ...btn.small, background:"#c0392b", fontSize:10, padding:"3px 9px" }}
+                >Remove</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </SectionCard>
   );
 }

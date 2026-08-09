@@ -1063,7 +1063,7 @@ function ScaleTicket({ db, dispatch, onDone }) {
             {/* Row 2: Source / Vendor (supplier) */}
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
               <Field label="Source (pit / quarry / supplier)">
-                <input type="text" value={form.source} onChange={e=>set("source",e.target.value)} style={inp} placeholder="e.g. Adams County Pit, Joe's Quarry…" />
+                <input type="text" value={form.source} onChange={e=>set("source",e.target.value)} style={inp} placeholder="Pit, quarry or supplier…" />
               </Field>
               <Field label="Vendor (invoice will come from)">
                 <input type="text" value={form.vendorName} onChange={e=>set("vendorName",e.target.value)} style={inp} placeholder="Company name…" />
@@ -1719,6 +1719,8 @@ function AdjustForm({ db, dispatch, onDone }) {
 function YearEndCount({ db }) {
   const items   = (db.inventoryItems||[]).filter(i=>i.active!==false);
   const batches = db.inventoryBatches||[];
+  // Never hardcode the county — it's set in Settings → County Info
+  const countyName = db.countyInfo?.countyName || db.countyInfo?.name || "County";
 
   // Group by commodityGroup, sort groups alpha
   const grouped = useMemo(() => {
@@ -1813,7 +1815,7 @@ function YearEndCount({ db }) {
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", borderBottom:"2px solid #1a5a3a", paddingBottom:8, marginBottom:12 }}>
               <div>
                 <div style={{ fontSize:16, fontWeight:700, color:"#1a5a3a" }}>{group}</div>
-                <div style={{ fontSize:12, color:"#888" }}>FY{fiscalYear} Physical Count — Adams County Highway Department</div>
+                <div style={{ fontSize:12, color:"#888" }}>FY{fiscalYear} Physical Count — {countyName} Highway Department</div>
               </div>
               <div style={{ textAlign:"right" }}>
                 <div style={{ fontSize:12, color:"#888" }}>Count Date: _______________</div>

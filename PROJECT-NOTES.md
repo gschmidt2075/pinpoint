@@ -318,6 +318,19 @@ learned about how the department actually works.
 
 ---
 
+## Keeping it county-neutral
+
+Greg intends to keep a clean version usable by other counties. Two rules:
+
+1. **Never hardcode a county name.** Everything reads from `countyInfo`, set in
+   Settings. Fixed 2026-07-27 — Reporting and the inventory count sheet had it
+   literal.
+2. **Seed data is not the program.** `DEFAULT_STORAGE_LOCATIONS`, `DEFAULT_TANKS`,
+   `DEFAULT_TOWNSHIPS` and `inventoryData.js` are all Adams County's. They're
+   editable in Settings, but a clean install still arrives pre-loaded with the
+   wrong sheds and tanks. **Still to do:** move them to `data/seed/` so a fresh
+   install starts empty.
+
 ## Under consideration — multi-county product
 
 Greg is weighing whether Pinpoint could be sold to other counties.

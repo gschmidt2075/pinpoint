@@ -560,8 +560,26 @@ function reducer(state, action) {
     case "UPDATE_STORAGE_LOCATION": return { ...state, storageLocations: state.storageLocations.map(l => l.id === action.payload.id ? action.payload : l) };
     case "REMOVE_STORAGE_LOCATION": return { ...state, storageLocations: state.storageLocations.filter(l => l.id !== action.payload) };
 
-    case "ADD_TOWNSHIP":    return { ...state, townships: [...(state.townships || []), action.payload] };
-    case "REMOVE_TOWNSHIP": return { ...state, townships: (state.townships || []).filter(t => t.id !== action.payload) };
+    // ── Townships & storage locations ──────────────────────────────────────
+    // Both are lists of objects, not strings. Settings previously pushed raw
+    // strings into the township list and edited a `locations` alias nothing read,
+    // which is why editing them appeared to do nothing.
+    case "ADD_TOWNSHIP":
+      return { ...state, townships: [...(state.townships || []), action.payload] };
+    case "UPDATE_TOWNSHIP":
+      return { ...state, townships: (state.townships || []).map(t => t.id === action.payload.id ? action.payload : t) };
+    case "REMOVE_TOWNSHIP":
+      return { ...state, townships: (state.townships || []).filter(t => t.id !== action.payload) };
+
+    case "ADD_STORAGE_LOCATION":
+      return { ...state, storageLocations: [...(state.storageLocations || []), action.payload] };
+    case "UPDATE_STORAGE_LOCATION":
+      return { ...state, storageLocations: (state.storageLocations || []).map(l => l.id === action.payload.id ? action.payload : l) };
+    case "REMOVE_STORAGE_LOCATION":
+      return { ...state, storageLocations: (state.storageLocations || []).filter(l => l.id !== action.payload) };
+
+    case "REMOVE_TANK":
+      return { ...state, tanks: (state.tanks || []).filter(t => t.id !== action.payload) };
 
     case "ADD_CUSTOM_FUND":    return { ...state, customFunds: [...state.customFunds, action.payload] };
     case "REMOVE_CUSTOM_FUND": return { ...state, customFunds: state.customFunds.filter(f => f !== action.payload) };
