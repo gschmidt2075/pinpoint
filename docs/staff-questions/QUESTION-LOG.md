@@ -1366,8 +1366,33 @@ start so they can be separated later if wanted.
 2. ✅ **Settings** — townships and storage locations were writing where nothing
    read; both fixed, tanks section added, county hardcoding removed
 3. ✅ **PM work orders with batch entry**
-4. Work orders as cost targets
+4. ✅ **Work orders as cost targets**
 5. CSV import — any time before go-live
+
+### Work orders as cost targets — built 2026-07-27
+
+Cost Accounting's "Enter Costs" now offers **a project or an open work order**.
+Work orders stay work orders — project numbers keep their meaning rather than
+being diluted by several hundred oil changes a year.
+
+The five entry components were written against a project parent. Rather than
+rewrite them, a work order is presented through a small adapter: the record
+exposes project-shaped field names (`partEntries` → `materialEntries`,
+`serviceEntries` → `contractorEntries`) and dispatches are translated on the way
+out to `ADD_WORK_ORDER_ENTRY`. Projects pass through untouched.
+
+Work order entry shows only **Labor, Parts and Outside Service** — a work order
+is *about* a machine, so there's no equipment line to add, and engineering
+doesn't apply.
+
+**By Project** gains a work order summary split into **repairs** and
+**preventive**, which is what makes "what is this machine costing me in
+breakdowns" answerable. Deliberately shown alongside projects rather than mixed
+into them.
+
+Verified: the shim exposes labor, parts and service under project-shaped names,
+dispatches translate to the work order actions with the right entry types, and
+project dispatches are unchanged.
 
 ### PM work orders — built 2026-07-27
 

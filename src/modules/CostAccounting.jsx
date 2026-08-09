@@ -117,8 +117,45 @@ export default function CostAccounting({ db, dispatch }) {
 // ENTER COSTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ── Cost targets ──────────────────────────────────────────────────────────────
+// Costs can land on a project OR a work order. A work order stays a work order —
+// project numbers (C1-###, M-YYYY-##) mean something to the Board and the state
+// and shouldn't be diluted by several hundred oil changes a year.
+//
+// The five entry components below were written against a project parent. Rather
+// than rewrite them, a work order is presented through a small adapter: the
+// record exposes project-shaped field names, and dispatches are translated on the
+// way out. Work orders name the same things differently —
+//   materialEntries → partEntries · contractorEntries → serviceEntries
+function targetRecord(kind, record) {
+  if (kind !== "workorder") return record;
+  return {
+    ...record,
+    materialEntries:   record.partEntries    || [],
+    contractorEntries: record.serviceEntries || [],
+  };
+}
+
+function targetDispatch(realDispatch, kind, id) {
+  if (kind !== "workorder") return realDispatch;
+  const rename = { materialEntries:"partEntries", contractorEntries:"serviceEntries", engineeringEntries:"serviceEntries" };
+  return (action) => {
+    if (action.type === "ADD_PROJECT_ENTRY" || action.type === "UPDATE_PROJECT_ENTRY") {
+      return realDispatch({
+        type: action.type === "ADD_PROJECT_ENTRY" ? "ADD_WORK_ORDER_ENTRY" : "UPDATE_WORK_ORDER_ENTRY",
+        payload: {
+          workOrderId: id,
+          entryType: rename[action.payload.entryType] || action.payload.entryType,
+          entry: action.payload.entry,
+        },
+      });
+    }
+    return realDispatch(action);
+  };
+}
+
 function EnterCostsTab({ db, dispatch }) {
-  const [projectId, setProjectId] = useState("");
+  const [targetKey, setTargetKey] = useState("");   // "project:<id>" | "workorder:<id>"
   const [entryTab, setEntryTab]   = useState("labor");
 
   const projects  = db.projects  || [];
@@ -128,11 +165,27 @@ function EnterCostsTab({ db, dispatch }) {
   const invBatches= db.inventoryBatches|| [];
   const vendors   = db.vendors   || [];
 
-  // Projects available for cost entry (active or pending)
-  const eligible = projects.filter(p=>["active","pending"].includes(p.status));
-  const project  = projects.find(p=>p.id===projectId);
+  // Projects available for cost entry (active or pending), plus open work orders
+  const eligible  = projects.filter(p=>["active","pending"].includes(p.status));
+  const openWOs   = (db.workOrders||[]).filter(w=>w.status==="open");
 
-  const ENTRY_TABS = [
+  const [targetKind, targetId] = targetKey ? targetKey.split(":") : ["",""];
+  const rawTarget = targetKind === "workorder"
+    ? openWOs.find(w=>w.id===targetId)
+    : projects.find(p=>p.id===targetId);
+
+  const isWO    = targetKind === "workorder" && !!rawTarget;
+  const project = rawTarget ? targetRecord(targetKind, rawTarget) : undefined;
+  const entryDispatch = targetDispatch(dispatch, targetKind, targetId);
+  const unit    = isWO ? (db.equipment||[]).find(u=>u.id===rawTarget.unitId) : null;
+
+  // A work order is about a machine, so there's no equipment line to add, and
+  // engineering doesn't apply. Outside shop work is the "contractor" entry.
+  const ENTRY_TABS = isWO ? [
+    { id:"labor",      label:"Labor",           icon:"user-check" },
+    { id:"materials",  label:"Parts",           icon:"package" },
+    { id:"contractor", label:"Outside Service", icon:"building-factory-2" },
+  ] : [
     { id:"labor",      label:"Labor",           icon:"user-check" },
     { id:"equipment",  label:"Equipment",       icon:"truck" },
     { id:"materials",  label:"Materials",       icon:"package" },
@@ -140,28 +193,49 @@ function EnterCostsTab({ db, dispatch }) {
     { id:"engineering",label:"Engineering",     icon:"compass" },
   ];
 
+  // Keep the tab valid when switching between a project and a work order
+  const activeEntryTab = ENTRY_TABS.some(t=>t.id===entryTab) ? entryTab : "labor";
+
   return (
     <div>
       {/* Project selector */}
       <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:20 }}>
         <div style={{ display:"flex", alignItems:"flex-end", gap:16, flexWrap:"wrap" }}>
           <div style={{ flex:"1 1 260px" }}>
-            <Field label="Select Project">
-              <select value={projectId} onChange={e=>setProjectId(e.target.value)} style={{ ...inp, fontSize:13 }}>
-                <option value="">— Choose a project —</option>
+            <Field label="Charge costs to">
+              <select value={targetKey} onChange={e=>setTargetKey(e.target.value)} style={{ ...inp, fontSize:13 }}>
+                <option value="">— Choose a project or work order —</option>
                 {["capital","maintenance","miscellaneous"].map(type => {
                   const group = eligible.filter(p=>p.type===type);
                   if (!group.length) return null;
                   return (
                     <optgroup key={type} label={type.charAt(0).toUpperCase()+type.slice(1)}>
-                      {group.map(p=><option key={p.id} value={p.id}>{p.projectNumber?`${p.projectNumber} — `:""}{p.name}</option>)}
+                      {group.map(p=><option key={p.id} value={`project:${p.id}`}>{p.projectNumber?`${p.projectNumber} — `:""}{p.name}</option>)}
                     </optgroup>
                   );
                 })}
+                {openWOs.length > 0 && (
+                  <optgroup label="Open Work Orders">
+                    {openWOs.map(w=>(
+                      <option key={w.id} value={`workorder:${w.id}`}>
+                        {w.workOrderNumber||"WO"} — Unit {w.unitNumber} · {w.description}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </Field>
           </div>
-          {project && (
+          {isWO && (
+            <div style={{ display:"flex", gap:20, fontSize:13, paddingBottom:8, flexWrap:"wrap", alignItems:"center" }}>
+              <span style={{ background:"#f3ecfa", color:"#5a1a8a", border:"1px solid #d9c6ee", borderRadius:99, padding:"2px 10px", fontSize:11, fontWeight:700 }}>WORK ORDER</span>
+              <div><span style={{ color:"#888" }}>Unit: </span><strong style={{ fontFamily:"monospace" }}>{rawTarget.unitNumber}</strong>{unit && <span style={{ color:"#888" }}> · {[unit.year,unit.make,unit.model].filter(Boolean).join(" ")}</span>}</div>
+              <div><span style={{ color:"#888" }}>Opened: </span><strong>{fmtDate(rawTarget.openedDate)}</strong></div>
+              {rawTarget.category==="preventive" && <span style={{ background:"#e6f4ec", color:"#1a5a3a", borderRadius:99, padding:"2px 10px", fontSize:11, fontWeight:700 }}>PM</span>}
+              {rawTarget.priority==="down" && <span style={{ background:"#fdecea", color:"#8c1b18", borderRadius:99, padding:"2px 10px", fontSize:11, fontWeight:700 }}>UNIT DOWN</span>}
+            </div>
+          )}
+          {project && !isWO && (
             <div style={{ display:"flex", gap:20, fontSize:13, paddingBottom:8, flexWrap:"wrap" }}>
               <div><span style={{ color:"#888" }}>Type: </span><strong style={{ textTransform:"capitalize" }}>{project.type}</strong></div>
               <div><span style={{ color:"#888" }}>Status: </span><StatusChip status={project.status} /></div>
@@ -189,23 +263,23 @@ function EnterCostsTab({ db, dispatch }) {
             {ENTRY_TABS.map(t=>(
               <button key={t.id} onClick={()=>setEntryTab(t.id)} style={{
                 background:"transparent", border:"none", padding:"8px 14px 10px",
-                fontWeight:entryTab===t.id?700:400, fontSize:13, cursor:"pointer",
-                color:entryTab===t.id?"#1a5a3a":"#666",
-                borderBottom:entryTab===t.id?"2px solid #1a5a3a":"2px solid transparent",
+                fontWeight:activeEntryTab===t.id?700:400, fontSize:13, cursor:"pointer",
+                color:activeEntryTab===t.id?"#1a5a3a":"#666",
+                borderBottom:activeEntryTab===t.id?"2px solid #1a5a3a":"2px solid transparent",
                 marginBottom:-1, display:"inline-flex", alignItems:"center", gap:6,
               }}>
-                <Icon name={t.icon} size={12} color={entryTab===t.id?"#1a5a3a":"#888"} />
+                <Icon name={t.icon} size={12} color={activeEntryTab===t.id?"#1a5a3a":"#888"} />
                 {t.label}
                 <EntryCount project={project} type={t.id} />
               </button>
             ))}
           </div>
 
-          {entryTab==="labor"       && <LaborEntries      project={project} employees={employees} dispatch={dispatch} />}
-          {entryTab==="equipment"   && <EquipmentEntries  project={project} equipment={equipment} dispatch={dispatch} />}
-          {entryTab==="materials"   && <MaterialEntries   project={project} invItems={invItems} invBatches={invBatches} dispatch={dispatch} />}
-          {entryTab==="contractor"  && <ContractorEntries project={project} vendors={vendors} dispatch={dispatch} />}
-          {entryTab==="engineering" && <EngineeringEntries project={project} vendors={vendors} dispatch={dispatch} />}
+          {activeEntryTab==="labor"       && <LaborEntries      project={project} employees={employees} dispatch={entryDispatch} />}
+          {activeEntryTab==="equipment"   && <EquipmentEntries  project={project} equipment={equipment} dispatch={entryDispatch} />}
+          {activeEntryTab==="materials"   && <MaterialEntries   project={project} invItems={invItems} invBatches={invBatches} dispatch={entryDispatch} />}
+          {activeEntryTab==="contractor"  && <ContractorEntries project={project} vendors={vendors} dispatch={entryDispatch} />}
+          {activeEntryTab==="engineering" && <EngineeringEntries project={project} vendors={vendors} dispatch={entryDispatch} />}
         </>
       )}
     </div>
@@ -792,6 +866,16 @@ function ByProjectTab({ db }) {
   const equipTotal   = projects.reduce((s,p)=>s+projectTotals(p).equip,0);
   const matTotal     = projects.reduce((s,p)=>s+projectTotals(p).material,0);
 
+  // Work orders are cost targets too. Shown separately rather than mixed in, so
+  // project numbers keep their meaning and several hundred oil changes a year
+  // don't swamp the project list.
+  const workOrders = db.workOrders || [];
+  const woTotal    = workOrders.reduce((s,w)=>s+(w.totalCost||0),0);
+  const woPM       = workOrders.filter(w=>w.category==="preventive");
+  const woRepair   = workOrders.filter(w=>w.category!=="preventive");
+  const woPMCost   = woPM.reduce((s,w)=>s+(w.totalCost||0),0);
+  const woRepCost  = woRepair.reduce((s,w)=>s+(w.totalCost||0),0);
+
   return (
     <div>
       <div style={{ fontSize:16, fontWeight:700, marginBottom:16 }}>Cost Summary by Project</div>
@@ -802,6 +886,36 @@ function ByProjectTab({ db }) {
         <KPICard label="Equipment"            value={fmtSm(equipTotal)}  sub="All projects" accent="#1a3a5c" icon="truck" />
         <KPICard label="Materials"            value={fmtSm(matTotal)}    sub="All projects" accent="#d97706" icon="package" />
       </div>
+
+      {workOrders.length > 0 && (
+        <SectionCard
+          title="Work Orders"
+          subtitle="Equipment maintenance — a separate cost target from projects"
+          style={{ marginBottom:20 }}
+        >
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, padding:16 }}>
+            <div style={{ background:"#fafaf8", border:"1px solid #eee", borderRadius:6, padding:13 }}>
+              <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em", color:"#888" }}>All Work Orders</div>
+              <div style={{ fontSize:20, fontWeight:700, fontFamily:"monospace", color:"#5a1a8a", marginTop:3 }}>{fmtSm(woTotal)}</div>
+              <div style={{ fontSize:10, color:"#aaa" }}>{workOrders.length} orders</div>
+            </div>
+            <div style={{ background:"#fafaf8", border:"1px solid #eee", borderRadius:6, padding:13 }}>
+              <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em", color:"#888" }}>Repairs</div>
+              <div style={{ fontSize:20, fontWeight:700, fontFamily:"monospace", color:"#c0392b", marginTop:3 }}>{fmtSm(woRepCost)}</div>
+              <div style={{ fontSize:10, color:"#aaa" }}>{woRepair.length} orders</div>
+            </div>
+            <div style={{ background:"#fafaf8", border:"1px solid #eee", borderRadius:6, padding:13 }}>
+              <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em", color:"#888" }}>Preventive</div>
+              <div style={{ fontSize:20, fontWeight:700, fontFamily:"monospace", color:"#1a5a3a", marginTop:3 }}>{fmtSm(woPMCost)}</div>
+              <div style={{ fontSize:10, color:"#aaa" }}>{woPM.length} orders</div>
+            </div>
+          </div>
+          <div style={{ fontSize:11, color:"#888", padding:"0 16px 16px", lineHeight:1.6 }}>
+            Separating repairs from routine service is what makes "what is this machine costing me in
+            breakdowns" answerable. Per-unit detail is on each unit's Overview in Equipment.
+          </div>
+        </SectionCard>
+      )}
 
       <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
         <div style={{ display:"flex", border:"1px solid #ddd", borderRadius:6, overflow:"hidden" }}>
