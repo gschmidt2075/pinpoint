@@ -1272,3 +1272,98 @@ orders from prior years.
 ### Still open
 
 - **428 NAC 4 annual report** — awaiting a copy
+
+
+---
+
+## Staff feedback outside the question sheets — 2026-07-27
+
+Raised by Greg from staff testing, and some architectural musings.
+
+### 1. Revenue had no way to edit — ✅ FIXED
+
+**The real workflow:** revenue is received and entered, given to the Treasurer,
+who sends back a receipt. The receipt signifies it's correct; otherwise it comes
+back for adjustment. Once receipted it's officially recorded.
+
+**Revenue does not belong to a claim cycle** — that's the expenditure side. The
+old model gave revenue a `claimCycleId` and swept it up in
+`APPROVE_CLAIM_CYCLE`, which was simply wrong.
+
+**Built 2026-07-27.** New lifecycle:
+
+```
+entered → with Treasurer → receipted        (the receipt makes it official)
+                         ↘ returned → corrected → resubmitted
+```
+
+Freely editable until receipted, then locked — changes after that are recorded
+as **adjustments**, since the Treasurer holds a matching record. Revenue gets its
+own tab with status filters and the receipt number stored against the entry.
+
+Verified through the full cycle including a return and correction: returning
+records the reason, resubmitting clears it, receipting locks the record, and a
+later adjustment updates the figure while preserving both the receipt and an
+audit line.
+
+### 2. No county hardcoding — partially addressed, more to do
+
+Three literal "Adams County" strings found (two in Reporting, one on the
+inventory count sheet). **Still to fix.**
+
+The larger issue is **seed data**: `DEFAULT_STORAGE_LOCATIONS`, `DEFAULT_TANKS`
+and `DEFAULT_TOWNSHIPS` are all Adams County's, and `inventoryData.js` is 2,375
+of its items. A clean copy for another county would arrive pre-loaded with the
+wrong sheds and fuel tanks.
+
+**Agreed approach:** storage locations, tanks and townships all become Settings
+(the townships section exists but doesn't work — Settings writes somewhere
+Infrastructure doesn't read). Seeds move to `data/seed/`, and a clean install
+starts empty.
+
+### 3. Inventory crosswalk needs to be repeatable
+
+The current crosswalk is a Python script producing a file — fine for a mockup,
+useless at go-live. **Agreed:** build a CSV import screen with a preview showing
+what will change before anything commits. Replace semantics for the initial load,
+clearly labelled. No staging database needed; the preview is what makes it safe.
+
+### 4. Work orders as costing targets — agreed, not as projects
+
+Costs should flow to work orders the way they flow to projects, but a work order
+stays a work order — project numbers (`C1-###`, `M-YYYY-##`) mean something to
+the Board and the state and shouldn't be diluted by 400 oil changes.
+
+**Confirmed flow:** Fund Accounting (items arrive — into inventory, or direct to
+a project or work order) → Inventory (assigned to a project or work order) →
+Cost Accounting.
+
+**Guard:** never total Fund Accounting and Cost Accounting together. Buying three
+culverts for $9,000 is one event in Fund Accounting; consuming two on project A
+and one on project B is $6,000 + $3,000 in Cost Accounting. Same money, two
+views, different timing. Summing them double-counts.
+
+### 5. PM work orders — agreed, with batch entry
+
+PMs get work order numbers so costing tracks across modules. Volume is real —
+87 units at 250-hour oil changes is several hundred a year — but the fix is fast
+entry, not fewer records. One big annual PM record was considered and rejected:
+it loses the per-machine detail that's the whole point.
+
+**Design:** PM work orders created from the due list, pre-filled; batch entry so
+six oil changes on a Tuesday is one screen; work order list defaults to open;
+PM category so repair analysis can exclude routine service; closing stamps the
+meter and resets the interval.
+
+Greg's note: *"I will try it and if we don't like it, it can always be changed."*
+The screen is cheap to change indefinitely; the data shape (PM = work order) is
+cheap now and awkward after go-live. PM work orders carry a category from the
+start so they can be separated later if wanted.
+
+### Agreed sequence
+
+1. ✅ Revenue
+2. Settings — townships, storage locations, tanks
+3. PM work orders with batch entry
+4. Work orders as cost targets
+5. CSV import — any time before go-live

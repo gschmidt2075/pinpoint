@@ -97,12 +97,42 @@ function reducer(state, action) {
     case "DELETE_EXPENDITURE":
       return { ...state, expenditures: state.expenditures.filter(e => e.id !== action.payload) };
 
+    // ── Revenue ────────────────────────────────────────────────────────────
+    // Revenue runs through the Treasurer, not the claim cycle. It's freely
+    // editable until receipted; after that, changes are recorded as adjustments
+    // because the Treasurer holds a matching record.
     case "ADD_REVENUE":
       return { ...state, revenue: [...state.revenue, action.payload] };
     case "UPDATE_REVENUE":
       return { ...state, revenue: state.revenue.map(r => r.id === action.payload.id ? action.payload : r) };
-    case "UPDATE_REV_STATUS":
-      return { ...state, revenue: state.revenue.map(r => r.id === action.payload.id ? { ...r, status: action.payload.status } : r) };
+    case "DELETE_REVENUE":
+      return { ...state, revenue: state.revenue.filter(r => r.id !== action.payload) };
+
+    // Sent to the Treasurer
+    case "SUBMIT_REVENUE":
+      return { ...state, revenue: state.revenue.map(r =>
+        r.id !== action.payload.id ? r
+          : { ...r, status:"submitted", submittedDate: action.payload.date, returnedReason:"" }) };
+
+    // The Treasurer's receipt — this is what makes it official
+    case "RECEIPT_REVENUE":
+      return { ...state, revenue: state.revenue.map(r =>
+        r.id !== action.payload.id ? r
+          : { ...r, status:"receipted", receiptNumber: action.payload.receiptNumber,
+              receiptDate: action.payload.receiptDate, returnedReason:"" }) };
+
+    // Came back for correction
+    case "RETURN_REVENUE":
+      return { ...state, revenue: state.revenue.map(r =>
+        r.id !== action.payload.id ? r
+          : { ...r, status:"returned", returnedReason: action.payload.reason }) };
+
+    // A change after receipting — recorded rather than silently applied
+    case "ADJUST_REVENUE":
+      return { ...state, revenue: state.revenue.map(r =>
+        r.id !== action.payload.id ? r
+          : { ...r, ...action.payload.changes,
+              adjustments: [...(r.adjustments||[]), action.payload.adjustment] }) };
 
     case "ADD_AMENDMENT":
       return { ...state, amendments: [...state.amendments, action.payload] };
@@ -118,9 +148,6 @@ function reducer(state, action) {
         expenditures: state.expenditures.map(e =>
           e.claimCycleId === cycleId && e.status !== "approved" ? { ...e, status: "approved" } : e
         ),
-        revenue: state.revenue.map(r =>
-          r.claimCycleId === cycleId && r.status !== "approved" ? { ...r, status: "approved" } : r
-        ),
       };
     }
     // Submit all expenditures + revenue in a claim cycle
@@ -130,9 +157,6 @@ function reducer(state, action) {
         ...state,
         expenditures: state.expenditures.map(e =>
           e.claimCycleId === cycleId && e.status === "entered" ? { ...e, status: "submitted" } : e
-        ),
-        revenue: state.revenue.map(r =>
-          r.claimCycleId === cycleId && r.status === "entered" ? { ...r, status: "submitted" } : r
         ),
       };
     }

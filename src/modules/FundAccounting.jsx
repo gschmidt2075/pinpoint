@@ -93,6 +93,7 @@ export default function FundAccounting({ db, dispatch }) {
           { id:"dashboard",      label:"Dashboard",       icon:"layout-dashboard" },
           { id:"newExpenditure", label:"New Expenditure", icon:"receipt" },
           { id:"newRevenue",     label:"New Revenue",     icon:"cash" },
+          { id:"revenue",        label:"Revenue",         icon:"receipt-2" },
           { id:"claims",         label:"Claim Cycles",    icon:"calendar-due" },
           { id:"ledger",         label:"Ledger",          icon:"book" },
           { id:"journal",        label:"Journal Entries", icon:"clipboard-text" },
@@ -114,7 +115,8 @@ export default function FundAccounting({ db, dispatch }) {
 
       {view==="dashboard"      && <FADashboard db={db} dispatch={dispatch} setView={setView} />}
       {view==="newExpenditure" && <ExpenditureForm db={db} dispatch={dispatch} onDone={() => setView("claims")} />}
-      {view==="newRevenue"     && <RevenueForm     db={db} dispatch={dispatch} onDone={() => setView("ledger")} />}
+      {view==="newRevenue"     && <RevenueForm     db={db} dispatch={dispatch} onDone={() => setView("revenue")} />}
+      {view==="revenue"        && <RevenueList     db={db} dispatch={dispatch} onNew={() => setView("newRevenue")} />}
       {view==="claims"         && <ClaimCycles     db={db} dispatch={dispatch} />}
       {view==="ledger"         && <Ledger          db={db} dispatch={dispatch} />}
       {view==="journal"        && <JournalEntries  db={db} dispatch={dispatch} />}
@@ -1056,10 +1058,16 @@ function ClaimCycles({ db, dispatch }) {
 }
 
 // ── Revenue Form ──────────────────────────────────────────────────────────────
-function RevenueForm({ db, dispatch, onDone }) {
-  const emptyLine = () => ({ id:Date.now()+Math.random(), code:"", fund:"ROADS", amount:"" });
-  const [header, setHeader] = useState({ date:"", sourceName:"", reference:"", description:"", claimCycleId:"" });
-  const [lines, setLines]   = useState([emptyLine()]);
+function RevenueForm({ db, dispatch, onDone, initialData = null }) {
+  const isEdit = !!initialData;
+  const emptyLine = (l=null) => ({ id:l?.id||Date.now()+Math.random(), code:l?.code||"", fund:l?.fund||"ROADS", amount:l?l.amount.toString():"" });
+  const [header, setHeader] = useState({
+    date:        initialData?.date || "",
+    sourceName:  initialData?.sourceName || initialData?.source || "",
+    reference:   initialData?.reference || "",
+    description: initialData?.description || "",
+  });
+  const [lines, setLines]   = useState(initialData ? (initialData.lines||[]).map(l=>emptyLine(l)) : [emptyLine()]);
   const [saved, setSaved]   = useState(false);
   const [typeFilter, setTypeFilter] = useState("all");
 
@@ -1070,28 +1078,26 @@ function RevenueForm({ db, dispatch, onDone }) {
   const totalAmount = lines.reduce((s,l)=>s+(parseFloat(l.amount)||0),0);
   const revTypes    = [...new Set(REVENUE_CODES.map(r=>r.type))];
   const filteredCodes = REVENUE_CODES.filter(r=>typeFilter==="all"||r.type===typeFilter);
-  const today       = toDateStr(new Date());
-  const openCycles  = CLAIM_CYCLES.filter(c=>c.date>=today).slice(0,8);
+  const today = toDateStr(new Date());
 
   const handleSubmit = () => {
     if (!header.date||!header.sourceName||lines.some(l=>!l.code||!l.amount)) return;
-    const cycle = CLAIM_CYCLES.find(c=>c.id===header.claimCycleId);
-    dispatch({ type:"ADD_REVENUE", payload:{
-      id: Date.now(),
+    const payload = {
+      ...(initialData || {}),
+      id: initialData?.id || Date.now(),
       date:            header.date,
       sourceName:      header.sourceName,
       source:          header.sourceName, // legacy compat
       reference:       header.reference,
       description:     header.description,
-      claimCycleId:    header.claimCycleId,
-      claimCycle:      header.claimCycleId, // legacy compat
-      claimCycleLabel: cycle?.label||header.claimCycleId,
       lines: lines.map(l=>({ code:l.code, fund:l.fund, amount:parseFloat(l.amount)||0 })),
       totalAmount,
-      status: "entered",
-      createdAt: new Date().toISOString(),
-    }});
-    setHeader({ date:"", sourceName:"", reference:"", description:"", claimCycleId:"" });
+      status: initialData?.status || "entered",
+      createdAt: initialData?.createdAt || new Date().toISOString(),
+    };
+    dispatch({ type: isEdit ? "UPDATE_REVENUE" : "ADD_REVENUE", payload });
+    if (isEdit) { onDone(); return; }
+    setHeader({ date:"", sourceName:"", reference:"", description:"" });
     setLines([emptyLine()]);
     setSaved(true);
     setTimeout(()=>{ setSaved(false); onDone(); },1400);
@@ -1100,22 +1106,19 @@ function RevenueForm({ db, dispatch, onDone }) {
   return (
     <div style={{ maxWidth:800 }}>
       <div style={{ marginBottom:20 }}>
-        <div style={{ fontSize:18, fontWeight:700, color:"#1a1a1a" }}>New Revenue Transaction</div>
-        <div style={{ fontSize:13, color:"#888", marginTop:3 }}>Grants, permits, highway allocations, intergovernmental transfers</div>
+        <div style={{ fontSize:18, fontWeight:700, color:"#1a1a1a" }}>{isEdit?"Edit Revenue":"New Revenue Transaction"}</div>
+        <div style={{ fontSize:13, color:"#888", marginTop:3 }}>
+          Grants, permits, highway allocations, intergovernmental transfers.
+          {" "}Goes to the Treasurer for receipting — no claim cycle.
+        </div>
       </div>
       {saved && <div style={{ background:"#e6f4ec", border:"1px solid #a8d5b5", borderRadius:6, padding:"12px 16px", marginBottom:16, color:"#1a6b35", fontWeight:600, fontSize:13 }}>✓ Revenue recorded — redirecting…</div>}
 
       <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
         <div style={{ fontWeight:700, fontSize:13, marginBottom:14 }}>Transaction Header</div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginBottom:16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
           <Field label="Date" required><input type="date" value={header.date} onChange={e=>setH("date",e.target.value)} style={inp} /></Field>
           <Field label="Reference #"><input type="text" placeholder="Check / warrant #…" value={header.reference} onChange={e=>setH("reference",e.target.value)} style={inp} /></Field>
-          <Field label="Claim Cycle">
-            <select value={header.claimCycleId} onChange={e=>setH("claimCycleId",e.target.value)} style={inp}>
-              <option value="">Optional — assign to cycle…</option>
-              {openCycles.map(c=><option key={c.id} value={c.id}>{c.label}</option>)}
-            </select>
-          </Field>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
           <Field label="Source / Grantor / Payer" required>
@@ -1180,8 +1183,10 @@ function RevenueForm({ db, dispatch, onDone }) {
       </div>
 
       <div style={{ display:"flex", gap:10 }}>
-        <button onClick={handleSubmit} style={{ ...btn.primary, background:"#1a6b35" }}>Record Revenue</button>
-        <button onClick={()=>{ setHeader({date:"",sourceName:"",reference:"",description:"",claimCycleId:""}); setLines([emptyLine()]); }} style={btn.ghost}>Clear</button>
+        <button onClick={handleSubmit} style={{ ...btn.primary, background:"#1a6b35" }}>{isEdit?"Save Changes":"Record Revenue"}</button>
+        {isEdit
+          ? <button onClick={onDone} style={btn.ghost}>Cancel</button>
+          : <button onClick={()=>{ setHeader({date:"",sourceName:"",reference:"",description:""}); setLines([emptyLine()]); }} style={btn.ghost}>Clear</button>}
       </div>
     </div>
   );
@@ -1520,6 +1525,227 @@ function ManageFundsFA({ db, dispatch }) {
           </div>
         )}
       </SectionCard>
+    </div>
+  );
+}
+
+// ── Revenue list ──────────────────────────────────────────────────────────────
+// Revenue runs through the Treasurer, not the claim cycle:
+//
+//   entered → with Treasurer → receipted    (the receipt makes it official)
+//                            ↘ returned → corrected → resubmitted
+//
+// Freely editable until receipted. After that, changes are recorded as
+// adjustments, because the Treasurer holds a matching record.
+const REV_TONE = {
+  entered:   { bg:"#f4f4f2", color:"#666",    border:"#ddd",    label:"Entered" },
+  submitted: { bg:"#fef3cd", color:"#7a4f00", border:"#f0d080", label:"With Treasurer" },
+  receipted: { bg:"#e6f4ec", color:"#1a5a3a", border:"#a8d5b5", label:"Receipted" },
+  returned:  { bg:"#fdecea", color:"#8c1b18", border:"#f5c6c6", label:"Returned" },
+};
+
+function RevStatus({ status }) {
+  const t = REV_TONE[status] || REV_TONE.entered;
+  return (
+    <span style={{ background:t.bg, color:t.color, border:`1px solid ${t.border}`, borderRadius:99, padding:"2px 9px", fontSize:11, fontWeight:700, whiteSpace:"nowrap" }}>
+      {t.label}
+    </span>
+  );
+}
+
+function RevenueList({ db, dispatch, onNew }) {
+  const [editing, setEditing]   = useState(null);
+  const [filter, setFilter]     = useState("all");
+  const [receipting, setReceipting] = useState(null);
+  const [returning, setReturning]   = useState(null);
+  const [receiptForm, setReceiptForm] = useState({ receiptNumber:"", receiptDate:"" });
+  const [returnReason, setReturnReason] = useState("");
+
+  const revenue = db.revenue || [];
+  const today   = toDateStr(new Date());
+
+  if (editing) {
+    const rec = revenue.find(r => r.id === editing);
+    return <RevenueForm db={db} dispatch={dispatch} initialData={rec} onDone={()=>setEditing(null)} />;
+  }
+
+  const filtered = revenue
+    .filter(r => filter === "all" || r.status === filter)
+    .sort((a,b) => (b.date||"").localeCompare(a.date||""));
+
+  const byStatus = (s) => revenue.filter(r => r.status === s).length;
+  const total    = (s) => revenue.filter(r => !s || r.status === s).reduce((t,r)=>t+(r.totalAmount||r.amount||0),0);
+
+  const submit = (r) =>
+    dispatch({ type:"SUBMIT_REVENUE", payload:{ id:r.id, date:today } });
+
+  const doReceipt = () => {
+    if (!receipting || !receiptForm.receiptNumber) return;
+    dispatch({ type:"RECEIPT_REVENUE", payload:{
+      id: receipting.id,
+      receiptNumber: receiptForm.receiptNumber,
+      receiptDate: receiptForm.receiptDate || today,
+    }});
+    setReceipting(null); setReceiptForm({ receiptNumber:"", receiptDate:"" });
+  };
+
+  const doReturn = () => {
+    if (!returning) return;
+    dispatch({ type:"RETURN_REVENUE", payload:{ id:returning.id, reason:returnReason } });
+    setReturning(null); setReturnReason("");
+  };
+
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", marginBottom:16, flexWrap:"wrap", gap:12 }}>
+        <div>
+          <div style={{ fontSize:18, fontWeight:700 }}>Revenue</div>
+          <div style={{ fontSize:13, color:"#888", marginTop:3 }}>
+            Entered here, sent to the Treasurer, official once receipted. No claim cycle.
+          </div>
+        </div>
+        <button onClick={onNew} style={{ ...btn.primary, background:"#1a6b35" }}>+ New Revenue</button>
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:18 }}>
+        <KPICard label="Entered"        value={byStatus("entered")}   sub="Not yet sent"        accent="#888"    icon="pencil" />
+        <KPICard label="With Treasurer" value={byStatus("submitted")} sub="Awaiting receipt"    accent="#d97706" icon="send" />
+        <KPICard label="Returned"       value={byStatus("returned")}  sub="Need adjustment"     accent={byStatus("returned")?"#c0392b":"#888"} icon="arrow-back-up" />
+        <KPICard label="Receipted"      value={fmt(total("receipted"))} sub={`${byStatus("receipted")} official`} accent="#1a5a3a" icon="check" />
+      </div>
+
+      {byStatus("returned") > 0 && (
+        <div style={{ background:"#fdecea", border:"1px solid #f5c6c6", borderRadius:8, padding:"12px 16px", marginBottom:16, fontSize:13, color:"#8c1b18" }}>
+          <strong>{byStatus("returned")} returned by the Treasurer</strong> — correct and resubmit.
+        </div>
+      )}
+
+      {/* Receipt entry */}
+      {receipting && (
+        <div style={{ background:"#f0f8f4", border:"2px solid #a8d5b5", borderRadius:8, padding:18, marginBottom:16 }}>
+          <div style={{ fontWeight:700, fontSize:13, marginBottom:4 }}>Record the Treasurer's Receipt</div>
+          <div style={{ fontSize:12, color:"#888", marginBottom:14 }}>
+            {receipting.sourceName || receipting.source} · {fmtSm(receipting.totalAmount||0)} · {receipting.date}
+            {" "}— once receipted this is officially recorded and further changes are logged as adjustments.
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr auto auto", gap:12, alignItems:"end" }}>
+            <Field label="Receipt Number" required>
+              <input type="text" autoFocus value={receiptForm.receiptNumber} onChange={e=>setReceiptForm(f=>({...f,receiptNumber:e.target.value}))} style={{ ...inp, margin:0, fontFamily:"monospace" }} />
+            </Field>
+            <Field label="Receipt Date">
+              <input type="date" value={receiptForm.receiptDate} onChange={e=>setReceiptForm(f=>({...f,receiptDate:e.target.value}))} style={{ ...inp, margin:0 }} placeholder={today} />
+            </Field>
+            <button onClick={doReceipt} disabled={!receiptForm.receiptNumber} style={{ ...btn.primary, background:"#1a6b35", opacity:receiptForm.receiptNumber?1:0.4 }}>Record Receipt</button>
+            <button onClick={()=>{setReceipting(null); setReceiptForm({receiptNumber:"",receiptDate:""});}} style={btn.ghost}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Return entry */}
+      {returning && (
+        <div style={{ background:"#fdecea", border:"2px solid #f5c6c6", borderRadius:8, padding:18, marginBottom:16 }}>
+          <div style={{ fontWeight:700, fontSize:13, marginBottom:4 }}>Returned by the Treasurer</div>
+          <div style={{ fontSize:12, color:"#888", marginBottom:14 }}>
+            {returning.sourceName || returning.source} · {fmtSm(returning.totalAmount||0)}
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr auto auto", gap:12, alignItems:"end" }}>
+            <Field label="What needs correcting?">
+              <input type="text" autoFocus value={returnReason} onChange={e=>setReturnReason(e.target.value)} style={{ ...inp, margin:0 }} placeholder="Wrong code, amount doesn't match the deposit…" />
+            </Field>
+            <button onClick={doReturn} style={{ ...btn.primary, background:"#c0392b" }}>Mark Returned</button>
+            <button onClick={()=>{setReturning(null); setReturnReason("");}} style={btn.ghost}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display:"flex", border:"1px solid #ddd", borderRadius:6, overflow:"hidden", marginBottom:16, width:"fit-content" }}>
+        {[["all","All"],["entered","Entered"],["submitted","With Treasurer"],["returned","Returned"],["receipted","Receipted"]].map(([v,l])=>(
+          <button key={v} onClick={()=>setFilter(v)} style={{ padding:"6px 13px", fontSize:12, fontWeight:600, border:"none", cursor:"pointer", background:filter===v?"#1a5a3a":"#fff", color:filter===v?"#fff":"#555" }}>{l}</button>
+        ))}
+      </div>
+
+      <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, overflow:"hidden" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+          <thead>
+            <tr style={{ background:"#f7f7f5" }}>
+              {["Date","Source","Reference","Codes","Amount","Status","Receipt #",""].map(h=>(
+                <th key={h} style={{ padding:"9px 14px", textAlign:h==="Amount"?"right":"left", fontWeight:600, fontSize:11, textTransform:"uppercase", letterSpacing:"0.05em", color:"#666", borderBottom:"1px solid #eee" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length===0 && (
+              <tr><td colSpan={8} style={{ padding:32, textAlign:"center", color:"#aaa", fontSize:13 }}>
+                {revenue.length===0 ? "No revenue recorded yet." : "Nothing matches this filter."}
+              </td></tr>
+            )}
+            {filtered.map((r,i)=>{
+              const locked = r.status === "receipted";
+              return (
+                <tr key={r.id} style={{ borderTop:"1px solid #eee", background:i%2===0?"#fff":"#fafaf8" }}>
+                  <td style={{ padding:"10px 14px", fontFamily:"monospace", fontSize:12 }}>{r.date}</td>
+                  <td style={{ padding:"10px 14px", fontWeight:600 }}>
+                    {r.sourceName||r.source||"—"}
+                    {r.status==="returned" && r.returnedReason && (
+                      <div style={{ fontSize:11, color:"#c0392b", fontWeight:400, marginTop:2 }}>{r.returnedReason}</div>
+                    )}
+                    {(r.adjustments||[]).length > 0 && (
+                      <div style={{ fontSize:10, color:"#888", fontWeight:400, marginTop:2 }}>{r.adjustments.length} adjustment{r.adjustments.length!==1?"s":""} after receipting</div>
+                    )}
+                  </td>
+                  <td style={{ padding:"10px 14px", fontFamily:"monospace", fontSize:12, color:"#888" }}>{r.reference||"—"}</td>
+                  <td style={{ padding:"10px 14px", fontFamily:"monospace", fontSize:11, color:"#666" }}>
+                    {(r.lines||[]).map(l=>l.code).filter(Boolean).join(", ")||"—"}
+                  </td>
+                  <td style={{ padding:"10px 14px", textAlign:"right", fontFamily:"monospace", fontWeight:700, color:"#1a6b35" }}>{fmtSm(r.totalAmount||r.amount||0)}</td>
+                  <td style={{ padding:"10px 14px" }}><RevStatus status={r.status} /></td>
+                  <td style={{ padding:"10px 14px", fontFamily:"monospace", fontSize:12, color:"#888" }}>
+                    {r.receiptNumber||"—"}
+                    {r.receiptDate && <div style={{ fontSize:10, color:"#aaa" }}>{r.receiptDate}</div>}
+                  </td>
+                  <td style={{ padding:"10px 14px" }}>
+                    <div style={{ display:"flex", gap:4, justifyContent:"flex-end", flexWrap:"wrap" }}>
+                      {!locked && (
+                        <button onClick={()=>setEditing(r.id)} style={{ ...btn.small, background:"#1a3a5c", fontSize:10, padding:"4px 10px" }}>Edit</button>
+                      )}
+                      {(r.status==="entered" || r.status==="returned") && (
+                        <button onClick={()=>submit(r)} style={{ ...btn.small, background:"#d97706", fontSize:10, padding:"4px 10px" }}>
+                          {r.status==="returned" ? "Resubmit" : "To Treasurer"}
+                        </button>
+                      )}
+                      {r.status==="submitted" && (
+                        <>
+                          <button onClick={()=>{setReceipting(r); setReceiptForm({receiptNumber:"",receiptDate:today});}} style={{ ...btn.small, background:"#1a6b35", fontSize:10, padding:"4px 10px" }}>Receipt</button>
+                          <button onClick={()=>{setReturning(r); setReturnReason("");}} style={{ ...btn.small, background:"#c0392b", fontSize:10, padding:"4px 10px" }}>Returned</button>
+                        </>
+                      )}
+                      {locked && <span style={{ fontSize:10, color:"#aaa", padding:"4px 6px" }}>locked</span>}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          {filtered.length > 0 && (
+            <tfoot>
+              <tr style={{ borderTop:"2px solid #ddd", background:"#f7f7f5" }}>
+                <td colSpan={4} style={{ padding:"10px 14px", fontWeight:700, textAlign:"right" }}>
+                  {filter==="all" ? "All revenue" : REV_TONE[filter]?.label}
+                </td>
+                <td style={{ padding:"10px 14px", textAlign:"right", fontFamily:"monospace", fontWeight:700, fontSize:14, color:"#1a6b35" }}>
+                  {fmt(filtered.reduce((t,r)=>t+(r.totalAmount||r.amount||0),0))}
+                </td>
+                <td colSpan={3}></td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+
+      <div style={{ fontSize:11, color:"#888", marginTop:10, lineHeight:1.6 }}>
+        Revenue can be edited freely until the Treasurer receipts it. After that it locks —
+        corrections are recorded as adjustments, since the Treasurer holds a matching record.
+      </div>
     </div>
   );
 }

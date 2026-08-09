@@ -42,20 +42,62 @@ export const createExpenditure = (overrides = {}) => ({
 });
 
 // Revenue entry
+//
+// Revenue does NOT go through claim cycles — that's the expenditure side. Its
+// own lifecycle runs through the Treasurer:
+//
+//   entered → submitted to Treasurer → receipted   (official)
+//                                    ↘ returned → corrected → resubmitted
+//
+// The Treasurer's receipt is what makes it official, the way Board approval does
+// for a claim — but it arrives from a different direction and on its own timing.
 export const createRevenue = (overrides = {}) => ({
   id:          uid(),
   date:        today(),
+  sourceName:  "",          // who it came from
   code:        "",          // revenue code (e.g. "347.01")
   description: "",
   type:        "miscellaneous", // grant | permit_fee | intergovernmental | bond_proceeds | miscellaneous
-  amount:      0,
+  lines:       [],          // { code, fund, amount }
+  amount:      0,           // single-line convenience
+  totalAmount: 0,
   reference:   "",
-  claimCycleId: "",
-  status:      "entered",   // entered | submitted | approved
+  status:      "entered",   // entered | submitted | receipted | returned
+  // Treasurer
+  submittedDate: "",
+  receiptNumber: "",        // the Treasurer's receipt — this is what makes it official
+  receiptDate:   "",
+  returnedReason:"",        // why it came back for adjustment
+  // Corrections after receipting are recorded, not silently applied, because the
+  // Treasurer holds a matching record.
+  adjustments: [],          // createRevenueAdjustment[]
   notes:       "",
   createdAt:   now(),
   ...overrides,
 });
+
+// A change made after the Treasurer has receipted the revenue.
+export const createRevenueAdjustment = (overrides = {}) => ({
+  id:          uid(),
+  date:        today(),
+  field:       "",          // what changed
+  oldValue:    "",
+  newValue:    "",
+  reason:      "",
+  enteredBy:   "",
+  createdAt:   now(),
+  ...overrides,
+});
+
+// Revenue may be edited freely until the Treasurer has receipted it.
+export const revenueIsLocked = (r) => r?.status === "receipted";
+
+export const REVENUE_STATUSES = [
+  { id:"entered",   label:"Entered",   description:"Recorded, not yet sent to the Treasurer" },
+  { id:"submitted", label:"With Treasurer", description:"Sent, awaiting a receipt" },
+  { id:"receipted", label:"Receipted", description:"Officially recorded" },
+  { id:"returned",  label:"Returned",  description:"Came back for adjustment" },
+];
 
 // Journal entry (post-approval corrections only)
 export const createJournalEntry = (overrides = {}) => ({
