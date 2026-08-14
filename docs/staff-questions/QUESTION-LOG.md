@@ -1490,3 +1490,63 @@ description. But it's worth knowing whether they are dead codes from the old
 system or live codes missing from the budget list.
 
 **14 inventory items have no GL code at all.**
+
+
+---
+
+## 2026-08-14 — Staff bug list (Becky), and what it turned up
+
+`App Bugs.docx`. Fifteen items, seven causes, three of them ours.
+
+### Fixed
+
+**Locations.** The export's `Inventory Usual Location` column was ignored and
+location filled from the commodity group. The two agree on 1,746 of 2,375 rows
+and disagree on 629. With no location holding stock, transfers offered nothing
+to move. Real codes preserved; 95 locations seeded; 83 named by inference from
+what is stored there. **91 parts are held at more than one location** — Becky
+was right, SHOP VAC is in six.
+
+**Everything reading TON.** Nothing defaulted to ton. Items say EACH/QUART/
+GALLON, the dropdown offered TON/CY/LF/EA, and a select whose value matches no
+option shows the first one. Vocabulary reconciled, and selects of stored codes
+now always include the value actually held.
+
+**Duplicate work order numbers.** Numbering read the selected unit's work
+orders, so every machine started at 001. Moved to the reducer.
+
+**Missing fuel departments — not a fuel bug.** Saved state replaced whole
+objects instead of merging, so anything added to Settings after someone began
+testing stayed invisible to them. Would have swallowed the claim limit too.
+
+**Item history.** Every movement, newest first, with the vendor it came from or
+the machine it went to. Always recorded, never shown.
+
+**Fuel into mobile tanks.** Required a source, moves rather than invents,
+refuses to over-draw, carries the cost per gallon. Second half found while
+testing: the dispensing rate looked only at deliveries, and a mobile tank never
+gets one — so fuel from it billed at **zero** and other departments were
+undercharged. Rate now comes from the most recent fuel to enter the tank.
+
+**Searchable part pickers**, in transfers and work order parts.
+
+### Found while fixing — needs Greg
+
+**Opening inventory value was wrong.** The crosswalk used Standard Cost — a
+price list, not what stock cost — valuing the catalog at **$1.13m against the
+legacy system's own $1.66m**. Now derived from Cost On Hand, tying to the penny.
+
+**56 legacy rows cannot be right.** 13 with negative quantity, 43 carrying value
+with no quantity — **$109,932.72** between them. One gravel line reads −0.97
+units and $19,972. No opening balance created; each flagged on the item so it
+surfaces at the next count. *Are these known ghosts?*
+
+### Open questions
+
+1. **What are location numbers 134, 2, 11, 14, 3, 5, 47, 13, 48, 430, 12, 6?**
+   134 holds 1,124 items — parts, filters, chemicals, lubricant. Main parts room?
+   The other 83 were named by inference and should be spot-checked.
+2. **Credit invoices / returns.** Does a warranty return go back to the batch it
+   came from at that batch's cost, or is it a credit against the vendor only?
+   Changes what inventory is worth afterwards.
+3. **Becky said "more to come"** — expect a second list.
