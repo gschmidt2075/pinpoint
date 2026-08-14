@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Field, SectionCard, Table, inp, btn, fmtSm, DateField , SearchSelect } from "../../components/shared.jsx";
+import { Field, SectionCard, Table, inp, btn, fmtSm, DateField, SearchSelect, titleCase } from "../../components/shared.jsx";
 import { today, fmtDate, tankUnitCost, reconciliationStatus } from "./shared.js";
 import { CLAIM_CYCLES } from "../FundAccounting.jsx";
 
@@ -482,7 +482,7 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
                 <div>
                   <div style={{ fontWeight:700, fontSize:14 }}>{t.name}</div>
-                  <div style={{ fontSize:11, color:"#888", marginTop:2 }}>{t.location||"—"} · {t.fuelType} · {t.tankType.replace("_"," ")}</div>
+                  <div style={{ fontSize:11, color:"#888", marginTop:2 }}>{t.location||"—"} · {titleCase(t.fuelType)} · {titleCase(t.tankType)}</div>
                 </div>
                 <span style={{ background:t.status==="active"?"#e6f4ec":"#fdecea", color:t.status==="active"?"#1a6b35":"#c0392b", fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:99 }}>{t.status}</span>
               </div>
@@ -522,7 +522,7 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
           headers={[{label:"Date"},{label:"Type"},{label:"Tank"},{label:"Gallons"},{label:"Vendor / Note"},{label:"Cost"}]}
           rows={shownTx.slice(0,50).map(tx=>[
             <span style={{fontFamily:"monospace",fontSize:12}}>{fmtDate(tx.date)}</span>,
-            <span style={{fontSize:11,background:"#f0f0ee",padding:"2px 7px",borderRadius:4,fontWeight:600}}>{tx.type.replace("_"," ")}</span>,
+            <span style={{fontSize:11,background:"#f0f0ee",padding:"2px 7px",borderRadius:4,fontWeight:600}}>{titleCase(tx.type)}</span>,
             tx.tankName||"—",
             (() => {
               // The same fill is fuel leaving one tank and entering another.

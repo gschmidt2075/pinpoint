@@ -11,8 +11,9 @@ import Vendors from "./modules/Vendors.jsx";
 import Employees from "./modules/Employees.jsx";
 import Reporting from "./modules/Reporting.jsx";
 import { FISCAL_YEAR } from "./data/accountCodes.js";
-import { DEFAULT_TOWNSHIPS, DEFAULT_LOOKUPS, DEFAULT_TANKS,
-         nextWorkOrderNumber } from "./data/schema.js";
+import { DEFAULT_TOWNSHIPS, DEFAULT_LOOKUPS, DEFAULT_TANKS, nextWorkOrderNumber,
+         createTank, createStorageLocation, createInventoryItem, createEquipmentUnit,
+         createWorkOrder, createVendor, createEmployee } from "./data/schema.js";
 import { INITIAL_INVENTORY_ITEMS, INITIAL_INVENTORY_BATCHES, INITIAL_INVENTORY_TRANSACTIONS,
          INITIAL_STORAGE_LOCATIONS } from "./data/inventoryData.js";
 import { Icon } from "./components/shared.jsx";
@@ -768,11 +769,42 @@ function mergeSaved(defaults, saved) {
   return out;
 }
 
+// Saved RECORDS also go stale, not just saved settings.
+//
+// mergeSaved fills in keys an object is missing, but arrays are replaced whole —
+// a saved tank keeps exactly the fields it had when it was written. Add a field
+// to the schema afterwards and every existing record lacks it, so code that
+// reads it gets undefined. `tank.tankType.replace(...)` on a tank saved before
+// tankType existed throws, and the screen renders nothing at all.
+//
+// Running each saved record back through its factory gives it defaults for
+// anything new while keeping every value it already had. Cheap, and it means
+// adding a field can never break somebody's existing data again.
+const REHYDRATE = {
+  tanks:            createTank,
+  storageLocations: createStorageLocation,
+  inventoryItems:   createInventoryItem,
+  equipment:        createEquipmentUnit,
+  workOrders:       createWorkOrder,
+  vendors:          createVendor,
+  employees:        createEmployee,
+};
+
+function rehydrate(state) {
+  const out = { ...state };
+  for (const [key, factory] of Object.entries(REHYDRATE)) {
+    if (!Array.isArray(out[key])) continue;
+    out[key] = out[key].map(record =>
+      record && typeof record === "object" ? factory(record) : record);
+  }
+  return out;
+}
+
 function loadPersisted() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return initialState;
-    return mergeSaved(initialState, JSON.parse(raw));
+    return rehydrate(mergeSaved(initialState, JSON.parse(raw)));
   } catch (err) {
     console.warn("Could not load saved data — starting fresh.", err);
     return initialState;
