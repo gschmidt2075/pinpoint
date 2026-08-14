@@ -32,7 +32,8 @@ It replaces a mix of aging software, spreadsheets, and paper across:
 | Fund Accounting | `FundAccounting.jsx` | Built. Claim flow fully specified, **not yet restructured** |
 | Cost Accounting | `CostAccounting.jsx` | Built. Unusable until employees exist |
 | Inventory | `Inventory.jsx` | Built and overhauled against staff answers |
-| Equipment | `Equipment.jsx` | Built and overhauled. Parts issue from inventory, PM warnings, fuel & department billing, operating cost |
+| Equipment | `equipment/` | **Split 2026-08-14** into `index` · `Fleet` · `WorkOrders` · `PM` · `shared`. Specs (filters, fluids, tires), editable PM intervals, real labor entry |
+| Fuel & Tanks | `fuel/` | **New module 2026-08-14.** Dispensing, tanks, department billing. A delivery raises its own claim |
 | Infrastructure | `Infrastructure.jsx` | Built and overhauled. Barrels, 0–5 ratings, road history, bridge postings |
 | Projects | `Projects.jsx` | Built. Form still out with staff |
 | Reporting | `Reporting.jsx` | **Built 2026-07-27, reworked 2026-08-14.** Board annual report · receipts & expenditures against budget · inventory of machinery, equipment and supplies |
@@ -136,8 +137,37 @@ automatic split is still to build.
 
 **FEMA force account** — for disaster reimbursement. Labor gets a **15.7%
 overhead multiplier** (`FEMA_OVH = 1.157`). Equipment uses published FEMA rates
-by type and size rather than actual cost. `FEMA_EQUIPMENT_RATES` is defined and
-exported from `Equipment.jsx`; `CostAccounting.jsx` imports it from there.
+by type and size rather than actual cost. `FEMA_EQUIPMENT_RATES` lives in
+`data/femaRates.js` — reference data, not equipment behaviour. Cost Accounting
+used to reach into the Equipment UI module for it, which had it backwards.
+
+**One equipment rate, not two.** `internalRate` was removed 2026-08-14: it was
+always set equal to the published FEMA rate, and two fields holding the same
+number are two things to keep in step and one of them to get wrong.
+
+**Fuel is bid per load, not on a contract.** The Parts Manager takes bids for
+each delivery, so the price per gallon is known when the truck arrives. That is
+why a delivery raises a COMPLETE claim rather than a placeholder waiting on
+paper, and why the invoice arriving later CHECKS the bid rather than supplying
+the price. Gallons times bid price is what the load should cost; a difference
+means either the gallons or the rate is not what was agreed.
+
+Transfers between tanks raise no claim — that fuel was paid for on delivery.
+
+**Dispensed fuel is priced from the last fuel to ENTER the tank**, whether it
+was delivered or transferred in. Pricing only from deliveries left every mobile
+tank at zero, so everything pumped out of one was billed at nothing and the
+other departments were undercharged.
+
+**PM intervals are set once.** Two thresholds — meter and calendar — and
+whichever arrives first triggers the service. A machine that sits all winter is
+due on months even though the hour meter never moved. `lastDoneMeter` and
+`lastDoneDate` are maintained by closing work orders and should never be typed
+after the initial setup.
+
+**Any work order carries the meter forward**, not just PM ones. The shop reads
+the meter whenever it touches a machine, even to add a quart of oil. Only the
+schedule a work order was raised against is reset by closing it.
 
 **FIFO inventory costing** — `db.inventoryBatches` drives cost-out. Oldest batch
 by receipt date depletes first. Issues to a project consume batches in order and
@@ -290,6 +320,7 @@ src/
   data/
     schema.js                Factory functions for every entity — source of truth
     accountCodes.js          152 expenditure codes, fiscal year, expense types
+    femaRates.js             Published FEMA equipment rates (reference data)
     inventoryData.js         2,375 items + opening batches (2.8 MB, generated)
   components/
     shared.jsx               Shared UI primitives
@@ -297,12 +328,29 @@ src/
     FundAccounting.jsx       Claims, expenditures, revenue, ledger, amendments
     CostAccounting.jsx       Labor/equipment/material costs per project, FEMA
     Inventory.jsx            Items, receive, scale tickets, issue, transfer, count
-    Equipment.jsx            Fleet, work orders, PM, fuel, tanks, parts
+    equipment/
+      index.jsx              Shell — tabs and selection only
+      Fleet.jsx              Machines, specs, costs
+      WorkOrders.jsx         Jobs on a machine, and closing them
+      PM.jsx                 The rules that raise those jobs
+      shared.jsx             Helpers more than one of them needs
+    fuel/
+      index.jsx              Shell
+      Dispensing.jsx         The pump log
+      Tanks.jsx              Levels, deliveries, transfers, reconciliation
+      Billing.jsx            The five other county departments
+      shared.js              Pricing and reconciliation rules
     Infrastructure.jsx       Roads, bridges, structures, signs
     Projects.jsx             Project records
     Settings.jsx             County info, fiscal year, account codes, lookups
+  components/
+    shared.jsx               UI primitives — incl. SearchSelect, DateField, titleCase
+scripts/
+  gen_inventory.py           Crosswalks the legacy CSV into inventoryData.js
+  check-references.cjs       npm run check — unresolved names and bad imports
 docs/
   staff-questions/           Question forms and the running answer log
+  reference/                 Real forms, for comparison only — not specifications
 ```
 
 `inventoryData.js` is generated from a CSV by a Python script — do not hand-edit.
@@ -322,13 +370,49 @@ returned. Answers get recorded in `QUESTION-LOG.md` before code is written.
 **Update this file at the end of each session.** Decisions, deferrals, anything
 learned about how the department actually works.
 
+**Describe before building; just fix defects.** Agreed 2026-08-14 after the PM
+editor was built twice. A defect gets fixed. Anything INVENTED — a new screen, a
+new interaction — gets described in a few sentences first, so Greg can say "no,
+why am I typing that" in ten seconds rather than after it exists.
+
+**Claude cannot see the screen.** Every mistake made on 2026-08-14 was visual or
+structural, never logical: headings rendered into the wrong grid, a placeholder
+that read as content, a name resolving in one file but not its neighbour. The
+simulations were right every time. Screenshots close that gap faster than any
+description — send one when something looks wrong.
+
+**Run the checks before trusting a change.**
+
+```
+npm run check    # unresolved names, imports that name nothing real
+npm run build    # the bundler's own resolution — catches missing modules
+npm run dev      # the only thing that proves a screen renders
+```
+
+None of the three subsumes the others. `check` and `build` both passed while the
+Equipment tab rendered blank, because a missing lowercase function call is
+invisible to a bundler and a component that mounts and throws is invisible to
+static analysis.
+
 ---
 
 ## Known problems
 
 - **OneDrive vs git.** The repo lives in OneDrive, which holds `.git` files open
   and leaves stale `index.lock` / `HEAD.lock` files after operations. Moving the
-  project outside OneDrive would eliminate this.
+  project outside OneDrive would eliminate this. *(The working copy is now at
+  `C:\dev\public-works-app`, which sidesteps it.)*
+- **56 legacy inventory rows cannot be right.** 13 with negative quantity, 43
+  carrying value with no quantity — **$109,932.72** between them. They are
+  flagged on the item and excluded from the opening balance, deliberately, so
+  they surface at the next count. Awaiting Greg: are these known ghosts?
+- **17 GL codes on inventory items are not in the FY2027 budget chart**, and 14
+  items carry no GL code at all. They report with a blank description. Dead
+  codes from the old system, or live ones missing from the budget list?
+- **12 storage locations have no name.** 95 came out of the legacy export as
+  bare numbers; 83 were named by inferring from what is stored there. The rest
+  need someone who knows the buildings — including code 134, which holds 1,124
+  items and is probably the main parts room.
 - **`inventoryData.js` is 2.8 MB.** Fine for GitHub, makes the browser bundle
   large. Goes away with a real database.
 - **The preview URL is public.** No real data should be entered until there's

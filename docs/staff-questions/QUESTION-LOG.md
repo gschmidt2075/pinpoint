@@ -1550,3 +1550,121 @@ surfaces at the next count. *Are these known ghosts?*
    came from at that batch's cost, or is it a credit against the vendor only?
    Changes what inventory is worth afterwards.
 3. **Becky said "more to come"** — expect a second list.
+
+
+---
+
+## 2026-08-14 (later) — Greg's testing, and a rethink
+
+### Equipment, from Greg tinkering
+
+**One rate, not two.** `internalRate` removed — always set equal to the FEMA
+rate in practice.
+
+**Added to a machine:** fuel type, starting meter (a machine arrives with hours
+on it), engine make and model, and repeatable lists of filters, fluids and
+tires. Lists rather than fixed fields because a grader has three hydraulic
+filters and a pickup has one oil filter. Filters carry both OEM and aftermarket
+numbers — the OEM number is what every cross-reference is keyed on even when the
+county buys aftermarket. Fluids carry a capacity, which is the thing actually
+needed at 6am with the machine down.
+
+Beyond the air/oil/hydraulic Greg listed: fuel, water separator, transmission,
+cab air, coolant, DEF, breather, belt, battery, wiper.
+
+**Work order labor was broken.** The tab never received `db` at all — no
+employee list, no pay scales, no rate resolution, while Cost Accounting did all
+three properly. Now picks a real employee and resolves the rate for the entry's
+own date.
+
+**Forms stay open.** "Add & keep going" alongside "add & close" on labor and
+parts, keeping the date between rows.
+
+**Identifiers lead.** Unit number is the biggest thing on a machine, work order
+number on a work order. Year/make/model became the subtitle.
+
+### PM — built wrong, then rebuilt
+
+> "I still don't like how the PM schedule is trying to populate. Is this
+> supposed to be updated at each PM or is this an enter and it should be helpful
+> across many hour readings."
+
+That question is the bug report. **It is set once and maintained by the system**
+— and the screen was arguing otherwise, because `lastDoneMeter` sat in the row
+as an editable box. Two faults, both mine: column headings rendered inside the
+first data row (eleven items in a six-column grid), and every blank row showing
+the placeholder "Oil & Filter", so adding three intervals looked like adding the
+same one three times.
+
+**Whichever comes first.** Meter threshold, calendar threshold, or both — the
+nearer decides. Greg's case: *"sometimes we have a machine that isn't used for
+quite sometime and probably needs a service even though it hasn't reached an
+hour/mile threshold."* Twenty hours used but seven months elapsed is now caught.
+
+**Meter captured at close**, not assumed — the only moment someone is certainly
+standing at the machine. Any work order carries it forward, per Greg: *"Any
+service including any work for a work order the hours or miles should be logged.
+We log hours even when we add oil, hydraulic fluid, etc between services."*
+
+**Cost per hour both ways** — this year, and lifetime from acquisition. Previous
+owner hours excluded: *"Previous hours on a used machine are irrelevant as we
+didn't fuel or maintain it."*
+
+### Dates and dropdowns
+
+51 native date inputs replaced. The new field takes `8/14/26`, `081426`,
+`8-14-2026`, `2026-08-14`, or a bare `14` for the 14th of this month. Rejects
+2/31 rather than rolling it into March.
+
+41 option lists now title-cased. Hyphens deliberately survive — `15W-40` and
+`F350SD 4X4` must not be mangled.
+
+### Structure
+
+**Equipment split** from one 2,828-line file into six. **Fuel promoted to its
+own module** at Greg's suggestion: *"With all of the different billing and tank
+management, I think it would be a better way to go."* He is right — it is an
+operation, not a corner of Equipment.
+
+Separating them exposed `tankUnitCost`, `reconciliationStatus` and `daysSince`
+existing in two copies each. `tankUnitCost` is the rule behind the
+mobile-tank-bills-at-zero bug; two copies of it is how that bug returns.
+
+### Fuel deliveries — ANSWERED
+
+> "I would like this to work seamlessly when a fuel truck shows up with a
+> delivery we enter the fuel and invoice in one shot."
+
+| Question | Answer |
+|---|---|
+| Invoice with the truck or later? | **Later**, like a scale ticket |
+| Who enters it? | **Parts Manager usually** |
+| Always create the claim? | **Always, but reviewable** |
+| Is it contracted? | **No — bid PER DELIVERY.** *"It's not contracted, it's per fuel delivery"* |
+
+That last correction mattered. I built a dated contract-rate series for fuel and
+reverted it — she takes bids per load, so the price per gallon is known when the
+truck arrives and the claim is complete from the start. The invoice arriving
+later **checks** the bid rather than supplying the price.
+
+Cost accounting needs nothing extra, as Greg said: the machine's hourly rate
+carries fuel to a project. Buying fuel is fund accounting, burning it is cost
+accounting, and the two are never summed — the same rule as the culvert.
+
+### Open questions
+
+1. **12 location numbers still unnamed**, including 134 (1,124 items).
+2. **56 legacy inventory rows** carrying $109,932.72 — known ghosts?
+3. **17 GL codes** on items that are not in the FY2027 budget chart.
+4. **Should heating fuel or other tanks use a GL code other than 302.09?**
+   Currently one default; could be per tank.
+5. **Roles** — Greg wants Project Accountant and Parts Manager, with the
+   Superintendent and Office Manager able to configure what each can see and
+   edit. Pay rates stay restricted regardless. Sign Tech eventually.
+6. **Becky's second list** — *"………………more to come LOL"*
+
+### Still out
+
+Settings (38), Projects (36), Cost Accounting (24), Reports (27), Fund
+Accounting (46). Plus Payroll Q15 (overtime exemptions), Vendor Q21 (contract
+rate history), employees-as-vendors, and the road segment grid address format.
