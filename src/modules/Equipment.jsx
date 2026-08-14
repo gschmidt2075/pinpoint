@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm } from "../components/shared.jsx";
+import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm, SearchSelect } from "../components/shared.jsx";
 import { createEquipmentUnit, createWorkOrder, createPMLog } from "../data/schema.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -1034,7 +1034,6 @@ function buildFIFO(itemId, qty, batches) {
 // not standard cost, and issuing decrements the batches.
 function WOPartsTab({ wo, unit, invItems, invBatches, dispatch }) {
   const [showForm, setShowForm] = useState(false);
-  const [search, setSearch]     = useState("");
   const [form, setForm]         = useState({ date:"", itemId:"", quantity:"", notes:"" });
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
@@ -1047,11 +1046,9 @@ function WOPartsTab({ wo, unit, invItems, invBatches, dispatch }) {
   const fittingIds = new Set(fitting.map(i => i.id));
   const others  = active.filter(i => !fittingIds.has(i.id));
 
-  const matches = (i) => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return `${i.legacyNumber} ${i.name} ${i.commodityGroupCode} ${i.commodityGroup}`.toLowerCase().includes(q);
-  };
+  // Parts tagged for this unit sort to the top of the picker, so an unfiltered
+  // list opens on the ones most likely to be wanted.
+  const ordered = [...fitting, ...others];
 
   const selectedItem = active.find(i => i.id === form.itemId);
   const qty      = parseFloat(form.quantity) || 0;
@@ -1098,17 +1095,7 @@ function WOPartsTab({ wo, unit, invItems, invBatches, dispatch }) {
     });
 
     setForm({ date:"", itemId:"", quantity:"", notes:"" });
-    setSearch("");
     setShowForm(false);
-  };
-
-  const renderOption = (i) => {
-    const oh = onHandFor(i.id, invBatches);
-    return (
-      <option key={i.id} value={i.id} disabled={oh <= 0}>
-        {i.legacyNumber ? `[${i.legacyNumber}] ` : ""}{i.name} — {oh > 0 ? `${oh} on hand` : "OUT OF STOCK"}
-      </option>
-    );
   };
 
   return (
@@ -1126,22 +1113,34 @@ function WOPartsTab({ wo, unit, invItems, invBatches, dispatch }) {
 
           <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:12, marginBottom:12 }}>
             <Field label="Date"><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
-            <Field label="Search parts"><input type="text" value={search} onChange={e=>setSearch(e.target.value)} style={{ ...inp, margin:0 }} placeholder="Part #, name, group…" /></Field>
-          </div>
-
-          <div style={{ marginBottom:12 }}>
             <Field label="Part" required>
-              <select value={form.itemId} onChange={e=>set("itemId",e.target.value)} style={{ ...inp, margin:0 }}>
-                <option value="">Select a catalog item…</option>
-                {fitting.filter(matches).length > 0 && (
-                  <optgroup label={`── Fits Unit ${unit?.unitNumber || ""} ──`}>
-                    {fitting.filter(matches).map(renderOption)}
-                  </optgroup>
-                )}
-                <optgroup label="── All Items ──">
-                  {others.filter(matches).slice(0, 300).map(renderOption)}
-                </optgroup>
-              </select>
+              <SearchSelect
+                items={ordered}
+                value={form.itemId}
+                onChange={id=>set("itemId",id)}
+                placeholder="Type a part number or name…"
+                emptyMessage="No catalog item matches — add it in Inventory first"
+                getLabel={i=>`${i.legacyNumber?`[${i.legacyNumber}] `:""}${i.name}`}
+                getSearch={i=>`${i.legacyNumber} ${i.name} ${i.commodityGroupCode} ${i.commodityGroup}`}
+                isDisabled={i=>onHandFor(i.id, invBatches) <= 0}
+                renderRow={(i,off)=>{
+                  const oh = onHandFor(i.id, invBatches);
+                  return (
+                    <div style={{ display:"flex", justifyContent:"space-between", gap:10 }}>
+                      <span>
+                        {fittingIds.has(i.id) && (
+                          <span style={{ background:"#e6f4ec", color:"#1a5a3a", borderRadius:3, padding:"1px 5px", fontSize:10, fontWeight:700, marginRight:6 }}>FITS</span>
+                        )}
+                        {i.legacyNumber && <strong style={{ fontFamily:"monospace", color: off?"#bbb":"#1a3a5c" }}>{i.legacyNumber}</strong>}
+                        {i.legacyNumber ? "  " : ""}{i.name}
+                      </span>
+                      <span style={{ fontFamily:"monospace", whiteSpace:"nowrap", color: off?"#ccc":"#1a5a3a" }}>
+                        {oh > 0 ? `${oh} on hand` : "out of stock"}
+                      </span>
+                    </div>
+                  );
+                }}
+              />
             </Field>
           </div>
 
@@ -1417,12 +1416,18 @@ function FuelLogTab({ dispensing, units, tanks, tankTx, departments, dispatch })
   const selectedUnit  = units.find(u=>u.id===form.equipmentId);
   const selectedTank  = tanks.find(t=>t.id===form.sourceTankId);
 
-  // Fuel is billed at cost — the rate comes from the tank's most recent delivery.
+  // Fuel is billed at cost — the rate comes from the most recent fuel to ENTER
+  // the tank. For a fixed tank that is a delivery; for a mobile tank it is the
+  // transfer that filled it, which carries the source tank's price across.
+  //
+  // Looking only at deliveries left every mobile tank at zero, so anything
+  // dispensed from one was billed at nothing.
   const tankUnitCost = (tankId) => {
-    const deliveries = (tankTx||[])
-      .filter(t => t.tankId === tankId && t.type === "delivery" && t.unitCost)
+    const priced = (tankTx||[])
+      .filter(t => t.tankId === tankId && t.unitCost > 0
+                && (t.type === "delivery" || t.type === "portable_fill"))
       .sort((a,b) => (b.date||"").localeCompare(a.date||""));
-    return deliveries[0]?.unitCost || 0;
+    return priced[0]?.unitCost || 0;
   };
   const unitCost  = form.sourceTankId ? tankUnitCost(form.sourceTankId) : 0;
   const gallons   = parseFloat(form.gallons) || 0;
@@ -1777,14 +1782,34 @@ function FuelBilling({ dispensing, dispatch }) {
 function TanksTab({ tanks, tankTx, dispensing, dispatch }) {
   const [showNew, setShowNew] = useState(false);
   const [selectedTankId, setSelectedTankId] = useState(null);
-  const [txForm, setTxForm] = useState({ type:"delivery", date:"", tankId:"", gallons:"", vendorName:"", invoiceNumber:"", unitCost:"", dipReading:"", notes:"" });
+  const [txForm, setTxForm] = useState({ type:"delivery", date:"", tankId:"", sourceTankId:"", gallons:"", vendorName:"", invoiceNumber:"", unitCost:"", dipReading:"", notes:"" });
   const setTx = (k,v) => setTxForm(f=>({...f,[k]:v}));
+
+  // What a tank's fuel cost per gallon, taken from its most recent delivery.
+  // Fuel moved between tanks has to carry this with it — otherwise a mobile
+  // tank fills up with gallons that came from nowhere and cost nothing, and
+  // everything dispensed from it afterwards is billed at zero.
+  const tankUnitCost = (tankId) => {
+    const priced = (tankTx||[])
+      .filter(t => t.tankId === tankId && t.unitCost > 0
+                && (t.type === "delivery" || t.type === "portable_fill"))
+      .sort((a,b) => (b.date||"").localeCompare(a.date||""));
+    return priced[0]?.unitCost || 0;
+  };
   const [showTxForm, setShowTxForm] = useState(false);
 
   const [newTank, setNewTank] = useState({ name:"", fuelType:"diesel", tankType:"underground", capacityGallons:"", location:"", notes:"" });
   const setNT = (k,v) => setNewTank(f=>({...f,[k]:v}));
 
   const selectedTank = tanks.find(t=>t.id===selectedTankId);
+
+  // A portable fill touches two tanks — it leaves one and enters the other — so
+  // it belongs in both histories, not just the destination's.
+  const shownTx = useMemo(() => {
+    const all = [...(tankTx||[])].sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+    if (!selectedTankId) return all;
+    return all.filter(t => t.tankId === selectedTankId || t.sourceTankId === selectedTankId);
+  }, [tankTx, selectedTankId]);
 
   const handleAddTank = () => {
     if (!newTank.name) return;
@@ -1797,22 +1822,33 @@ function TanksTab({ tanks, tankTx, dispensing, dispatch }) {
     setShowNew(false);
   };
 
+  const isFill  = txForm.type === "portable_fill";
+  const srcTank = tanks.find(t=>t.id===txForm.sourceTankId);
+  const fillCost = isFill ? tankUnitCost(txForm.sourceTankId) : 0;
+  const fillShort = isFill && srcTank && (parseFloat(txForm.gallons)||0) > (srcTank.currentLevel||0);
+
   const handleTxSave = () => {
     if (!txForm.date||!txForm.tankId||!txForm.gallons) return;
+    if (isFill && (!txForm.sourceTankId || fillShort)) return;
     const tank = tanks.find(t=>t.id===txForm.tankId);
     const gals = parseFloat(txForm.gallons)||0;
-    const deliveryCost = (parseFloat(txForm.unitCost)||0)*gals;
+    // A transfer inherits the source tank's cost; a delivery sets its own.
+    const perGal = isFill ? fillCost : (parseFloat(txForm.unitCost)||0);
+    const deliveryCost = perGal*gals;
     dispatch({ type:"ADD_TANK_TRANSACTION", payload:{
       id:`${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
       type:txForm.type, date:txForm.date, tankId:txForm.tankId, tankName:tank?.name||"",
       gallons: (txForm.type==="dip_reading"||txForm.type==="monitor_reading") ? 0 : gals,
       vendorName:txForm.vendorName, invoiceNumber:txForm.invoiceNumber,
-      deliveryCost, unitCost:parseFloat(txForm.unitCost)||0,
+      deliveryCost, unitCost:perGal,
+      sourceTankId: isFill ? txForm.sourceTankId : null,
+      sourceTankName: isFill ? (srcTank?.name||"") : "",
+      destinationTankId: isFill ? txForm.tankId : null,
       dipReading:parseFloat(txForm.dipReading)||0,
       variance: (txForm.type==="dip_reading"||txForm.type==="monitor_reading") ? (parseFloat(txForm.dipReading)||0) - ((tank?.currentLevel)||0) : 0,
       notes:txForm.notes, createdAt:new Date().toISOString(),
     }});
-    setTxForm({ type:"delivery", date:"", tankId:"", gallons:"", vendorName:"", invoiceNumber:"", unitCost:"", dipReading:"", notes:"" });
+    setTxForm({ type:"delivery", date:"", tankId:"", sourceTankId:"", gallons:"", vendorName:"", invoiceNumber:"", unitCost:"", dipReading:"", notes:"" });
     setShowTxForm(false);
   };
 
@@ -1866,10 +1902,10 @@ function TanksTab({ tanks, tankTx, dispensing, dispatch }) {
               </select>
             </Field>
             <Field label="Date"><input type="date" value={txForm.date} onChange={e=>setTx("date",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
-            <Field label="Tank">
+            <Field label={isFill ? "Tank being filled" : "Tank"}>
               <select value={txForm.tankId} onChange={e=>setTx("tankId",e.target.value)} style={{ ...inp, margin:0 }}>
                 <option value="">Select…</option>
-                {tanks.map(t=><option key={t.id} value={t.id}>{t.name} ({t.currentLevel?.toFixed(0)||0} gal)</option>)}
+                {tanks.filter(t=>t.id!==txForm.sourceTankId).map(t=><option key={t.id} value={t.id}>{t.name} ({t.currentLevel?.toFixed(0)||0} gal)</option>)}
               </select>
             </Field>
             {(txForm.type==="dip_reading"||txForm.type==="monitor_reading")
@@ -1877,6 +1913,43 @@ function TanksTab({ tanks, tankTx, dispensing, dispatch }) {
               : <Field label="Gallons"><input type="number" min="0" step="1" value={txForm.gallons} onChange={e=>setTx("gallons",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
             }
           </div>
+          {isFill && (
+            <div style={{ marginBottom:12 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:12 }}>
+                <Field label="Fill from" required>
+                  <select value={txForm.sourceTankId} onChange={e=>setTx("sourceTankId",e.target.value)} style={{ ...inp, margin:0 }}>
+                    <option value="">Select the tank it comes out of…</option>
+                    {tanks.filter(t=>t.id!==txForm.tankId).map(t=>(
+                      <option key={t.id} value={t.id}>{t.name} ({t.currentLevel?.toFixed(0)||0} gal on hand)</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Cost carried ($/gal)">
+                  <div style={{ ...inp, margin:0, background:"#fff", fontFamily:"monospace", fontWeight:700, color: fillCost?"#1a5a3a":"#c0392b" }}>
+                    {txForm.sourceTankId ? (fillCost ? fmtSm(fillCost) : "none") : "—"}
+                  </div>
+                </Field>
+                <Field label="Value moved">
+                  <div style={{ ...inp, margin:0, background:"#fff", fontFamily:"monospace", fontWeight:700 }}>
+                    {fillCost && txForm.gallons ? fmtSm(fillCost*(parseFloat(txForm.gallons)||0)) : "—"}
+                  </div>
+                </Field>
+              </div>
+              {txForm.sourceTankId && !fillCost && (
+                <div style={{ marginTop:8, background:"#fef8e8", border:"1px solid #f0d080", borderRadius:6, padding:"9px 12px", fontSize:12, color:"#7a4f00" }}>
+                  <strong>{srcTank?.name}</strong> has no delivery on record, so there is no price per gallon to
+                  carry across. Log its delivery first, or fuel dispensed from the mobile tank will cost nothing
+                  and the departments you bill will be undercharged.
+                </div>
+              )}
+              {fillShort && (
+                <div style={{ marginTop:8, background:"#fdecea", border:"1px solid #f5c6c6", borderRadius:6, padding:"9px 12px", fontSize:12, color:"#8c1b18" }}>
+                  <strong>{srcTank?.name}</strong> only holds {srcTank?.currentLevel?.toFixed(0)||0} gallons.
+                  You cannot move {parseFloat(txForm.gallons)||0} out of it.
+                </div>
+              )}
+            </div>
+          )}
           {txForm.type==="delivery" && (
             <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:12, marginBottom:12 }}>
               <Field label="Vendor"><input type="text" value={txForm.vendorName} onChange={e=>setTx("vendorName",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
@@ -1886,7 +1959,11 @@ function TanksTab({ tanks, tankTx, dispensing, dispatch }) {
           )}
           <div style={{ display:"flex", gap:10 }}>
             <Field label="Notes" style={{ flex:1 }}><input type="text" value={txForm.notes} onChange={e=>setTx("notes",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
-            <button onClick={handleTxSave} style={{ ...btn.primary, marginTop:20 }}>Save</button>
+            <button onClick={handleTxSave}
+              disabled={isFill && (!txForm.sourceTankId || fillShort)}
+              style={{ ...btn.primary, marginTop:20,
+                       opacity: (isFill && (!txForm.sourceTankId || fillShort)) ? 0.45 : 1,
+                       cursor:  (isFill && (!txForm.sourceTankId || fillShort)) ? "not-allowed" : "pointer" }}>Save</button>
           </div>
         </div>
       )}
@@ -1897,8 +1974,14 @@ function TanksTab({ tanks, tankTx, dispensing, dispatch }) {
         {tanks.map(t => {
           const pct = t.capacityGallons > 0 ? Math.min(100, Math.round((t.currentLevel||0)/t.capacityGallons*100)) : 0;
           const barColor = pct < 20 ? "#c0392b" : pct < 40 ? "#d97706" : "#1a6b35";
+          const isOpen = selectedTankId === t.id;
           return (
-            <div key={t.id} style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:18 }}>
+            <div key={t.id}
+              onClick={()=>setSelectedTankId(isOpen ? null : t.id)}
+              title="Click to see this tank's transactions"
+              style={{ background:"#fff", border:`1px solid ${isOpen?"#1a5a3a":"#ddd"}`,
+                       borderRadius:8, padding:18, cursor:"pointer",
+                       boxShadow: isOpen ? "0 0 0 2px #1a5a3a22" : "none" }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
                 <div>
                   <div style={{ fontWeight:700, fontSize:14 }}>{t.name}</div>
@@ -1926,19 +2009,38 @@ function TanksTab({ tanks, tankTx, dispensing, dispatch }) {
         })}
       </div>
 
-      {/* Tank transaction history */}
-      <SectionCard title="Tank Transaction History" subtitle={`${tankTx.length} entries`}>
+      {/* Tank transaction history — all tanks, or just the one clicked */}
+      <SectionCard
+        title={selectedTank ? `${selectedTank.name} — Transactions` : "Tank Transaction History"}
+        subtitle={selectedTank
+          ? `${shownTx.length} entries · ${selectedTank.currentLevel?.toFixed(0)||0} of ${selectedTank.capacityGallons||0} gal on hand`
+          : `${tankTx.length} entries · click a tank above to see just that one`}
+        action={selectedTank && (
+          <button onClick={()=>setSelectedTankId(null)} style={{ ...btn.ghost, fontSize:11, padding:"5px 10px" }}>
+            Show all tanks
+          </button>
+        )}
+      >
         <Table
           headers={[{label:"Date"},{label:"Type"},{label:"Tank"},{label:"Gallons"},{label:"Vendor / Note"},{label:"Cost"}]}
-          rows={[...tankTx].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,30).map(tx=>[
+          rows={shownTx.slice(0,50).map(tx=>[
             <span style={{fontFamily:"monospace",fontSize:12}}>{fmtDate(tx.date)}</span>,
             <span style={{fontSize:11,background:"#f0f0ee",padding:"2px 7px",borderRadius:4,fontWeight:600}}>{tx.type.replace("_"," ")}</span>,
             tx.tankName||"—",
-            <span style={{fontFamily:"monospace",fontWeight:700,color:tx.gallons<0?"#c0392b":"#1a6b35"}}>{tx.gallons>0?"+":""}{tx.gallons}</span>,
-            <span style={{fontSize:12,color:"#888"}}>{tx.vendorName||tx.notes||"—"}</span>,
+            (() => {
+              // The same fill is fuel leaving one tank and entering another.
+              // Viewed from the source it must read negative, or the tank looks
+              // like it gained what it actually gave away.
+              const out = selectedTankId && tx.sourceTankId === selectedTankId && tx.tankId !== selectedTankId;
+              const g = out ? -Math.abs(tx.gallons) : tx.gallons;
+              return <span style={{fontFamily:"monospace",fontWeight:700,color:g<0?"#c0392b":"#1a6b35"}}>{g>0?"+":""}{g}</span>;
+            })(),
+            <span style={{fontSize:12,color:"#888"}}>
+              {tx.sourceTankName ? `from ${tx.sourceTankName}` : (tx.vendorName||tx.notes||"—")}
+            </span>,
             <span style={{fontFamily:"monospace"}}>{tx.deliveryCost?fmtSm(tx.deliveryCost):"—"}</span>,
           ])}
-          emptyMessage="No tank transactions yet"
+          emptyMessage={selectedTank ? `Nothing recorded against ${selectedTank.name} yet` : "No tank transactions yet"}
         />
       </SectionCard>
     </div>

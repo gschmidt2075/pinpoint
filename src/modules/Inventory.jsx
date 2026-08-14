@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Icon, Field, SectionCard, Table, KPICard, StatusBadge, inp, btn, fmt, fmtSm } from "../components/shared.jsx";
+import { Icon, Field, SectionCard, Table, KPICard, StatusBadge, SearchSelect, inp, btn, fmt, fmtSm } from "../components/shared.jsx";
 import { locationLabel, locationFor } from "../data/schema.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -28,10 +28,26 @@ const DEST_TYPES = [
 ];
 
 // ── FIFO Helpers ──────────────────────────────────────────────────────────────
+// Location is compared as a string because codes arrive as both "7" and 7
+// depending on whether they came from the crosswalk or a form.
 function getOnHand(itemId, batches, location = null) {
   return batches
-    .filter(b => b.itemId === itemId && b.status === "open" && (location === null || b.location === location))
+    .filter(b => b.itemId === itemId && b.status === "open"
+              && (location === null || String(b.location) === String(location)))
     .reduce((s, b) => s + (b.quantityRemaining || 0), 0);
+}
+
+// Where this item is held, and how much at each — the same part sits in several
+// sheds, so a single "on hand" figure hides the question people actually ask.
+export function onHandByLocation(itemId, batches) {
+  const m = new Map();
+  for (const b of batches) {
+    if (b.itemId !== itemId || b.status !== "open" || !(b.quantityRemaining > 0)) continue;
+    const k = String(b.location ?? "");
+    m.set(k, (m.get(k) || 0) + b.quantityRemaining);
+  }
+  return [...m.entries()].map(([location, qty]) => ({ location, qty }))
+                         .sort((a,b) => b.qty - a.qty);
 }
 
 function getItemValue(itemId, batches) {
@@ -531,6 +547,25 @@ function ItemDetail({ item, batches, equipment = [], locations = [], transaction
           />
         </SectionCard>
       )}
+
+      {(() => {
+        const spread = onHandByLocation(item.id, batches);
+        if (spread.length < 2) return null;
+        return (
+          <SectionCard title="Held At" subtitle={`${spread.length} locations`}>
+            <Table
+              headers={[{label:"Location"},{label:"On Hand"},{label:"Share"}]}
+              rows={spread.map(s => [
+                <span>{locationLabel(locationFor(s.location, locations)) || s.location || "—"}</span>,
+                <span style={{ fontFamily:"monospace", fontWeight:700 }}>{s.qty} {item.unitOfMeasure||""}</span>,
+                <span style={{ fontFamily:"monospace", color:"#888" }}>
+                  {`${Math.round((s.qty / spread.reduce((t,x)=>t+x.qty,0)) * 100)}%`}
+                </span>,
+              ])}
+            />
+          </SectionCard>
+        );
+      })()}
 
       <ItemHistory item={item} transactions={transactions} locations={locations} equipment={equipment} />
     </div>
@@ -1626,10 +1661,25 @@ function TransferForm({ db, dispatch, onDone }) {
 
   const [form, setForm] = useState({ date:"", itemId:"", fromLocation:"", toLocation:"", toEquipment:false, equipmentUnit:"", quantity:"", notes:"" });
   const [saved, setSaved] = useState(false);
+  const [showEmpty, setShowEmpty] = useState(false);
   const set = (k,v) => setForm(f=>({ ...f,[k]:v }));
 
+  // Locations are identified by their CODE, never their name. Stock is held
+  // against the code, and a name is a label someone can change or has not
+  // supplied yet — matching on it meant every location reported nothing to
+  // move, which is what made transfers unusable.
   const availableQty = form.itemId && form.fromLocation ? getOnHand(form.itemId, batches, form.fromLocation) : 0;
   const toLocationName = form.toEquipment ? (form.equipmentUnit ? `On Equipment — ${form.equipmentUnit}` : "On Equipment") : form.toLocation;
+
+  // Only what is actually held at the chosen shed can be moved out of it.
+  // Everything else is offered behind a toggle rather than hidden outright, so
+  // "we don't stock that here" and "that part doesn't exist" stay tellable apart.
+  const stocked = useMemo(() => {
+    if (!form.fromLocation) return [];
+    return items.filter(i => getOnHand(i.id, batches, form.fromLocation) > 0);
+  }, [items, batches, form.fromLocation]);
+
+  const pickable = showEmpty || !form.fromLocation ? items : stocked;
 
   const handleSave = () => {
     if (!form.date||!form.itemId||!form.fromLocation||!toLocationName||!form.quantity) return;
@@ -1675,9 +1725,9 @@ function TransferForm({ db, dispatch, onDone }) {
             <input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} />
           </Field>
           <Field label="From Shed" required>
-            <select value={form.fromLocation} onChange={e=>set("fromLocation",e.target.value)} style={inp}>
+            <select value={form.fromLocation} onChange={e=>{ set("fromLocation",e.target.value); set("itemId",""); }} style={inp}>
               <option value="">Select shed…</option>
-              {shedLocations.map(l=><option key={l.id} value={l.name}>{l.name}</option>)}
+              {shedLocations.map(l=><option key={l.id} value={l.code}>{locationLabel(l)}</option>)}
             </select>
           </Field>
         </div>
@@ -1692,7 +1742,7 @@ function TransferForm({ db, dispatch, onDone }) {
           {!form.toEquipment ? (
             <select value={form.toLocation} onChange={e=>set("toLocation",e.target.value)} style={inp}>
               <option value="">Select destination shed…</option>
-              {shedLocations.filter(l=>l.name!==form.fromLocation).map(l=><option key={l.id} value={l.name}>{l.name}</option>)}
+              {shedLocations.filter(l=>String(l.code)!==String(form.fromLocation)).map(l=><option key={l.id} value={l.code}>{locationLabel(l)}</option>)}
             </select>
           ) : (
             <input type="text" value={form.equipmentUnit} onChange={e=>set("equipmentUnit",e.target.value)} style={inp} placeholder="Unit # or description (e.g. Unit 228 — 2003 140H CAT)…" />
@@ -1701,10 +1751,38 @@ function TransferForm({ db, dispatch, onDone }) {
 
         <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr", gap:16, marginBottom:16 }}>
           <Field label="Item" required>
-            <select value={form.itemId} onChange={e=>set("itemId",e.target.value)} style={inp}>
-              <option value="">Select item…</option>
-              {items.map(i=><option key={i.id} value={i.id}>{i.legacyNumber?`[${i.legacyNumber}] `:"" }{i.name} — {getOnHand(i.id,batches,form.fromLocation||null)} at {form.fromLocation||"??"}</option>)}
-            </select>
+            <SearchSelect
+              items={pickable}
+              value={form.itemId}
+              onChange={id=>set("itemId",id)}
+              placeholder={form.fromLocation ? "Type a part number or name…" : "Choose the shed first…"}
+              emptyMessage={form.fromLocation
+                ? `Nothing matching is held at ${locationLabel(locationFor(form.fromLocation, db.storageLocations||[])) || form.fromLocation}`
+                : "Choose a shed first"}
+              getLabel={i=>`${i.legacyNumber?`[${i.legacyNumber}] `:""}${i.name}`}
+              getSearch={i=>`${i.legacyNumber} ${i.name} ${i.commodityGroup} ${i.glAccountCode}`}
+              isDisabled={i=>getOnHand(i.id,batches,form.fromLocation||null) <= 0}
+              renderRow={(i,off)=>{
+                const oh = getOnHand(i.id,batches,form.fromLocation||null);
+                return (
+                  <div style={{ display:"flex", justifyContent:"space-between", gap:10 }}>
+                    <span>
+                      {i.legacyNumber && <strong style={{ fontFamily:"monospace", color: off?"#bbb":"#1a3a5c" }}>{i.legacyNumber}</strong>}
+                      {i.legacyNumber ? "  " : ""}{i.name}
+                    </span>
+                    <span style={{ fontFamily:"monospace", whiteSpace:"nowrap", color: off?"#ccc":"#1a5a3a" }}>
+                      {oh > 0 ? `${oh} ${i.unitOfMeasure||""}` : "none here"}
+                    </span>
+                  </div>
+                );
+              }}
+            />
+            {form.fromLocation && (
+              <label style={{ display:"flex", alignItems:"center", gap:6, marginTop:6, fontSize:11, color:"#888" }}>
+                <input type="checkbox" checked={showEmpty} onChange={e=>setShowEmpty(e.target.checked)} />
+                Show parts not stocked here ({items.length - stocked.length} of {items.length})
+              </label>
+            )}
           </Field>
           <Field label={`Qty (available: ${availableQty})`} required>
             <input type="number" min="0" step="any" value={form.quantity} onChange={e=>set("quantity",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />

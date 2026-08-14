@@ -1,3 +1,4 @@
+import { useState, useMemo } from "react";
 // ── Shared UI Components ──────────────────────────────────────────────────────
 
 // ── Icon component ────────────────────────────────────────────────────────────
@@ -91,6 +92,132 @@ export function SectionCard({ title, subtitle, children, action, icon, className
         {action}
       </div>
       {children}
+    </div>
+  );
+}
+
+// ── SearchSelect ──────────────────────────────────────────────────────────────
+//
+// A picker you type into. A native <select> across 2,375 parts means scrolling
+// for a part number you already know, which is how the parts room actually
+// works — nobody browses the catalog, they read the number off the box.
+//
+// Type any part of the number, name or group; matches narrow as you go. Arrow
+// keys move, Enter picks, Escape closes. Rows that can't be chosen (out of
+// stock) are shown greyed rather than hidden, because "it's there but empty"
+// and "it doesn't exist" are different answers to different questions.
+export function SearchSelect({
+  items = [],
+  value = "",
+  onChange,
+  getKey     = (i) => i.id,
+  getLabel   = (i) => i.name,
+  getSearch  = (i) => i.name,
+  renderRow,
+  isDisabled = () => false,
+  placeholder = "Type to search…",
+  emptyMessage = "Nothing matches",
+  maxRows = 60,
+  autoFocus = false,
+}) {
+  const [query, setQuery]   = useState("");
+  const [open, setOpen]     = useState(false);
+  const [cursor, setCursor] = useState(0);
+
+  const selected = items.find(i => String(getKey(i)) === String(value)) || null;
+
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return items.slice(0, maxRows);
+    // Every whitespace-separated term must appear somewhere, so "cat filter"
+    // finds a Cat filter without depending on word order.
+    const terms = q.split(/\s+/);
+    const out = [];
+    for (const i of items) {
+      const hay = String(getSearch(i)).toLowerCase();
+      if (terms.every(t => hay.includes(t))) out.push(i);
+      if (out.length >= maxRows) break;
+    }
+    return out;
+  }, [items, query, getSearch, maxRows]);
+
+  const total = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return items.length;
+    const terms = q.split(/\s+/);
+    return items.reduce((n,i) =>
+      terms.every(t => String(getSearch(i)).toLowerCase().includes(t)) ? n+1 : n, 0);
+  }, [items, query, getSearch]);
+
+  const pick = (item) => {
+    if (!item || isDisabled(item)) return;
+    onChange(getKey(item));
+    setQuery(""); setOpen(false); setCursor(0);
+  };
+
+  const onKeyDown = (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); setOpen(true); setCursor(c => Math.min(c+1, matches.length-1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setCursor(c => Math.max(c-1, 0)); }
+    else if (e.key === "Enter" && open) { e.preventDefault(); pick(matches[cursor]); }
+    else if (e.key === "Escape") { setOpen(false); }
+  };
+
+  return (
+    <div style={{ position:"relative" }}>
+      <div style={{ display:"flex", gap:6 }}>
+        <input
+          type="text"
+          value={open ? query : (selected ? getLabel(selected) : query)}
+          autoFocus={autoFocus}
+          onChange={e => { setQuery(e.target.value); setOpen(true); setCursor(0); }}
+          onFocus={() => { setOpen(true); setQuery(""); }}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          onKeyDown={onKeyDown}
+          placeholder={placeholder}
+          style={{ ...inp, margin:0, flex:1, fontFamily: selected ? "inherit" : undefined }}
+        />
+        {selected && (
+          <button type="button" onMouseDown={e=>e.preventDefault()}
+            onClick={() => { onChange(""); setQuery(""); setOpen(false); }}
+            title="Clear"
+            style={{ ...btn.ghost, padding:"0 12px", fontSize:13 }}>×</button>
+        )}
+      </div>
+
+      {open && (
+        <div style={{
+          position:"absolute", top:"100%", left:0, right:0, zIndex:40, marginTop:2,
+          background:"#fff", border:"1px solid #ccc", borderRadius:6,
+          boxShadow:"0 6px 18px rgba(0,0,0,0.12)", maxHeight:280, overflowY:"auto",
+        }}>
+          {matches.length === 0 && (
+            <div style={{ padding:"14px 12px", fontSize:12, color:"#999" }}>{emptyMessage}</div>
+          )}
+          {matches.map((i, n) => {
+            const off = isDisabled(i);
+            return (
+              <div
+                key={getKey(i)}
+                onMouseDown={e => e.preventDefault()}
+                onClick={() => pick(i)}
+                onMouseEnter={() => setCursor(n)}
+                style={{
+                  padding:"7px 11px", fontSize:12, cursor: off ? "not-allowed" : "pointer",
+                  background: n === cursor && !off ? "#eef2f8" : "transparent",
+                  color: off ? "#bbb" : "#1a1a1a",
+                  borderBottom:"1px solid #f4f4f2",
+                }}>
+                {renderRow ? renderRow(i, off) : getLabel(i)}
+              </div>
+            );
+          })}
+          {total > matches.length && (
+            <div style={{ padding:"7px 11px", fontSize:11, color:"#999", background:"#fafaf8" }}>
+              {total - matches.length} more — keep typing to narrow
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
