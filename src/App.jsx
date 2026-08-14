@@ -537,6 +537,37 @@ function reducer(state, action) {
     case "UPDATE_TANK":
       return { ...state, tanks: state.tanks.map(t => t.id === action.payload.id ? action.payload : t) };
 
+    // The invoice for a fuel delivery, once it lands. The claim was already
+    // raised from the bid price; this records what the paper actually said and
+    // corrects the claim if it differs.
+    case "RECONCILE_FUEL_DELIVERY": {
+      const { txId, invoicedAmount, invoiceNumber, date, accept } = action.payload;
+      const tx = state.tankTransactions.find(t => t.id === txId);
+      if (!tx) return state;
+
+      const tankTransactions = state.tankTransactions.map(t =>
+        t.id !== txId ? t : {
+          ...t,
+          invoicedAmount, invoiceNumber: invoiceNumber || t.invoiceNumber,
+          reconciledDate: date, invoiceStatus: accept ? "reconciled" : "disputed",
+        });
+
+      // Only an accepted invoice moves the money. A disputed one leaves the
+      // claim at the bid price and flags it, because the county's position is
+      // that the bid is what was agreed.
+      const expenditures = (accept && tx.expenditureId)
+        ? state.expenditures.map(e => e.id !== tx.expenditureId ? e : {
+            ...e,
+            reference: invoiceNumber || e.reference,
+            totalAmount: invoicedAmount,
+            lines: (e.lines || []).map((l, i) =>
+              i === 0 ? { ...l, amount: invoicedAmount } : l),
+          })
+        : state.expenditures;
+
+      return { ...state, tankTransactions, expenditures };
+    }
+
     case "ADD_TANK_TRANSACTION": {
       const tx = action.payload;
       // Update running tank level
@@ -551,7 +582,25 @@ function reducer(state, action) {
           t.id !== tx.sourceTankId ? t : { ...t, currentLevel: Math.max(0, t.currentLevel - Math.abs(tx.gallons)) }
         );
       }
-      return { ...state, tanks: tanksAfter, tankTransactions: [...state.tankTransactions, tx] };
+      // A delivery is fuel arriving AND an invoice to pay. Recording it once
+      // does both — otherwise the same paperwork gets keyed twice, in two
+      // places, and eventually one of them is missed.
+      //
+      // The claim is complete from the start because fuel is bid per load and
+      // the price per gallon is known when the truck arrives.
+      let expenditures = state.expenditures;
+      if (tx.type === "delivery" && tx.expenditure) {
+        expenditures = [...state.expenditures, tx.expenditure];
+      }
+      const stored = { ...tx };
+      delete stored.expenditure;   // the claim lives in expenditures, not on the tank record
+
+      return {
+        ...state,
+        tanks: tanksAfter,
+        tankTransactions: [...state.tankTransactions, stored],
+        expenditures,
+      };
     }
 
     case "ADD_FUEL_DISPENSING": {

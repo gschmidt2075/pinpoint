@@ -17,7 +17,7 @@ function getNthTuesday(year, month, n) {
 
 function toDateStr(d) { return d.toISOString().split("T")[0]; }
 
-function generateClaimCycles(fyStart) {
+export function generateClaimCycles(fyStart) {
   const start = new Date(fyStart);
   const cycles = [];
   for (let m = 0; m < 12; m++) {
@@ -35,7 +35,7 @@ function generateClaimCycles(fyStart) {
   return cycles.sort((a, b) => a.date.localeCompare(b.date));
 }
 
-const CLAIM_CYCLES = generateClaimCycles(FISCAL_YEAR.start);
+export const CLAIM_CYCLES = generateClaimCycles(FISCAL_YEAR.start);
 
 // Expenditure status flow: entered → submitted → approved (voided out-of-band)
 // Approval is at the claim CYCLE level — Board votes on the entire cycle.

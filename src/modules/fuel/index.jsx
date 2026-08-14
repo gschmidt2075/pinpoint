@@ -25,6 +25,7 @@ export default function Fuel({ db, dispatch }) {
   const tanks      = db.tanks             || [];
   const tankTx     = db.tankTransactions  || [];
   const units      = db.equipment         || [];
+  const vendors    = (db.vendors || []).filter(v => v.active !== false);
 
   const TABS = [
     { id:"log",     label:"Dispensing Log", icon:"droplet" },
@@ -54,7 +55,10 @@ export default function Fuel({ db, dispatch }) {
           dispensing={dispensing} units={units} tanks={tanks} tankTx={tankTx}
           departments={db?.lookups?.fuelDepartments || []} dispatch={dispatch} />
       )}
-      {tab==="tanks"   && <TanksTab tanks={tanks} tankTx={tankTx} dispensing={dispensing} dispatch={dispatch} />}
+      {tab==="tanks"   && (
+        <TanksTab tanks={tanks} tankTx={tankTx} dispensing={dispensing}
+          vendors={vendors} fuelGLCode={db.countyInfo?.fuelGLCode || "302.09"} dispatch={dispatch} />
+      )}
       {tab==="billing" && <FuelBilling dispensing={dispensing} dispatch={dispatch} />}
     </div>
   );

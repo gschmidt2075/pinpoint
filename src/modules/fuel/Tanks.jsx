@@ -1,9 +1,108 @@
 import { useState, useMemo } from "react";
-import { Field, SectionCard, Table, inp, btn, fmtSm, DateField } from "../../components/shared.jsx";
+import { Field, SectionCard, Table, inp, btn, fmtSm, DateField , SearchSelect } from "../../components/shared.jsx";
 import { today, fmtDate, tankUnitCost, reconciliationStatus } from "./shared.js";
+import { CLAIM_CYCLES } from "../FundAccounting.jsx";
 
 // Tanks: what is in them, what went in, what came out, and whether the
 // paperwork agrees with the dipstick.
+
+// ── Deliveries waiting on their invoice ───────────────────────────────────────
+//
+// The claim went on at the bid price when the load arrived. This is where the
+// paper catches up — and where the bid gets checked. If the invoice does not
+// equal gallons times the price that was bid, either the gallons or the rate is
+// wrong, and that is worth knowing before the claim is paid.
+function DeliveryInvoices({ tankTx, dispatch }) {
+  const [openId, setOpenId] = useState(null);
+  const [form, setForm] = useState({ invoicedAmount:"", invoiceNumber:"", date: today() });
+
+  const waiting = (tankTx || [])
+    .filter(t => t.type === "delivery" && t.expenditureId && t.invoiceStatus === "expected")
+    .sort((a,b) => String(a.date).localeCompare(String(b.date)));
+
+  if (!waiting.length) return null;
+
+  const open = waiting.find(t => t.id === openId);
+  const expected = open ? (Number(open.gallons)||0) * (Number(open.unitCost)||0) : 0;
+  const actual   = parseFloat(form.invoicedAmount) || 0;
+  const diff     = actual ? actual - expected : 0;
+  const differs  = actual > 0 && Math.abs(diff) > 0.05;
+
+  return (
+    <div style={{ background:"#fff", border:"2px solid #c8d8ec", borderRadius:8, padding:16, marginBottom:18 }}>
+      <div style={{ fontSize:14, fontWeight:700, color:"#1a3a5c", marginBottom:3 }}>
+        {waiting.length} deliver{waiting.length===1?"y":"ies"} awaiting an invoice
+      </div>
+      <div style={{ fontSize:11, color:"#888", marginBottom:12 }}>
+        Each is already on a claim at the bid price. Reconciling confirms it, or corrects it.
+      </div>
+
+      <Table
+        headers={[{label:"Date"},{label:"Tank"},{label:"Vendor"},{label:"Gallons"},{label:"Bid $/gal"},{label:"On the Claim"},{label:""}]}
+        rows={waiting.map(t => [
+          <span style={{ fontFamily:"monospace", fontSize:12 }}>{fmtDate(t.date)}</span>,
+          t.tankName || "—",
+          t.vendorName || "—",
+          <span style={{ fontFamily:"monospace" }}>{Number(t.gallons||0).toLocaleString()}</span>,
+          <span style={{ fontFamily:"monospace" }}>{fmtSm(t.unitCost||0)}</span>,
+          <span style={{ fontFamily:"monospace", fontWeight:700 }}>{fmtSm((t.gallons||0)*(t.unitCost||0))}</span>,
+          <button onClick={()=>{ setOpenId(t.id); setForm({ invoicedAmount:"", invoiceNumber:t.invoiceNumber||"", date: today() }); }}
+            style={{ ...btn.ghost, fontSize:11, padding:"4px 10px" }}>Invoice arrived</button>,
+        ])}
+      />
+
+      {open && (
+        <div style={{ marginTop:14, background:"#f7f7f5", border:"1px solid #e4e4e0", borderRadius:6, padding:14 }}>
+          <div style={{ fontSize:12, fontWeight:700, marginBottom:10 }}>
+            {open.tankName} · {Number(open.gallons||0).toLocaleString()} gal at {fmtSm(open.unitCost||0)}/gal
+            — bid says <strong>{fmtSm(expected)}</strong>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1.2fr auto auto", gap:12, alignItems:"end" }}>
+            <Field label="Invoice #">
+              <input type="text" value={form.invoiceNumber} onChange={e=>setForm(f=>({...f,invoiceNumber:e.target.value}))}
+                style={{ ...inp, margin:0, fontFamily:"monospace" }} />
+            </Field>
+            <Field label="Invoice date">
+              <DateField value={form.date} onChange={v=>setForm(f=>({...f,date:v}))} />
+            </Field>
+            <Field label="Invoice total" required>
+              <input type="number" min="0" step="0.01" value={form.invoicedAmount}
+                onChange={e=>setForm(f=>({...f,invoicedAmount:e.target.value}))}
+                style={{ ...inp, margin:0, fontFamily:"monospace", borderColor: differs ? "#d97706" : undefined }} />
+            </Field>
+            <button
+              onClick={()=>{ dispatch({ type:"RECONCILE_FUEL_DELIVERY", payload:{
+                txId: open.id, invoicedAmount: actual, invoiceNumber: form.invoiceNumber,
+                date: form.date, accept: true } }); setOpenId(null); }}
+              disabled={!actual}
+              style={{ ...btn.primary, background:"#1a6b35", opacity: actual?1:0.45, cursor: actual?"pointer":"not-allowed" }}>
+              {differs ? "Accept invoice" : "Confirm"}
+            </button>
+            <button onClick={()=>setOpenId(null)} style={btn.ghost}>Cancel</button>
+          </div>
+
+          {differs && (
+            <div style={{ marginTop:10, background:"#fef8e8", border:"1px solid #f0d080", borderRadius:6, padding:"10px 12px", fontSize:12, color:"#7a4f00", lineHeight:1.6 }}>
+              <strong>The invoice is {fmtSm(Math.abs(diff))} {diff > 0 ? "more" : "less"} than the bid.</strong>{" "}
+              {Number(open.gallons||0).toLocaleString()} gal × {fmtSm(open.unitCost||0)} = {fmtSm(expected)},
+              but the invoice says {fmtSm(actual)}. Either the gallons delivered or the price charged is not
+              what was agreed. Accepting updates the claim to the invoice; check it first.
+              <div style={{ marginTop:8 }}>
+                <button
+                  onClick={()=>{ dispatch({ type:"RECONCILE_FUEL_DELIVERY", payload:{
+                    txId: open.id, invoicedAmount: actual, invoiceNumber: form.invoiceNumber,
+                    date: form.date, accept: false } }); setOpenId(null); }}
+                  style={{ ...btn.ghost, fontSize:11, padding:"5px 12px", borderColor:"#c0392b", color:"#c0392b" }}>
+                  Flag as disputed — leave the claim at the bid price
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ReconciliationPanel({ tanks, tankTx }) {
   const rows = tanks
@@ -74,10 +173,12 @@ function ReconciliationPanel({ tanks, tankTx }) {
 // metered life we can actually see: from the earliest reading on record to the
 // unit's current lifetime meter.
 
-export function TanksTab({ tanks, tankTx, dispensing, dispatch }) {
+export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode = "302.09", dispatch }) {
   const [showNew, setShowNew] = useState(false);
   const [selectedTankId, setSelectedTankId] = useState(null);
-  const [txForm, setTxForm] = useState({ type:"delivery", date: today(), tankId:"", sourceTankId:"", gallons:"", vendorName:"", invoiceNumber:"", unitCost:"", dipReading:"", notes:"" });
+  const [txForm, setTxForm] = useState({ type:"delivery", date: today(), tankId:"", sourceTankId:"",
+    gallons:"", vendorId:"", vendorName:"", invoiceNumber:"", unitCost:"", dipReading:"", notes:"",
+    deliveryTicket:"", bidReference:"", claimCycleId:"", glCode: fuelGLCode });
   const setTx = (k,v) => setTxForm(f=>({...f,[k]:v}));
 
   const [showTxForm, setShowTxForm] = useState(false);
@@ -106,6 +207,13 @@ export function TanksTab({ tanks, tankTx, dispensing, dispatch }) {
     setShowNew(false);
   };
 
+  // Only cycles from here on — a delivery cannot go on a claim already past.
+  const claimCycleOptions = useMemo(() => {
+    const t = today();
+    return CLAIM_CYCLES.filter(c => c.date >= t).slice(0, 8);
+  }, []);
+  const deliveryTotal = (parseFloat(txForm.gallons)||0) * (parseFloat(txForm.unitCost)||0);
+
   const isFill  = txForm.type === "portable_fill";
   const srcTank = tanks.find(t=>t.id===txForm.sourceTankId);
   const fillCost = isFill ? tankUnitCost(txForm.sourceTankId, tankTx) : 0;
@@ -119,11 +227,44 @@ export function TanksTab({ tanks, tankTx, dispensing, dispatch }) {
     // A transfer inherits the source tank's cost; a delivery sets its own.
     const perGal = isFill ? fillCost : (parseFloat(txForm.unitCost)||0);
     const deliveryCost = perGal*gals;
+    // A delivery raises its own claim. The price per gallon is known because
+    // fuel is bid per load, so the claim is complete rather than a placeholder
+    // waiting on the invoice.
+    const txId = `${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+    const isDelivery = txForm.type === "delivery";
+    const expenditure = (isDelivery && deliveryCost > 0 && txForm.claimCycleId) ? {
+      id: `${txId}-exp`,
+      date: txForm.date,
+      vendor: txForm.vendorName,
+      vendorId: txForm.vendorId || null,
+      type: "invoice",
+      reference: txForm.invoiceNumber || txForm.deliveryTicket,
+      claimCycleId: txForm.claimCycleId,
+      claimCycle: txForm.claimCycleId,
+      lines: [{
+        id: `${txId}-line`,
+        code: txForm.glCode,
+        description: `${gals.toLocaleString()} gal ${tank?.fuelType||"fuel"} — ${tank?.name||""}`.trim(),
+        amount: deliveryCost,
+        notes: txForm.bidReference ? `Bid ${txForm.bidReference}` : "",
+      }],
+      totalAmount: deliveryCost,
+      status: "entered",
+      notes: `Fuel delivery — ticket ${txForm.deliveryTicket || "—"}`,
+      sourceTankTransactionId: txId,
+      createdAt: new Date().toISOString(),
+    } : null;
+
     dispatch({ type:"ADD_TANK_TRANSACTION", payload:{
-      id:`${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      id: txId,
       type:txForm.type, date:txForm.date, tankId:txForm.tankId, tankName:tank?.name||"",
       gallons: (txForm.type==="dip_reading"||txForm.type==="monitor_reading") ? 0 : gals,
-      vendorName:txForm.vendorName, invoiceNumber:txForm.invoiceNumber,
+      vendorName:txForm.vendorName, vendorId: txForm.vendorId || null,
+      invoiceNumber:txForm.invoiceNumber,
+      deliveryTicket: txForm.deliveryTicket, bidReference: txForm.bidReference,
+      expenditureId: expenditure?.id || null,
+      invoiceStatus: isDelivery ? "expected" : "",
+      expenditure,
       deliveryCost, unitCost:perGal,
       sourceTankId: isFill ? txForm.sourceTankId : null,
       sourceTankName: isFill ? (srcTank?.name||"") : "",
@@ -132,7 +273,9 @@ export function TanksTab({ tanks, tankTx, dispensing, dispatch }) {
       variance: (txForm.type==="dip_reading"||txForm.type==="monitor_reading") ? (parseFloat(txForm.dipReading)||0) - ((tank?.currentLevel)||0) : 0,
       notes:txForm.notes, createdAt:new Date().toISOString(),
     }});
-    setTxForm({ type:"delivery", date: today(), tankId:"", sourceTankId:"", gallons:"", vendorName:"", invoiceNumber:"", unitCost:"", dipReading:"", notes:"" });
+    setTxForm({ type:"delivery", date: today(), tankId:"", sourceTankId:"", gallons:"",
+      vendorId:"", vendorName:"", invoiceNumber:"", unitCost:"", dipReading:"", notes:"",
+      deliveryTicket:"", bidReference:"", claimCycleId:"", glCode: fuelGLCode });
     setShowTxForm(false);
   };
 
@@ -146,6 +289,7 @@ export function TanksTab({ tanks, tankTx, dispensing, dispatch }) {
         </div>
       </div>
 
+      <DeliveryInvoices tankTx={tankTx} dispatch={dispatch} />
       <ReconciliationPanel tanks={tanks} tankTx={tankTx} />
 
       {showNew && (
@@ -235,10 +379,79 @@ export function TanksTab({ tanks, tankTx, dispensing, dispatch }) {
             </div>
           )}
           {txForm.type==="delivery" && (
-            <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:12, marginBottom:12 }}>
-              <Field label="Vendor"><input type="text" value={txForm.vendorName} onChange={e=>setTx("vendorName",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
-              <Field label="Invoice #"><input type="text" value={txForm.invoiceNumber} onChange={e=>setTx("invoiceNumber",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
-              <Field label="Unit Cost ($/gal)"><input type="number" min="0" step="0.001" value={txForm.unitCost} onChange={e=>setTx("unitCost",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+            <div style={{ background:"#fff", border:"1px solid #e4e4e0", borderRadius:6, padding:14, marginBottom:12 }}>
+              <div style={{ fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em", color:"#888", marginBottom:10 }}>
+                The Load, and the Claim It Raises
+              </div>
+
+              <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:12, marginBottom:12 }}>
+                <Field label="Vendor" required>
+                  {vendors.length > 0 ? (
+                    <SearchSelect
+                      items={vendors}
+                      value={txForm.vendorId}
+                      onChange={id=>{
+                        const v = vendors.find(x=>x.id===id);
+                        setTx("vendorId", id); setTx("vendorName", v?.name || "");
+                      }}
+                      placeholder="Type a vendor name…"
+                      getLabel={v=>v.name} getSearch={v=>`${v.name} ${v.vendorCode||""}`}
+                    />
+                  ) : (
+                    <input type="text" value={txForm.vendorName} onChange={e=>setTx("vendorName",e.target.value)} style={{ ...inp, margin:0 }} />
+                  )}
+                </Field>
+                <Field label="Delivery Ticket #">
+                  <input type="text" value={txForm.deliveryTicket} onChange={e=>setTx("deliveryTicket",e.target.value)}
+                    placeholder="From the driver" style={{ ...inp, margin:0, fontFamily:"monospace" }} />
+                </Field>
+                <Field label="Bid Reference">
+                  <input type="text" value={txForm.bidReference} onChange={e=>setTx("bidReference",e.target.value)}
+                    placeholder="Which bid" style={{ ...inp, margin:0, fontFamily:"monospace" }} />
+                </Field>
+              </div>
+
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:12, marginBottom:12 }}>
+                <Field label="Bid Price ($/gal)" required>
+                  <input type="number" min="0" step="0.001" value={txForm.unitCost} onChange={e=>setTx("unitCost",e.target.value)}
+                    style={{ ...inp, margin:0, fontFamily:"monospace" }} />
+                </Field>
+                <Field label="Claim Amount">
+                  <div style={{ ...inp, margin:0, background:"#f7f7f5", fontFamily:"monospace", fontWeight:700, color:"#1a5a3a" }}>
+                    {deliveryTotal ? fmtSm(deliveryTotal) : "—"}
+                  </div>
+                </Field>
+                <Field label="Account Code">
+                  <input type="text" value={txForm.glCode} onChange={e=>setTx("glCode",e.target.value)}
+                    style={{ ...inp, margin:0, fontFamily:"monospace" }} />
+                </Field>
+                <Field label="Claim Cycle" required>
+                  <select value={txForm.claimCycleId} onChange={e=>setTx("claimCycleId",e.target.value)} style={{ ...inp, margin:0 }}>
+                    <option value="">Select…</option>
+                    {claimCycleOptions.map(c=><option key={c.id} value={c.id}>{c.label}</option>)}
+                  </select>
+                </Field>
+              </div>
+
+              <Field label="Invoice # (if it came with the load)">
+                <input type="text" value={txForm.invoiceNumber} onChange={e=>setTx("invoiceNumber",e.target.value)}
+                  placeholder="Leave blank — you can reconcile it when the invoice arrives"
+                  style={{ ...inp, margin:0, fontFamily:"monospace" }} />
+              </Field>
+
+              {deliveryTotal > 0 && txForm.claimCycleId ? (
+                <div style={{ marginTop:10, background:"#f0f8f4", border:"1px solid #a8d5b5", borderRadius:6, padding:"9px 12px", fontSize:12, color:"#1a5a3a", lineHeight:1.6 }}>
+                  Saving this puts <strong>{fmtSm(deliveryTotal)}</strong> on the{" "}
+                  <strong>{claimCycleOptions.find(c=>c.id===txForm.claimCycleId)?.label}</strong> claim cycle
+                  against <strong>{txForm.glCode}</strong>. No need to key the invoice again in Fund Accounting —
+                  when it arrives, reconcile it here and the claim follows.
+                </div>
+              ) : (
+                <div style={{ marginTop:10, background:"#fef8e8", border:"1px solid #f0d080", borderRadius:6, padding:"9px 12px", fontSize:12, color:"#7a4f00" }}>
+                  A price per gallon and a claim cycle are needed before this can raise a claim. Without them
+                  the fuel is recorded but the money isn't, and someone has to remember to key it separately.
+                </div>
+              )}
             </div>
           )}
           <div style={{ display:"flex", gap:10 }}>

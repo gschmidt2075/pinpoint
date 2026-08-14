@@ -852,10 +852,41 @@ export const createTankTransaction = (overrides = {}) => ({
   // Dip reading (reconciliation)
   dipReading:      0,            // actual measured gallons
   variance:        0,            // dipReading - calculated level
+  // ── The money side of a delivery ────────────────────────────────────────
+  // A delivery is fuel arriving AND an invoice to pay. Recording it once has to
+  // do both, or the office keys the same paperwork twice and one of the two
+  // eventually gets missed.
+  //
+  // Fuel is bid PER DELIVERY, not on a standing contract — the Parts Manager
+  // takes bids for each load, so she knows the price per gallon when the truck
+  // arrives. That means the claim is complete from the start; the invoice
+  // arriving later only confirms it.
+  expenditureId:   null,         // the claim line this created
+  deliveryTicket:  "",           // what the driver leaves
+  bidReference:    "",           // the bid this load was priced from
+  invoiceStatus:   "expected",   // expected | reconciled | disputed
+  invoicedAmount:  0,            // what the invoice actually said, when it lands
+  reconciledDate:  "",
   notes:           "",
   createdAt:       now(),
   ...overrides,
 });
+
+// Does the invoice agree with what the bid says it should have cost?
+//
+// This is the check worth having. The county agreed a price per gallon; if the
+// invoice does not equal gallons times that price, either the gallons or the
+// rate is wrong, and someone should look before it goes on a claim.
+export function fuelInvoiceVariance(tx) {
+  if (!tx || tx.type !== "delivery") return null;
+  const expected = (Number(tx.gallons) || 0) * (Number(tx.unitCost) || 0);
+  const actual   = Number(tx.invoicedAmount) || 0;
+  if (!actual) return { state: "awaiting", expected, actual: 0, difference: 0 };
+  const difference = actual - expected;
+  // A cent or two is rounding on a five-thousand-gallon load, not a dispute.
+  const state = Math.abs(difference) <= 0.05 ? "agrees" : "differs";
+  return { state, expected, actual, difference };
+}
 
 // Fuel dispensing entry (fuel from any tank to equipment)
 export const createFuelDispensing = (overrides = {}) => ({
