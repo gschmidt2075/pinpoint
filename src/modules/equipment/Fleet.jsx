@@ -3,7 +3,7 @@ import { Icon, Field, SectionCard, KPICard, inp, btn, fmt, fmtSm, DateField, tit
 import { createEquipmentUnit, createEquipmentPart, createEquipmentFluid, createEquipmentTire, EQUIPMENT_PART_KINDS, EQUIPMENT_FLUID_KINDS, TIRE_POSITIONS, FUEL_TYPES } from "../../data/schema.js";
 import { today, fmtDate, StatusChip, lifetimeMeter, operatingCost, EQUIPMENT_TYPES } from "./shared.jsx";
 import { FEMA_EQUIPMENT_RATES } from "../../data/femaRates.js";
-import { PMScheduleEditor, PMBadge, pmStatus, UnitPM } from "./PM.jsx";
+import { PMScheduleEditor, PMBadge, pmStatus, pmDueList, UnitPM } from "./PM.jsx";
 import { UnitWorkOrders } from "./WorkOrders.jsx";
 import { UnitFuelLog } from "./Fuel.jsx";
 
