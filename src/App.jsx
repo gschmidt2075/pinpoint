@@ -2,7 +2,7 @@ import { useReducer, useState, useEffect } from "react";
 import FundAccounting from "./modules/FundAccounting.jsx";
 import CostAccounting from "./modules/CostAccounting.jsx";
 import Inventory from "./modules/Inventory.jsx";
-import Equipment from "./modules/Equipment.jsx";
+import Equipment from "./modules/equipment/index.jsx";
 import Infrastructure from "./modules/Infrastructure.jsx";
 import Projects from "./modules/Projects.jsx";
 import Settings from "./modules/Settings.jsx";

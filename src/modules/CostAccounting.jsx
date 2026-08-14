@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm, DateField, titleCase } from "../components/shared.jsx";
 import { createLaborEntry, createEquipmentEntry, createMaterialEntry, createContractorEntry, createEngineeringEntry, uid, today } from "../data/schema.js";
-import { FEMA_EQUIPMENT_RATES } from "./Equipment.jsx";
+import { FEMA_EQUIPMENT_RATES } from "../data/femaRates.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const FEMA_OVH = 1.157; // 15.7% overhead multiplier (labor force account)
