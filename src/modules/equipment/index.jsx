@@ -3,7 +3,6 @@ import { Icon, inp, btn } from "../../components/shared.jsx";
 import { FleetTab } from "./Fleet.jsx";
 import { WorkOrdersTab, WorkOrderDetail } from "./WorkOrders.jsx";
 import { PMDueTab } from "./PM.jsx";
-import { FuelLogTab, TanksTab } from "./Fuel.jsx";
 import { UnitDetail } from "./Fleet.jsx";
 
 // ── Equipment ─────────────────────────────────────────────────────────────────
@@ -13,7 +12,11 @@ import { UnitDetail } from "./Fleet.jsx";
 //   Fleet.jsx        the machines, their specs and their costs
 //   WorkOrders.jsx   jobs on a machine
 //   PM.jsx           the rules that raise those jobs
-//   Fuel.jsx         tanks, dispensing and departmental billing
+//
+// Fuel used to be two tabs here. It is its own module now — tanks, deliveries,
+// dispensing and departmental billing are an operation in their own right. What
+// stays is the per-machine fuel history, on the machine, where someone asking
+// what a grader has burned will look for it.
 //   shared.jsx       helpers more than one of them needs
 //
 // This was one 2,828-line file. Splitting it changed no behaviour; it just
@@ -29,8 +32,6 @@ export default function Equipment({ db, dispatch }) {
   const workOrders = db.workOrders    || [];
   const pmLogs     = db.pmLogs        || [];
   const dispensing = db.fuelDispensing|| [];
-  const tanks      = db.tanks         || [];
-  const tankTx     = db.tankTransactions || [];
   const invItems   = db.inventoryItems|| [];
   const invBatches = db.inventoryBatches || [];
 
@@ -73,8 +74,6 @@ export default function Equipment({ db, dispatch }) {
     { id:"fleet",       label:"Fleet",         icon:"truck" },
     { id:"pmdue",       label:"PM Due",        icon:"alarm" },
     { id:"workorders",  label:"Work Orders",   icon:"clipboard-check" },
-    { id:"fuel",        label:"Fuel Log",      icon:"droplet" },
-    { id:"tanks",       label:"Tanks",         icon:"building-warehouse" },
   ];
 
   return (
@@ -97,10 +96,6 @@ export default function Equipment({ db, dispatch }) {
       {tab==="fleet"      && <FleetTab      units={units} workOrders={workOrders} dispensing={dispensing} dispatch={dispatch} onSelect={id=>setSelectedUnitId(id)} />}
       {tab==="pmdue"      && <PMDueTab      units={units} dispatch={dispatch} onOpen={id=>setSelectedWOId(id)} />}
       {tab==="workorders" && <WorkOrdersTab workOrders={workOrders} units={units} dispatch={dispatch} onOpen={id=>setSelectedWOId(id)} />}
-      {tab==="fuel"       && <FuelLogTab    dispensing={dispensing} units={units} tanks={tanks} tankTx={tankTx} departments={db?.lookups?.fuelDepartments || []} dispatch={dispatch} />}
-      {tab==="tanks"      && <TanksTab      tanks={tanks} tankTx={tankTx} dispensing={dispensing} dispatch={dispatch} />}
     </div>
   );
 }
-
-// ── Fleet Tab ─────────────────────────────────────────────────────────────────

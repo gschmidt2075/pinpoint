@@ -1,11 +1,10 @@
 import { useState } from "react";
-import { Icon, Field, SectionCard, KPICard, inp, btn, fmt, fmtSm, DateField, titleCase } from "../../components/shared.jsx";
+import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm, DateField, titleCase } from "../../components/shared.jsx";
 import { createEquipmentUnit, createEquipmentPart, createEquipmentFluid, createEquipmentTire, EQUIPMENT_PART_KINDS, EQUIPMENT_FLUID_KINDS, TIRE_POSITIONS, FUEL_TYPES } from "../../data/schema.js";
 import { today, fmtDate, StatusChip, lifetimeMeter, operatingCost, EQUIPMENT_TYPES } from "./shared.jsx";
 import { FEMA_EQUIPMENT_RATES } from "../../data/femaRates.js";
 import { PMScheduleEditor, PMBadge, pmStatus, pmDueList, UnitPM } from "./PM.jsx";
 import { UnitWorkOrders } from "./WorkOrders.jsx";
-import { UnitFuelLog } from "./Fuel.jsx";
 
 // ── The fleet ─────────────────────────────────────────────────────────────────
 // The machines themselves — what they are, what they take, what they cost. The
@@ -651,3 +650,32 @@ function SpecLists({ form, set }) {
 // A machine has SEVERAL schedules at once — a grader is serviced at 250, 500
 // and 1000 hours, each a different job — so this is a list, and each row keeps
 // its own last-done reading. Closing a work order stamps the row it satisfied.
+
+// ── What this machine has burned ──────────────────────────────────────────────
+// The per-unit fuel history stays with the unit. Fuel is its own module now,
+// but 'what has this grader burned' is a question about the grader.
+
+export function UnitFuelLog({ dispensing }) {
+  const sorted = [...dispensing].sort((a,b)=>b.date.localeCompare(a.date));
+  return (
+    <div>
+      <div style={{ fontSize:13, color:"#888", marginBottom:14 }}>
+        {sorted.length} fuel entries — use the Fuel Log tab to add new dispensing records.
+      </div>
+      <Table
+        headers={[{label:"Date"},{label:"Gallons"},{label:"Fuel Type"},{label:"Meter Reading"},{label:"Tank"},{label:"Notes"}]}
+        rows={sorted.map(e=>[
+          <span style={{fontFamily:"monospace",fontSize:12}}>{fmtDate(e.date)}</span>,
+          <span style={{fontFamily:"monospace",fontWeight:700}}>{e.gallons}</span>,
+          <span style={{fontSize:12,textTransform:"capitalize"}}>{e.fuelType||"diesel"}</span>,
+          <span style={{fontFamily:"monospace"}}>{e.meterReading||"—"}</span>,
+          <span style={{fontSize:12,color:"#888"}}>{e.sourceTankName||"—"}</span>,
+          <span style={{fontSize:12,color:"#888"}}>{e.notes||"—"}</span>,
+        ])}
+        emptyMessage="No fuel entries for this unit"
+      />
+    </div>
+  );
+}
+
+// ── Work Orders Tab (all units) ───────────────────────────────────────────────

@@ -3,6 +3,7 @@ import FundAccounting from "./modules/FundAccounting.jsx";
 import CostAccounting from "./modules/CostAccounting.jsx";
 import Inventory from "./modules/Inventory.jsx";
 import Equipment from "./modules/equipment/index.jsx";
+import Fuel from "./modules/fuel/index.jsx";
 import Infrastructure from "./modules/Infrastructure.jsx";
 import Projects from "./modules/Projects.jsx";
 import Settings from "./modules/Settings.jsx";
@@ -659,6 +660,7 @@ const NAV_GROUPS = [
     items: [
       { id:"inventory",      label:"Inventory",         icon:"ti-package" },
       { id:"equipment",      label:"Equipment",         icon:"ti-tractor" },
+      { id:"fuel",           label:"Fuel & Tanks",      icon:"ti-gas-station" },
       { id:"infrastructure", label:"Infrastructure",    icon:"ti-road" },
       { id:"projects",       label:"Projects",          icon:"ti-clipboard-list" },
       { id:"payroll",        label:"Employees",         icon:"ti-users" },
@@ -830,6 +832,7 @@ export default function App() {
           {activeTab==="cost"           && <CostAccounting  db={db} dispatch={dispatch} />}
           {activeTab==="inventory"      && <Inventory        db={db} dispatch={dispatch} />}
           {activeTab==="equipment"      && <Equipment        db={db} dispatch={dispatch} />}
+          {activeTab==="fuel"           && <Fuel             db={db} dispatch={dispatch} />}
           {activeTab==="infrastructure" && <Infrastructure   db={db} dispatch={dispatch} />}
           {activeTab==="projects"       && <Projects         db={db} dispatch={dispatch} />}
           {activeTab==="vendors"        && <Vendors          db={db} dispatch={dispatch} />}
