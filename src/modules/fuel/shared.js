@@ -43,8 +43,17 @@ export function reconciliationStatus(tank, tankTx) {
     .filter(t => t.tankId === tank.id && t.type === kind)
     .sort((a,b) => String(b.date||"").localeCompare(String(a.date||"")))[0];
 
-  const age = last ? daysSince(last.date) : null;
-  if (age === null) return { state:"never", cadence, age:null, last:null, label:"Never reconciled" };
-  if (age > limit)  return { state:"overdue", cadence, age, last, label:`${age} days since last reading` };
-  return { state:"ok", cadence, age, last, label:`Read ${age === 0 ? "today" : `${age} days ago`}` };
+  const age   = last ? daysSince(last.date) : null;
+  const state = age === null ? "never" : age > limit ? "overdue" : "ok";
+
+  return {
+    state, cadence, kind, limit, last, age,
+    // The gallons the last reading disagreed by. NULL when there has never been
+    // a reading — which is a different thing from agreeing exactly, and the
+    // screen shows it as a dash rather than a zero.
+    variance: last?.variance ?? null,
+    label: state === "never"   ? "Never reconciled"
+         : state === "overdue" ? `${age} days since last reading`
+         : `Read ${age === 0 ? "today" : `${age} days ago`}`,
+  };
 }
