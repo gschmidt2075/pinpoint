@@ -696,6 +696,7 @@ function WOForm({ unit, onSave, onCancel }) {
 
 // ── Work Order Detail ─────────────────────────────────────────────────────────
 function WorkOrderDetail({ wo, unit, invItems, invBatches, db, dispatch, onBack }) {
+  const [closing, setClosing] = useState(false);
   const [tab, setTab] = useState("labor");
   const priorityMeta = WO_PRIORITIES.find(p=>p.value===wo.priority)||{ color:"#888" };
 
@@ -727,10 +728,14 @@ function WorkOrderDetail({ wo, unit, invItems, invBatches, db, dispatch, onBack 
           <span style={{ background:priorityMeta.color, color:"#fff", padding:"3px 10px", borderRadius:99, fontSize:11, fontWeight:700 }}>{(wo.priority||"").toUpperCase()}</span>
           <span style={{ fontSize:11, fontWeight:700, color:wo.status==="open"?"#1a6b35":"#888" }}>{wo.status?.toUpperCase()}</span>
           {wo.status==="open" && (
-            <button onClick={()=>dispatch({ type:"CLOSE_WORK_ORDER", payload:{ id:wo.id, closedDate:new Date().toISOString().split("T")[0] } })} style={{ ...btn.small, background:"#1a6b35", fontSize:11 }}>Close WO</button>
+            <button onClick={()=>setClosing(true)} style={{ ...btn.small, background:"#1a6b35", fontSize:11 }}>Close WO</button>
           )}
         </div>
       </div>
+
+      {closing && (
+        <CloseWorkOrder wo={wo} unit={unit} dispatch={dispatch} onDone={()=>setClosing(false)} />
+      )}
 
       <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10, marginBottom:20 }}>
         <KPICard label="Labor"   value={fmtSm(wo.totalLaborCost||0)}   sub="" accent="#1a6b35" icon="user-check" />
@@ -1055,30 +1060,72 @@ export function lifetimeMeter(unit) {
 // you'd want to start scheduling.
 const DEFAULT_WARN = { hours: 25, miles: 500, months: 1 };
 
+// Whichever comes first.
+//
+// A service can carry a meter threshold, a calendar threshold, or both. Each is
+// worked out separately and the nearer one decides — a grader that sat all
+// winter is due on months even though the hour meter never moved, and one
+// working flat out is due on hours long before six months are up.
+const DEFAULT_WARN_DAYS = 21;
+
 export function pmStatus(unit, sched) {
-  if (!sched || sched.active === false || !sched.interval) return null;
-  const warn = Number(sched.warnAhead) || DEFAULT_WARN[sched.intervalType] || 0;
+  if (!sched || sched.active === false) return null;
+  const byMeter = Number(sched.interval) > 0;
+  const byDate  = Number(sched.intervalMonths) > 0;
+  if (!byMeter && !byDate) return null;
 
-  if (sched.intervalType === "months") {
-    if (!sched.lastDoneDate) return { state:"unknown", label:"Never done", remaining:null };
-    const due = new Date(sched.lastDoneDate);
-    due.setMonth(due.getMonth() + Number(sched.interval));
-    const days = Math.round((due - Date.now()) / 864e5);
-    if (days < 0)          return { state:"overdue", label:`${Math.abs(days)} days overdue`, remaining:days };
-    if (days <= warn * 30) return { state:"due",     label:`Due in ${days} days`,            remaining:days };
-    return { state:"ok", label:`Due in ${days} days`, remaining:days };
+  const parts = [];
+
+  if (byMeter) {
+    if (sched.lastDoneMeter === null || sched.lastDoneMeter === undefined) {
+      parts.push({ kind:"meter", state:"unknown", label:"No baseline reading", remaining:null });
+    } else {
+      const warn = Number(sched.warnAhead) || DEFAULT_WARN[sched.intervalType] || 0;
+      const dueAt = Number(sched.lastDoneMeter) + Number(sched.interval);
+      const remaining = dueAt - lifetimeMeter(unit);
+      const u = sched.intervalType === "miles" ? "mi" : "hr";
+      parts.push({
+        kind:"meter", dueAt, remaining, unit:u,
+        state: remaining < 0 ? "overdue" : remaining <= warn ? "due" : "ok",
+        label: remaining < 0
+          ? `${Math.abs(remaining).toLocaleString()} ${u} overdue`
+          : `${remaining.toLocaleString()} ${u} to go`,
+      });
+    }
   }
 
-  const current = lifetimeMeter(unit);
-  if (sched.lastDoneMeter === null || sched.lastDoneMeter === undefined) {
-    return { state:"unknown", label:"No baseline reading", remaining:null };
+  if (byDate) {
+    if (!sched.lastDoneDate) {
+      parts.push({ kind:"date", state:"unknown", label:"Never done", remaining:null });
+    } else {
+      const warnDays = Number(sched.warnAheadDays) || DEFAULT_WARN_DAYS;
+      const due = new Date(sched.lastDoneDate);
+      due.setMonth(due.getMonth() + Number(sched.intervalMonths));
+      const days = Math.round((due - Date.now()) / 864e5);
+      parts.push({
+        kind:"date", dueDate: due.toISOString().split("T")[0], days,
+        state: days < 0 ? "overdue" : days <= warnDays ? "due" : "ok",
+        label: days < 0 ? `${Math.abs(days)} days overdue` : `${days} days to go`,
+      });
+    }
   }
-  const dueAt     = Number(sched.lastDoneMeter) + Number(sched.interval);
-  const remaining = dueAt - current;
-  const u = sched.intervalType === "miles" ? "mi" : "hr";
-  if (remaining < 0)     return { state:"overdue", label:`${Math.abs(remaining).toLocaleString()} ${u} overdue`, remaining, dueAt };
-  if (remaining <= warn) return { state:"due",     label:`${remaining.toLocaleString()} ${u} to go`,             remaining, dueAt };
-  return { state:"ok", label:`${remaining.toLocaleString()} ${u} to go`, remaining, dueAt };
+
+  // The worst state wins, and among equals the nearer one.
+  const rank = { overdue:0, due:1, unknown:2, ok:3 };
+  const driver = parts.slice().sort((a,b) => rank[a.state] - rank[b.state])[0];
+
+  return {
+    ...driver,
+    // Both thresholds, so the screen can show why it is due and what the other
+    // one says — "250 hr to go, but 12 days overdue on the calendar".
+    parts,
+    state: driver.state,
+    label: driver.label,
+    remaining: driver.kind === "meter" ? driver.remaining : driver.days,
+    dueAt: parts.find(p => p.kind === "meter")?.dueAt,
+    dueDate: parts.find(p => p.kind === "date")?.dueDate,
+    drivenBy: driver.kind,
+  };
 }
 
 // Every schedule across the fleet that wants attention, worst first.
@@ -2294,6 +2341,66 @@ function UnitForm({ unit, onSave, onCancel }) {
   );
 }
 
+// ── Closing a work order ──────────────────────────────────────────────────────
+//
+// It asks for the meter reading, because that is the only moment the shop is
+// certainly standing at the machine. Every PM interval is measured against this
+// number, and stamping whatever the record last happened to say is only right
+// if somebody updated it that day — which is exactly the assumption that lets
+// service intervals drift.
+function CloseWorkOrder({ wo, unit, dispatch, onDone }) {
+  const u = unit?.meterType === "miles" ? "miles" : "hours";
+  const [meter, setMeter] = useState(
+    wo.meterReadingClose || unit?.currentMeter || "");
+  const [date, setDate]   = useState(today());
+
+  const reading = parseFloat(meter) || 0;
+  const known   = Number(unit?.currentMeter) || 0;
+  const backwards = reading > 0 && reading < known;
+  const sched   = (unit?.pmSchedule || []).find(sc => sc.id === wo.pmScheduleId);
+
+  return (
+    <div style={{ background:"#f0f8f4", border:"1px solid #a8d5b5", borderRadius:8, padding:18, marginBottom:20 }}>
+      <div style={{ fontWeight:700, fontSize:14, color:"#1a5a3a", marginBottom:4 }}>Close this work order</div>
+      <div style={{ fontSize:12, color:"#4a7a5a", marginBottom:14, lineHeight:1.6 }}>
+        Read the {u} off the machine now. This is what the next service is measured from
+        {sched ? <> — it resets <strong>{sched.service}</strong></> : null}.
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1.4fr auto auto", gap:12, alignItems:"end" }}>
+        <Field label="Date closed">
+          <DateField value={date} onChange={setDate} />
+        </Field>
+        <Field label={`Meter reading (${u})`} required>
+          <input type="number" min="0" step="any" value={meter}
+            onChange={e=>setMeter(e.target.value)}
+            style={{ ...inp, margin:0, fontFamily:"monospace",
+                     borderColor: backwards ? "#c0392b" : undefined }} />
+        </Field>
+        <button
+          onClick={()=>{
+            dispatch({ type:"CLOSE_WORK_ORDER",
+              payload:{ id:wo.id, closedDate:date, meterReadingClose:reading } });
+            onDone();
+          }}
+          disabled={!reading}
+          style={{ ...btn.primary, background:"#1a6b35", opacity: reading?1:0.45,
+                   cursor: reading?"pointer":"not-allowed" }}>
+          Close Work Order
+        </button>
+        <button onClick={onDone} style={btn.ghost}>Cancel</button>
+      </div>
+
+      {backwards && (
+        <div style={{ marginTop:10, fontSize:12, color:"#8c1b18" }}>
+          That is below the {known.toLocaleString()} {u} already recorded. Meters only go forward, so
+          this will be kept at {known.toLocaleString()} — check the reading before closing.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Specification lists ───────────────────────────────────────────────────────
 //
 // Filters, fluids and tires, as repeatable rows rather than fixed fields. A
@@ -2411,7 +2518,64 @@ function SpecLists({ form, set }) {
 // A machine has SEVERAL schedules at once — a grader is serviced at 250, 500
 // and 1000 hours, each a different job — so this is a list, and each row keeps
 // its own last-done reading. Closing a work order stamps the row it satisfied.
-const PM_COLS = "1.7fr 0.8fr 1fr 0.9fr 1fr 34px";
+const PM_COLS = "1.8fr 0.7fr 0.9fr 0.9fr 34px";
+
+// What the system knows about a service, as opposed to what you told it.
+//
+// This is deliberately NOT a set of form fields. Closing a PM work order stamps
+// the reading and the date; showing them as editable boxes made a set-once
+// thing look like a chore to be done at every service. It reads as status, with
+// one way in to correct the starting point when a schedule is first created.
+function PMRowStatus({ row, status, meterType, onChange }) {
+  const [correcting, setCorrecting] = useState(false);
+  const u = row.intervalType === "miles" ? "mi" : "hr";
+  const never = !row.lastDoneMeter && !row.lastDoneDate;
+
+  const tone = { overdue:"#c0392b", due:"#d97706", unknown:"#888", ok:"#1a5a3a" }[status?.state] || "#888";
+
+  if (correcting) {
+    return (
+      <div style={{ display:"flex", gap:8, alignItems:"flex-end", marginTop:8, background:"#f7f7f5", border:"1px solid #e4e4e0", borderRadius:6, padding:"10px 12px" }}>
+        <Field label={`Last done at (${u})`}>
+          <input type="number" min="0" step="any" value={row.lastDoneMeter ?? ""}
+            onChange={e=>onChange(row.id,"lastDoneMeter", e.target.value === "" ? null : (parseFloat(e.target.value)||0))}
+            placeholder="unknown" style={{ ...inp, margin:0, fontSize:12, fontFamily:"monospace", width:130 }} />
+        </Field>
+        <Field label="On">
+          <DateField value={row.lastDoneDate||""} onChange={v=>onChange(row.id,"lastDoneDate",v)} />
+        </Field>
+        <button type="button" onClick={()=>setCorrecting(false)} style={{ ...btn.ghost, fontSize:11, padding:"6px 12px" }}>Done</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:10, marginTop:6, fontSize:11, flexWrap:"wrap" }}>
+      <span style={{ color:tone, fontWeight:700 }}>
+        {never ? "Not started" : status?.label || "—"}
+      </span>
+      {!never && (
+        <span style={{ color:"#999" }}>
+          last done
+          {row.lastDoneMeter != null ? ` at ${Number(row.lastDoneMeter).toLocaleString()} ${u}` : ""}
+          {row.lastDoneDate ? ` on ${fmtDate(row.lastDoneDate)}` : ""}
+        </span>
+      )}
+      {/* When both thresholds are set, say what the other one thinks — "due on
+          hours, but the calendar has another 40 days" is the useful sentence. */}
+      {status?.parts?.length > 1 && (
+        <span style={{ color:"#bbb" }}>
+          · {status.parts.filter(p => p.kind !== status.drivenBy).map(p => p.label).join(" · ")}
+        </span>
+      )}
+      <button type="button" onClick={()=>setCorrecting(true)}
+        style={{ background:"none", border:"none", color:"#1a3a5c", fontSize:11, cursor:"pointer", textDecoration:"underline", padding:0 }}>
+        {never ? "set a starting point" : "correct"}
+      </button>
+      <span style={{ color:"#ccc" }}>· kept up to date by closing work orders</span>
+    </div>
+  );
+}
 
 // The services that actually get scheduled, offered as a shortcut. Typing
 // anything else is fine — this is a list of suggestions, not a set of choices.
@@ -2476,43 +2640,51 @@ function PMScheduleEditor({ form, set }) {
 
       {rows.length > 0 && (
         <div style={{ display:"grid", gridTemplateColumns:PM_COLS, gap:8, marginBottom:4 }}>
-          {["Service","Every","Measured In","Warn Ahead","Last Done",""].map(h=>(
-            <div key={h} style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:"#aaa" }}>{h}</div>
+          {["Service","Every","","Or Every",""].map((h,n)=>(
+            <div key={n} style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:"#aaa" }}>{h}</div>
           ))}
         </div>
       )}
 
-      {rows.map((r) => (
-        <div key={r.id} style={{ display:"grid", gridTemplateColumns:PM_COLS, gap:8, alignItems:"center", marginBottom:6 }}>
-          {/* A text input with suggestions, not a fixed list — the shop names
-              services their own way and shouldn't be trapped in our vocabulary. */}
-          <input type="text" list="pm-service-options" value={r.service||""}
-            onChange={e=>change(r.id,"service",e.target.value)}
-            placeholder="Name the service…" style={{ ...inp, margin:0, fontSize:12 }} />
-          <input type="number" min="0" step="any" value={r.interval||0}
-            onChange={e=>change(r.id,"interval",parseFloat(e.target.value)||0)}
-            style={{ ...inp, margin:0, fontSize:12, fontFamily:"monospace" }} />
-          <select value={r.intervalType||"hours"} onChange={e=>change(r.id,"intervalType",e.target.value)}
-            style={{ ...inp, margin:0, fontSize:12 }}>
-            <option value="hours">Hours</option>
-            <option value="miles">Miles</option>
-            <option value="months">Months</option>
-          </select>
-          <input type="number" min="0" step="any" value={r.warnAhead||""}
-            onChange={e=>change(r.id,"warnAhead",parseFloat(e.target.value)||0)}
-            placeholder="Auto" style={{ ...inp, margin:0, fontSize:12, fontFamily:"monospace" }} />
-          <input type="number" min="0" step="any" value={r.lastDoneMeter ?? ""}
-            onChange={e=>change(r.id,"lastDoneMeter", e.target.value === "" ? null : (parseFloat(e.target.value)||0))}
-            placeholder="Never" style={{ ...inp, margin:0, fontSize:12, fontFamily:"monospace" }} />
-          <button type="button" onClick={()=>remove(r.id)} title="Remove this interval"
-            style={{ ...btn.ghost, padding:"7px 0", fontSize:13, color:"#c0392b", borderColor:"#f0d0d0" }}>×</button>
-        </div>
-      ))}
+      {rows.map((r) => {
+        const st = pmStatus(form, r);
+        return (
+          <div key={r.id} style={{ marginBottom:10, paddingBottom:10, borderBottom:"1px solid #f4f4f2" }}>
+            <div style={{ display:"grid", gridTemplateColumns:PM_COLS, gap:8, alignItems:"center" }}>
+              {/* Suggestions, not a fixed list — the shop names services its own way. */}
+              <input type="text" list="pm-service-options" value={r.service||""}
+                onChange={e=>change(r.id,"service",e.target.value)}
+                placeholder="Name the service…" style={{ ...inp, margin:0, fontSize:12 }} />
+              <input type="number" min="0" step="any" value={r.interval||""}
+                onChange={e=>change(r.id,"interval",parseFloat(e.target.value)||0)}
+                placeholder="0" style={{ ...inp, margin:0, fontSize:12, fontFamily:"monospace" }} />
+              <select value={r.intervalType||"hours"} onChange={e=>change(r.id,"intervalType",e.target.value)}
+                style={{ ...inp, margin:0, fontSize:12 }}>
+                <option value="hours">Hours</option>
+                <option value="miles">Miles</option>
+              </select>
+              <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+                <input type="number" min="0" step="1" value={r.intervalMonths||""}
+                  onChange={e=>change(r.id,"intervalMonths",parseFloat(e.target.value)||0)}
+                  placeholder="0" style={{ ...inp, margin:0, fontSize:12, fontFamily:"monospace", width:"100%" }} />
+                <span style={{ fontSize:11, color:"#888" }}>mo</span>
+              </div>
+              <button type="button" onClick={()=>remove(r.id)} title="Remove this service"
+                style={{ ...btn.ghost, padding:"7px 0", fontSize:13, color:"#c0392b", borderColor:"#f0d0d0" }}>×</button>
+            </div>
+
+            {/* Kept by the system, not typed — shown so it can be checked, and
+                correctable once at setup. It is not a field to maintain. */}
+            <PMRowStatus row={r} status={st} meterType={form.meterType} onChange={change} />
+          </div>
+        );
+      })}
 
       {rows.length > 0 && (
-        <div style={{ fontSize:11, color:"#888", marginTop:8, lineHeight:1.6 }}>
-          Leave <strong>warn ahead</strong> at 0 for a sensible default. <strong>Last done</strong> is the lifetime
-          meter reading at the last service — closing a PM work order fills it in from then on.
+        <div style={{ fontSize:11, color:"#888", marginTop:10, lineHeight:1.65 }}>
+          <strong>Set these once.</strong> Fill in one or both — whichever comes first triggers the
+          service. Leave <em>Every</em> blank for a purely calendar job like an annual inspection, or
+          leave <em>Or every … mo</em> blank for one that only depends on use.
         </div>
       )}
     </div>

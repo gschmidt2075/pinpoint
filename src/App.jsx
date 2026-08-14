@@ -454,18 +454,26 @@ function reducer(state, action) {
           : { ...w, status:"closed", closedDate,
               meterReadingClose: meterAtClose || w.meterReadingClose });
 
+      // Any work at all carries the meter forward — the shop reads it whenever
+      // it touches a machine, even to add a quart of oil, and that reading is
+      // what every PM interval is measured against.
       let equipment = state.equipment;
-      if (wo?.pmScheduleId && wo.unitId) {
+      if (wo?.unitId && meterAtClose) {
         equipment = state.equipment.map(u => {
           if (u.id !== wo.unitId) return u;
-          // Lifetime meter, so a replaced gauge doesn't reset the clock
-          const lifetime = (Number(u.meterOffset)||0) + (meterAtClose || Number(u.currentMeter)||0);
+          // Forward only. A mistyped low reading must not wind a machine back.
+          const current = Math.max(Number(u.currentMeter)||0, Number(meterAtClose)||0);
+          // Lifetime, so a replaced gauge doesn't reset the clock.
+          const lifetime = (Number(u.meterOffset)||0) + current;
           return {
             ...u,
-            currentMeter: Math.max(Number(u.currentMeter)||0, meterAtClose||0),
+            currentMeter: current,
+            // Only the schedule this work order was raised against is stamped.
+            // Closing a hydraulic job does not reset the oil change.
             pmSchedule: (u.pmSchedule||[]).map(sc =>
-              sc.id !== wo.pmScheduleId ? sc
-                : { ...sc, lastDoneMeter: lifetime, lastDoneDate: closedDate }),
+              (wo.pmScheduleId && sc.id === wo.pmScheduleId)
+                ? { ...sc, lastDoneMeter: lifetime, lastDoneDate: closedDate }
+                : sc),
           };
         });
       }

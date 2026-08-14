@@ -716,21 +716,37 @@ function InventoryEquipment({ db, range }) {
   // Equipment operating cost for the year, plus meter travelled — derived from
   // the fuelling readings, which is the one meter record taken consistently.
   const equipRows = useMemo(() => equipment.map(u => {
-    const wos  = (db.workOrders || []).filter(w => w.unitId === u.id && inRange(w.openedDate, range));
-    const fuel = (db.fuelDispensing || []).filter(d => d.equipmentId === u.id && inRange(d.date, range));
+    const allWos  = (db.workOrders || []).filter(w => w.unitId === u.id);
+    const allFuel = (db.fuelDispensing || []).filter(d => d.equipmentId === u.id);
+    const wos  = allWos.filter(w => inRange(w.openedDate, range));
+    const fuel = allFuel.filter(d => inRange(d.date, range));
+
     const readings = fuel.map(d => Number(d.meterReading) || 0).filter(n => n > 0);
     const metered  = readings.length >= 2 ? Math.max(...readings) - Math.min(...readings) : 0;
 
-    const parts    = wos.reduce((s,w) => s + (w.totalPartsCost   || 0), 0);
-    const labor    = wos.reduce((s,w) => s + (w.totalLaborCost   || 0), 0);
-    const outside  = wos.reduce((s,w) => s + (w.totalServiceCost || 0), 0);
-    const fuelCost = fuel.reduce((s,d) => s + (d.totalCost || 0), 0);
-    const gallons  = fuel.reduce((s,d) => s + (d.gallons   || 0), 0);
+    const sum = (list, key) => list.reduce((s,x) => s + (x[key] || 0), 0);
+
+    const parts    = sum(wos, "totalPartsCost");
+    const labor    = sum(wos, "totalLaborCost");
+    const outside  = sum(wos, "totalServiceCost");
+    const fuelCost = sum(fuel, "totalCost");
+    const gallons  = sum(fuel, "gallons");
     const total    = parts + labor + outside + fuelCost;
+
+    // Lifetime runs from the day the county took the machine on, NOT from zero
+    // on the gauge. Hours a previous owner put on it were not fuelled or
+    // maintained here, so charging them against our cost per hour flatters an
+    // old machine and tells you nothing useful.
+    const ownedMeter = Math.max(0, (Number(u.currentMeter) || 0) - (Number(u.startingMeter) || 0));
+    const lifetimeTotal =
+      sum(allWos, "totalPartsCost") + sum(allWos, "totalLaborCost") +
+      sum(allWos, "totalServiceCost") + sum(allFuel, "totalCost");
 
     return {
       unit:u, parts, labor, outside, fuelCost, gallons, metered, total,
       costRate: metered > 0 ? total / metered : null,
+      ownedMeter, lifetimeTotal,
+      lifetimeRate: ownedMeter > 0 ? lifetimeTotal / ownedMeter : null,
     };
   }).sort((a,b) => (a.unit.unitNumber||"").localeCompare(b.unit.unitNumber||"", undefined, { numeric:true })),
   [equipment, db.workOrders, db.fuelDispensing, range]);
@@ -748,13 +764,16 @@ function InventoryEquipment({ db, range }) {
   const exportEquip = () => downloadCSV(
     `machinery-equipment-${range.label.replace(/\s/g,"")}.csv`,
     [["Unit","Year","Make","Model","Serial/VIN","Acquired","Purchase Cost","Meter Type",
-      "Meter This Year","Fuel","Gallons","Parts","Labor","Outside","Total Operating","Cost Rate"],
+      "Meter This Year","Fuel","Gallons","Parts","Labor","Outside","Total Operating","Cost Rate This Year",
+      "Meter Since Acquired","Lifetime Operating","Lifetime Cost Rate"],
      ...equipRows.map(r => [
        r.unit.unitNumber, r.unit.year, r.unit.make, r.unit.model,
        r.unit.serialNumber || r.unit.vin, r.unit.dateAcquired, r.unit.purchasePrice || "",
        r.unit.meterType, r.metered || "", r.fuelCost.toFixed(2), r.gallons.toFixed(1),
        r.parts.toFixed(2), r.labor.toFixed(2), r.outside.toFixed(2), r.total.toFixed(2),
        r.costRate != null ? r.costRate.toFixed(2) : "",
+       r.ownedMeter || "", r.lifetimeTotal.toFixed(2),
+       r.lifetimeRate != null ? r.lifetimeRate.toFixed(2) : "",
      ])]
   );
 
@@ -844,8 +863,10 @@ function InventoryEquipment({ db, range }) {
         action={<CSVButton onClick={exportEquip} />}
       >
         <div style={{ padding:"12px 14px 0", fontSize:12, color:"#888", lineHeight:1.6 }}>
-          Meter travelled is taken from the fuelling readings, the one meter record captured every time
-          a unit is used. Cost rate is total operating cost divided by that. Depreciation is not tracked.
+          <strong>Rate this year</strong> uses the meter travelled inside the fiscal year, taken from
+          the fuelling readings. <strong>Lifetime rate</strong> runs from the day the county acquired the
+          machine — hours a previous owner put on it were not fuelled or maintained here, so counting
+          them would flatter an old machine and tell you nothing. Depreciation is not tracked.
         </div>
         <div style={{ padding:"12px 0 0", overflowX:"auto" }}>
           <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
@@ -856,12 +877,14 @@ function InventoryEquipment({ db, range }) {
                 <th style={th("right")}>Hours / Miles</th>
                 <th style={th("right")}>Fuel</th><th style={th("right")}>Parts</th>
                 <th style={th("right")}>Labor</th><th style={th("right")}>Outside</th>
-                <th style={th("right")}>Total</th><th style={th("right")}>Cost Rate</th>
+                <th style={th("right")}>Total</th>
+                <th style={th("right")}>Rate This Yr</th>
+                <th style={th("right")}>Lifetime Rate</th>
               </tr>
             </thead>
             <tbody>
               {equipRows.length === 0 && (
-                <tr><td colSpan={11} style={{ padding:26, textAlign:"center", color:"#aaa" }}>No equipment recorded</td></tr>
+                <tr><td colSpan={12} style={{ padding:26, textAlign:"center", color:"#aaa" }}>No equipment recorded</td></tr>
               )}
               {equipRows.map((r,i) => (
                 <tr key={r.unit.id} style={{ borderTop:"1px solid #f0f0ee", background:i%2===0?"#fff":"#fafaf8" }}>
@@ -881,6 +904,10 @@ function InventoryEquipment({ db, range }) {
                   <td style={td("right", { color:"#1a5a3a", fontWeight:600 })}>
                     {r.costRate != null ? `${fmtSm(r.costRate)}/${r.unit.meterType==="miles"?"mi":"hr"}` : "—"}
                   </td>
+                  <td style={td("right", { color:"#1a3a5c", fontWeight:600 })}
+                      title={r.ownedMeter ? `${r.ownedMeter.toLocaleString()} since acquired · ${fmt(r.lifetimeTotal)} total` : ""}>
+                    {r.lifetimeRate != null ? `${fmtSm(r.lifetimeRate)}/${r.unit.meterType==="miles"?"mi":"hr"}` : "—"}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -891,7 +918,7 @@ function InventoryEquipment({ db, range }) {
                     Total equipment operation cost — {active.length} of {equipment.length} units
                   </td>
                   <td style={td("right", { fontWeight:700, fontSize:14 })}>{fmt(equipTotal)}</td>
-                  <td></td>
+                  <td></td><td></td>
                 </tr>
               </tfoot>
             )}

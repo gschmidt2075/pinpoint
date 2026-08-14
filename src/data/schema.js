@@ -643,14 +643,33 @@ export const createMeterReplacement = (overrides = {}) => ({
 //   On-road trucks (2)  oil 10,000 mi  · trans/hydraulic/fuel 40,000 mi
 //   Off-road equipment  oil 250 hr     · trans/fuel 500 hr · trans/fuel/hyd 1,000 hr
 //   Greasing            as needed, several times a day — not scheduled
+// A service and how often it comes round.
+//
+// SET ONCE. Everything below `lastDone` is maintained by the system — closing a
+// PM work order stamps the reading and the date, and the clock resets. Nobody
+// should ever be editing these by hand after the first setup.
+//
+// Two thresholds, and whichever arrives first wins:
+//
+//   · meter — every 250 hours, every 5,000 miles
+//   · calendar — every 6 months
+//
+// Both matter. A machine that sits all winter still needs its oil changed even
+// though the hour meter has not moved, and a machine working flat out hits 250
+// hours long before six months are up. Either alone gets one of those wrong.
 export const createPMSchedule = (overrides = {}) => ({
   id:              uid(),
   equipmentId:     null,
   service:         "",           // "Oil & Filter", "Hydraulic Service", …
-  intervalType:    "hours",      // hours | miles | months
-  interval:        0,            // e.g. 250, 5000, 12
-  warnAhead:       0,            // warn this far out; 0 uses a sensible default
-  lastDoneMeter:   null,         // meter reading at last service
+  // Meter threshold — leave interval at 0 for a calendar-only service.
+  intervalType:    "hours",      // hours | miles
+  interval:        0,            // e.g. 250, 5000
+  // Calendar threshold — 0 for meter-only.
+  intervalMonths:  0,            // e.g. 6, 12
+  warnAhead:       0,            // meter units ahead to warn; 0 uses a default
+  warnAheadDays:   0,            // days ahead to warn; 0 uses a default
+  // ── maintained automatically from here ──
+  lastDoneMeter:   null,         // lifetime meter at last service
   lastDoneDate:    "",
   active:          true,
   notes:           "",
