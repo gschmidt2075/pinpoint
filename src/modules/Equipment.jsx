@@ -80,15 +80,9 @@ function fmtDate(str) {
   return d && m && y ? `${m}/${d}/${y}` : str;
 }
 
-function nextWONumber(workOrders) {
-  const year = new Date().getFullYear();
-  const prefix = `WO-${year}-`;
-  const nums = workOrders
-    .filter(w => w.workOrderNumber?.startsWith(prefix))
-    .map(w => parseInt(w.workOrderNumber.replace(prefix,""))||0);
-  const max = nums.length > 0 ? Math.max(...nums) : 0;
-  return `${prefix}${String(max+1).padStart(3,"0")}`;
-}
+// Work order numbers are assigned by the reducer on save — see ADD_WORK_ORDER.
+// A form only ever holds the work orders of the machine it is looking at, so
+// numbering from here gave every unit its own 001.
 
 // ── Module Shell ──────────────────────────────────────────────────────────────
 export default function Equipment({ db, dispatch }) {
@@ -585,7 +579,6 @@ function UnitWorkOrders({ unit, workOrders, dispatch, onOpen }) {
     return (
       <WOForm
         unit={unit}
-        allWOs={workOrders}
         onSave={payload => { dispatch({ type:"ADD_WORK_ORDER", payload }); setShowNew(false); }}
         onCancel={() => setShowNew(false)}
       />
@@ -625,14 +618,14 @@ function UnitWorkOrders({ unit, workOrders, dispatch, onOpen }) {
 }
 
 // ── Work Order Form ───────────────────────────────────────────────────────────
-function WOForm({ unit, allWOs, onSave, onCancel }) {
+function WOForm({ unit, onSave, onCancel }) {
   const today = new Date().toISOString().split("T")[0];
   const [form, setForm] = useState({
     ...createWorkOrder({
       unitId:          unit?.id||null,
       unitNumber:      unit?.unitNumber||"",
       unitDescription: unit?`${unit.year||""} ${unit.make||""} ${unit.model||""}`.trim():"",
-      workOrderNumber: nextWONumber(allWOs),
+      workOrderNumber: "",   // assigned on save, across the whole fleet
     }),
   });
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
@@ -646,7 +639,8 @@ function WOForm({ unit, allWOs, onSave, onCancel }) {
       <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:20, marginBottom:16 }}>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14, marginBottom:14 }}>
           <Field label="WO Number">
-            <input type="text" value={form.workOrderNumber} onChange={e=>set("workOrderNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
+            <input type="text" value={form.workOrderNumber} onChange={e=>set("workOrderNumber",e.target.value)}
+              placeholder="Assigned on save" style={{ ...inp, fontFamily:"monospace" }} />
           </Field>
           <Field label="Opened Date" required>
             <input type="date" value={form.openedDate} onChange={e=>set("openedDate",e.target.value)} style={inp} />
@@ -2062,17 +2056,12 @@ function PMDueTab({ units, dispatch, onOpen }) {
   const toggle = (d) => setSelected(s => s.includes(key(d)) ? s.filter(x=>x!==key(d)) : [...s, key(d)]);
   const chosen = due.filter(d => selected.includes(key(d)));
 
-  const nextWONumber = (offset) => {
-    const y = new Date().getFullYear();
-    return `PM-${y}-${String(Date.now() % 10000 + offset).padStart(4,"0")}`;
-  };
-
   const createBatch = () => {
     if (!chosen.length) return;
     const ids = [];
     chosen.forEach((d, i) => {
       const wo = createWorkOrder({
-        workOrderNumber: nextWONumber(i),
+        workOrderNumber: "",   // assigned on save, one series across the fleet
         unitId:          d.unit.id,
         unitNumber:      d.unit.unitNumber || "",
         unitDescription: [d.unit.year, d.unit.make, d.unit.model].filter(Boolean).join(" "),

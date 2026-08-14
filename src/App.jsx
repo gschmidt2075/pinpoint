@@ -10,8 +10,10 @@ import Vendors from "./modules/Vendors.jsx";
 import Employees from "./modules/Employees.jsx";
 import Reporting from "./modules/Reporting.jsx";
 import { FISCAL_YEAR } from "./data/accountCodes.js";
-import { DEFAULT_STORAGE_LOCATIONS, DEFAULT_TOWNSHIPS, DEFAULT_LOOKUPS, DEFAULT_TANKS } from "./data/schema.js";
-import { INITIAL_INVENTORY_ITEMS, INITIAL_INVENTORY_BATCHES, INITIAL_INVENTORY_TRANSACTIONS } from "./data/inventoryData.js";
+import { DEFAULT_TOWNSHIPS, DEFAULT_LOOKUPS, DEFAULT_TANKS,
+         nextWorkOrderNumber } from "./data/schema.js";
+import { INITIAL_INVENTORY_ITEMS, INITIAL_INVENTORY_BATCHES, INITIAL_INVENTORY_TRANSACTIONS,
+         INITIAL_STORAGE_LOCATIONS } from "./data/inventoryData.js";
 import { Icon } from "./components/shared.jsx";
 
 // ── Roles ─────────────────────────────────────────────────────────────────────
@@ -73,7 +75,10 @@ const initialState = {
 
   countyInfo:         {},
   fiscalYear:         null,
-  storageLocations:   DEFAULT_STORAGE_LOCATIONS,
+  // Seeded from the inventory export, so every location holding stock exists as
+  // a record from the start. Most names were inferred from what is stored
+  // there; twelve are blank and need someone who knows the buildings.
+  storageLocations:   INITIAL_STORAGE_LOCATIONS,
   townships:          DEFAULT_TOWNSHIPS,
   // Editable dropdown lists — managed in Settings, never hardcoded in modules
   lookups:            DEFAULT_LOOKUPS,
@@ -420,8 +425,20 @@ function reducer(state, action) {
       return { ...state, pmLogs: [...state.pmLogs, action.payload] };
 
     // ── Work Orders ────────────────────────────────────────────────────────
-    case "ADD_WORK_ORDER":
-      return { ...state, workOrders: [...state.workOrders, action.payload] };
+    // The number is assigned here rather than in the form. A form only ever sees
+    // the machine it's looking at, so numbering from there restarted at 001 for
+    // every unit and put the same number on several machines. The reducer is the
+    // only place that can see them all. A number typed by hand is respected —
+    // unless it's already taken, in which case it's replaced rather than
+    // duplicated.
+    case "ADD_WORK_ORDER": {
+      const wanted = String(action.payload.workOrderNumber || "").trim();
+      const taken  = state.workOrders.some(w => w.workOrderNumber === wanted);
+      const number = (!wanted || taken)
+        ? nextWorkOrderNumber(state.workOrders, action.payload.openedDate)
+        : wanted;
+      return { ...state, workOrders: [...state.workOrders, { ...action.payload, workOrderNumber: number }] };
+    }
     case "UPDATE_WORK_ORDER":
       return { ...state, workOrders: state.workOrders.map(w => w.id === action.payload.id ? action.payload : w) };
     // Closing a work order. If it satisfies a PM schedule, stamp the schedule so
@@ -668,13 +685,35 @@ function ComingSoon({ tab }) {
 // testing — replaced by a real database later.
 const STORAGE_KEY = "pinpoint.db.v1";
 
+const isPlainObject = (v) =>
+  v !== null && typeof v === "object" && !Array.isArray(v);
+
+// Merge saved state onto the defaults.
+//
+// A shallow spread is not enough. `lookups` and `countyInfo` are objects whose
+// KEYS grow as the app grows, and a shallow merge replaces the whole object —
+// so anyone who had already used the app never saw a setting added afterwards.
+// That is not a small bug: it silently hides new configuration from exactly the
+// people testing, and it looks like the feature is broken rather than absent.
+//
+// Objects merge key by key, with saved values winning. Arrays do NOT merge —
+// saved wins outright, because an empty list is a real answer (someone deleted
+// every value) and resurrecting defaults would fight the user.
+function mergeSaved(defaults, saved) {
+  if (!isPlainObject(saved)) return saved === undefined ? defaults : saved;
+  const out = { ...defaults };
+  for (const key of Object.keys(saved)) {
+    const d = defaults?.[key], s = saved[key];
+    out[key] = isPlainObject(d) && isPlainObject(s) ? mergeSaved(d, s) : s;
+  }
+  return out;
+}
+
 function loadPersisted() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return initialState;
-    const saved = JSON.parse(raw);
-    // Merge over initialState so any newly-added keys aren't missing
-    return { ...initialState, ...saved };
+    return mergeSaved(initialState, JSON.parse(raw));
   } catch (err) {
     console.warn("Could not load saved data — starting fresh.", err);
     return initialState;

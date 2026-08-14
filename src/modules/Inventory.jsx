@@ -1,8 +1,20 @@
 import { useState, useMemo } from "react";
 import { Icon, Field, SectionCard, Table, KPICard, StatusBadge, inp, btn, fmt, fmtSm } from "../components/shared.jsx";
+import { locationLabel, locationFor } from "../data/schema.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const UNITS = ["TON","CY","LF","EA","LB","GAL","QT","SF","BX","CS","RL","SET","PR","KIT","OTH"];
+const UNITS = ["EA","TON","CY","YD","LF","FT","LB","OZ","GAL","QT","SF","BAG","BX","CS","RL","SET","PR","KIT","BLOCK","OTH"];
+
+// A <select> whose value matches none of its options silently displays the
+// FIRST option instead. That is how every item in the catalog came to read TON:
+// the data said EACH, the list offered EA, nothing matched, and the browser
+// showed the top of the list as though it were the truth.
+//
+// So no select of a stored code is ever built from a fixed list alone — the
+// value actually held is always included. A wrong-looking option is a question;
+// a confidently wrong one is a lie.
+const withCurrent = (options, current) =>
+  current && !options.includes(current) ? [current, ...options] : options;
 
 const HAUL_TYPES = [
   { value:"county_pickup",       label:"County Pickup" },
@@ -303,7 +315,9 @@ function ItemList({ db, dispatch }) {
   });
 
   if (detail) {
-    return <ItemDetail item={detail} batches={batches} equipment={db.equipment||[]} onBack={() => setDetail(null)} onEdit={()=>{ setEditing(detail); setDetail(null); }} />;
+    return <ItemDetail item={detail} batches={batches} equipment={db.equipment||[]}
+             locations={db.storageLocations||[]} transactions={db.inventoryTransactions||[]}
+             onBack={() => setDetail(null)} onEdit={()=>{ setEditing(detail); setDetail(null); }} />;
   }
 
   if (showForm || editing) {
@@ -421,7 +435,7 @@ function ItemList({ db, dispatch }) {
 }
 
 // ── Item Detail ───────────────────────────────────────────────────────────────
-function ItemDetail({ item, batches, equipment = [], onBack, onEdit }) {
+function ItemDetail({ item, batches, equipment = [], locations = [], transactions = [], onBack, onEdit }) {
   const onHand = getOnHand(item.id, batches);
   const value  = getItemValue(item.id, batches);
   const low    = isBelowMinimum(item, batches);
@@ -445,6 +459,16 @@ function ItemDetail({ item, batches, equipment = [], onBack, onEdit }) {
       {low && (
         <div style={{ background:"#fdecea", border:"1px solid #f5c6c6", borderRadius:8, padding:"12px 18px", marginBottom:16, fontSize:13, color:"#8c1b18", fontWeight:600 }}>
           ⚠ Below minimum — {onHand} on hand, minimum is {item.minimumQuantity} {item.unitOfMeasure}
+        </div>
+      )}
+
+      {item.dataFlag && (
+        <div style={{ background:"#fef8e8", border:"1px solid #f0d080", borderRadius:8, padding:"12px 18px", marginBottom:16, fontSize:13, color:"#7a4f00", lineHeight:1.6 }}>
+          <strong>Carried over from the old system with a problem.</strong> {item.dataFlag}
+          <div style={{ marginTop:6, fontSize:12, color:"#8a6520" }}>
+            No opening balance was created for this item, so its value is not counted anywhere
+            until someone confirms what is actually on the shelf.
+          </div>
         </div>
       )}
 
@@ -475,6 +499,8 @@ function ItemDetail({ item, batches, equipment = [], onBack, onEdit }) {
             ["Name",         item.name],
             ["Group",        fmtGroup(item)],
             ["GL Account",   item.glAccountCode||"—"],
+            ["Location",     locationLabel(locationFor(item.locationCode ?? item.location, locations))
+                             || item.location || "—"],
             ["Unit",         item.unitOfMeasure||"—"],
             ["Vendor",       item.primaryVendor||"—"],
             ["Receiving",    (item.receivingMode||"standard").replace(/_/g," ")],
@@ -505,7 +531,91 @@ function ItemDetail({ item, batches, equipment = [], onBack, onEdit }) {
           />
         </SectionCard>
       )}
+
+      <ItemHistory item={item} transactions={transactions} locations={locations} equipment={equipment} />
     </div>
+  );
+}
+
+// ── Item History ──────────────────────────────────────────────────────────────
+//
+// Every movement of this part, newest first. The transactions were always
+// recorded — they were just never shown anywhere, so from the parts room it
+// looked as though transfers and work order usage vanished on completion.
+//
+// One line per movement: what happened, how much, and the other party — the
+// vendor it came from or the machine it went to.
+const TX_STYLE = {
+  receive:      { label:"Received",  sign:+1, color:"#1a5a3a", bg:"#e6f4ec" },
+  crosswalk:    { label:"Opening",   sign:+1, color:"#555",    bg:"#f0f0ee" },
+  scale_ticket: { label:"Scale Ticket", sign:+1, color:"#1a5a3a", bg:"#e6f4ec" },
+  issue:        { label:"Issued",    sign:-1, color:"#c0392b", bg:"#fdecea" },
+  transfer:     { label:"Transfer",  sign: 0, color:"#1a3a5c", bg:"#eef2f8" },
+  adjustment:   { label:"Adjustment",sign: 0, color:"#7a4f00", bg:"#fef8e8" },
+};
+
+function ItemHistory({ item, transactions = [], locations = [], equipment = [] }) {
+  const [limit, setLimit] = useState(25);
+
+  const rows = useMemo(() =>
+    transactions
+      .filter(t => t.itemId === item.id)
+      .slice()
+      .sort((a,b) => String(b.date).localeCompare(String(a.date))
+                  || String(b.createdAt||"").localeCompare(String(a.createdAt||""))),
+  [transactions, item.id]);
+
+  // Who or what the movement involved — the vendor in, the machine or job out.
+  const counterparty = (t) => {
+    if (t.equipmentId) {
+      const u = equipment.find(e => e.id === t.equipmentId);
+      return u ? `Unit ${u.unitNumber}` : (t.unitNumber ? `Unit ${t.unitNumber}` : "—");
+    }
+    if (t.unitNumber)   return `Unit ${t.unitNumber}`;
+    if (t.workOrderNumber) return t.workOrderNumber;
+    if (t.projectNumber)   return t.projectNumber;
+    if (t.vendorName)   return t.vendorName;
+    if (t.type === "transfer") {
+      const f = locationLabel(locationFor(t.fromLocation, locations)) || t.fromLocation || "?";
+      const to = locationLabel(locationFor(t.toLocation, locations)) || t.toLocation || "?";
+      return `${f} → ${to}`;
+    }
+    return "—";
+  };
+
+  return (
+    <SectionCard
+      title="History"
+      subtitle={rows.length ? `${rows.length} movement${rows.length===1?"":"s"}, newest first` : "Nothing recorded yet"}
+    >
+      <Table
+        headers={[{label:"Date"},{label:"What"},{label:"Qty"},{label:"Vendor / Unit"},{label:"Location"},{label:"Value"}]}
+        rows={rows.slice(0, limit).map(t => {
+          const st = TX_STYLE[t.type] || { label:t.type, sign:0, color:"#555", bg:"#f0f0ee" };
+          const qty = Number(t.quantity) || 0;
+          return [
+            <span style={{ fontFamily:"monospace", fontSize:12 }}>{fmtDate(t.date)}</span>,
+            <span style={{ background:st.bg, color:st.color, border:`1px solid ${st.color}22`, borderRadius:4, padding:"2px 8px", fontSize:11, fontWeight:700 }}>{st.label}</span>,
+            <span style={{ fontFamily:"monospace", fontWeight:700, color:st.sign<0?"#c0392b":st.sign>0?"#1a5a3a":"#555" }}>
+              {st.sign<0 ? "−" : st.sign>0 ? "+" : ""}{Math.abs(qty)} {t.unitOfMeasure||item.unitOfMeasure||""}
+            </span>,
+            <span style={{ fontSize:12 }}>{counterparty(t)}</span>,
+            <span style={{ fontSize:12, color:"#888" }}>
+              {locationLabel(locationFor(t.location, locations)) || t.location || "—"}
+            </span>,
+            <span style={{ fontFamily:"monospace", fontSize:12 }}>{t.totalCost ? fmtSm(t.totalCost) : "—"}</span>,
+          ];
+        })}
+        emptyMessage="No movements recorded for this item"
+      />
+      {rows.length > limit && (
+        <div style={{ padding:"10px 14px", textAlign:"center", borderTop:"1px solid #f0f0ee" }}>
+          <button onClick={()=>setLimit(l=>l+50)} style={{ ...btn.ghost, fontSize:12, padding:"5px 14px" }}>
+            Show more — {rows.length - limit} older
+          </button>
+        </div>
+      )}
+    </SectionCard>
   );
 }
 
@@ -605,7 +715,7 @@ function ItemForm({ item, locations, groupList, equipment, onSave, onCancel }) {
           </Field>
           <Field label="Unit of Measure" required>
             <select value={form.unitOfMeasure} onChange={e=>set("unitOfMeasure",e.target.value)} style={inp}>
-              {UNITS.map(u=><option key={u} value={u}>{u}</option>)}
+              {withCurrent(UNITS, form.unitOfMeasure).map(u=><option key={u} value={u}>{u}</option>)}
             </select>
           </Field>
           <Field label="GL Account Code">
@@ -1086,7 +1196,7 @@ function ScaleTicket({ db, dispatch, onDone }) {
               </Field>
               <Field label="Unit">
                 <select value={form.unitOfMeasure} onChange={e=>set("unitOfMeasure",e.target.value)} style={inp}>
-                  {["CY","TON","LF"].map(u=><option key={u} value={u}>{u}</option>)}
+                  {withCurrent(["CY","TON","LF"], form.unitOfMeasure).map(u=><option key={u} value={u}>{u}</option>)}
                 </select>
               </Field>
             </div>

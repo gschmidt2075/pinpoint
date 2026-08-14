@@ -637,6 +637,21 @@ export const createWorkOrder = (overrides = {}) => ({
 
 // Outside service entry on a work order (shop work, tires, specialized repair)
 // NOTE: If paid through a vendor claim, link via expenditureRef.
+// Work order numbers must be unique across the whole fleet, not per machine.
+// Generating them from a filtered list gave every unit its own 001, so the same
+// number appeared on several machines. This is called from the reducer, which
+// is the only place that can see every work order.
+export function nextWorkOrderNumber(workOrders = [], date = today()) {
+  const year   = String(date).slice(0, 4) || String(new Date().getFullYear());
+  const prefix = `WO-${year}-`;
+  const highest = workOrders.reduce((max, w) => {
+    const n = String(w?.workOrderNumber || "");
+    if (!n.startsWith(prefix)) return max;
+    return Math.max(max, parseInt(n.slice(prefix.length), 10) || 0);
+  }, 0);
+  return `${prefix}${String(highest + 1).padStart(3, "0")}`;
+}
+
 export const createWorkOrderServiceEntry = (overrides = {}) => ({
   id:             uid(),
   date:           today(),
@@ -1222,12 +1237,29 @@ export const createCertification = (overrides = {}) => ({
 
 export const createStorageLocation = (overrides = {}) => ({
   id:              uid(),
+  // The legacy code the inventory export uses. Stock is held against this, so
+  // it is the identity — the name is a label people can change freely.
+  code:            "",
   name:            "",           // Main Shop | Pauline | Kenesaw | Roseland | Holstein | Wanda Stockpile | etc.
+  // True when the name was guessed from what is stored there rather than told
+  // to us, so the screen can ask someone to confirm it.
+  nameInferred:    false,
   type:            "shed",       // shed | stockpile | portable_tank
+  itemCount:       0,            // at crosswalk — indicative, not live
   active:          true,
   notes:           "",
   ...overrides,
 });
+
+// A location's display label: its name if it has one, otherwise the bare code
+// so it is still selectable rather than showing as blank.
+export const locationLabel = (loc) =>
+  !loc ? "" : (loc.name ? `${loc.code ? loc.code + " — " : ""}${loc.name}` : `Location ${loc.code || "?"}`);
+
+// Find the location record for a code, so an item's stored code can be shown
+// with whatever name the county has since given it.
+export const locationFor = (code, locations = []) =>
+  locations.find(l => String(l.code) === String(code)) || null;
 
 export const createTownship = (overrides = {}) => ({
   id:              uid(),
