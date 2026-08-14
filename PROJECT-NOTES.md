@@ -35,7 +35,7 @@ It replaces a mix of aging software, spreadsheets, and paper across:
 | Equipment | `Equipment.jsx` | Built and overhauled. Parts issue from inventory, PM warnings, fuel & department billing, operating cost |
 | Infrastructure | `Infrastructure.jsx` | Built and overhauled. Barrels, 0–5 ratings, road history, bridge postings |
 | Projects | `Projects.jsx` | Built. Form still out with staff |
-| Reporting | `Reporting.jsx` | **Built 2026-07-27.** Board annual report and ACPC supporting records |
+| Reporting | `Reporting.jsx` | **Built 2026-07-27, reworked 2026-08-14.** Board annual report · receipts & expenditures against budget · inventory of machinery, equipment and supplies |
 | Settings | `Settings.jsx` | Built. **Dropdown Lists screen added** — lists now live in `db.lookups` |
 | Employees | `Employees.jsx` | **Built 2026-07-27.** Rate history, per-person fringe, certifications, pay scales. Labor costing only — not payroll |
 | Vendors | `Vendors.jsx` | **Built 2026-07-27.** Payees, remit-to, insurance, bonding, contract rates, supplied items |
@@ -101,6 +101,17 @@ file suspends Highway Allocation funds. **Pinpoint must never generate the form*
 Four of its nine certifications describe systems Pinpoint provides, so Reporting
 produces the supporting records instead.
 
+**The 428 NAC 4 state reports are no longer submitted.** NBCS used to collect
+three workbooks — SSAR Financial, SSAR Materials & Supplies Inventory, SSAR
+Machinery & Equipment Inventory. Greg confirmed on 2026-08-14 that these are no
+longer required. **Nothing in Pinpoint is shaped to their line numbers**, and an
+attempt to map county account codes onto them was deleted rather than kept.
+
+What survives is the underlying obligation — the county must *have* a system of
+inventory and accounting. Reporting carries the same kinds of information in the
+county's own account codes. The workbooks live in `docs/reference/` for
+comparison only, and should not be treated as a specification.
+
 **Claim cycles** — the County Board approves payments on the 1st and 3rd Tuesday.
 Expenditures are assigned to a cycle; approval happens at the *cycle* level, not
 per invoice.
@@ -110,6 +121,13 @@ number, description, total) and up to 8 accounting distribution rows. **The two
 totals must match** — the paper form has a formula enforcing this. The current
 expenditure form does not work this way yet; restructuring is blocked on staff
 answers.
+
+**Claim invoice limit — 15 per vendor, per claim.** Confirmed 2026-08-14,
+resolving a long-standing 12-vs-15 disagreement. Held in
+`countyInfo.invoicesPerClaim` and editable in Settings, **not** as a constant —
+there is no reason to assume every county's form holds the same number. A cycle
+warns when a vendor goes over, naming the vendor and the sheet count. The
+automatic split is still to build.
 
 **Project types**
 - Capital — numbered `C1-###`

@@ -160,12 +160,14 @@ Example balances at 597.54 both ways.
    convention. Suggested: `214.00 = $500.00   201.00 = $62.32`
 3. **`105.0` renders as `10500`.** ✅ Split on `.`, pad decimals to two, join.
 
-#### Claim size limit — resolved 2026-07-26
+#### Claim size limit — RESOLVED 2026-08-14
 
-**⚠ DISPUTED — 12 or 15?** Greg said 15 on 2026-07-26; the Office Manager wrote
-"Claims are limited to 12 invoices" on the Vendor form 2026-07-27. She assembles
-the sheets, so her number is likely operative. **Resolve before building the
-split.**
+**15 invoices per claim, per vendor.** Greg confirmed on 2026-08-14, settling the
+disagreement with the Office Manager's "12" from the Vendor form 2026-07-27.
+
+Stored as `countyInfo.invoicesPerClaim`, editable in Settings → County Info, and
+defaulting to 15. It is not a constant: there is no reason to assume every
+county's claim form holds the same number of lines.
 
 **One rule only: a maximum of N invoices per claim, per vendor.** Beyond that it
 becomes a *separate claim*, not a continuation page.
@@ -526,15 +528,15 @@ gave — see the conflict below.**
 
 ---
 
-### ⚠ CONFLICT — 12 or 15 invoices per claim?
+### ✅ RESOLVED 2026-08-14 — 15 invoices per claim
 
 - **Greg, 2026-07-26:** *"there is a maximum of 15 invoices per claim from one vendor"*
 - **Office Manager, 2026-07-27:** *"Claims are limited to 12 invoices"*
+- **Greg, 2026-08-14:** *"15 claim limit"* — settled.
 
-The auto-split logic depends on this number. **Unresolved — do not build the
-split until it's settled.** The office manager assembles the sheets, so her
-number is probably the operative one, but Greg should confirm rather than us
-guessing.
+A claim cycle now warns when any one vendor's invoices exceed the limit, naming
+the vendor and how many sheets it will take. The auto-split itself is still to
+build, but nothing is blocked on the number any more.
 
 ### What this changes
 
@@ -587,7 +589,7 @@ warns when a typed name isn't in the list. An expenditure can also hold the
 
 ### Follow-ups
 
-1. **12 or 15 invoices per claim?** Blocks the claim split logic.
+1. ~~12 or 15 invoices per claim?~~ **Resolved 2026-08-14 — 15.**
 2. **Q21** — when a contract rate changes, should scale tickets already written
    keep the old rate? (Same rate-history question as payroll.)
 3. **Employees as vendors** — one record serving both, or two linked records?
@@ -1420,3 +1422,71 @@ Verified end to end: three units due (one overdue), batched into three work
 orders one per machine, closing unit 241's at meter 3,480 stamps the schedule and
 pushes the next oil change to 3,730, that unit drops off the due list, and a
 separate hydraulic failure is the only work order counted as a repair.
+
+
+---
+
+## 2026-08-14 — Year-end reporting, and the state forms
+
+Greg supplied the three 428 NAC 4 workbooks NBCS used to collect — SSAR
+Financial, SSAR Materials & Supplies Inventory, SSAR Machinery & Equipment
+Inventory — and then established the important thing about them:
+
+> "I think we scrap those reports as they are not required any longer and just
+> build our own reports that mirror the type of information on the reports. We
+> are required to have some sort of system of inventory and accounting but we no
+> longer have to submit these reports. Lets use them for reference only"
+
+### What this changed
+
+A first pass had gone a long way down the wrong road: a full line-by-line model
+of the state forms and a rule for translating the county's account codes onto
+NBCS line numbers. That work is **deleted**. It was accurate — 89 of 119
+expenditure codes hit an exact state line — but accuracy against a form nobody
+collects is worth nothing, and it carried real risk. A handful of Adams codes
+diverge from the state's (`503.03` is Truck/Tractor/Side Dumps locally and Safety
+Equipment to the state), so the translation would have needed a permanent review
+screen and permanent maintenance.
+
+**What survives is the obligation, not the form.** The county must *have* a
+system of inventory and accounting, and the ACPC certifies that it does. So the
+reports carry the same kinds of information in the county's own account codes.
+
+The three workbooks are kept in `docs/reference/` for comparison only.
+
+### Built
+
+Reporting now has three tabs.
+
+**Receipts & Expenditures.** Revenue by code, split between receipted and
+awaiting the Treasurer — those two are never added together silently, because
+only the receipt makes revenue official. Expenditures by account code, grouped
+into the seven categories the leading digit already encodes (302.02 is a
+category 3 code), each with budgeted, actual, remaining and percent used.
+Over-budget lines turn red. CSV export. Carries the standing warning that these
+are cash figures and must never be summed with Cost Accounting.
+
+**Inventory & Equipment.** Materials and supplies valued at FIFO cost from the
+open receiving batches — what was actually paid for what is actually on the
+shelf, not standard cost. Viewable by account code or by commodity group, since
+both questions get asked and neither view is wrong. Then the machinery and
+equipment inventory: unit, acquired, purchase cost, hours or miles travelled in
+the year, fuel, parts, labor, outside repairs, total, and cost rate per hour or
+mile. No depreciation, as instructed.
+
+**Meter travelled comes from the fuelling readings** — the one meter capture
+that happens every time a unit is used. A unit needs two fuellings in the year
+before a rate is calculated; with one reading there is no interval, so it shows
+a dash rather than a fabricated number.
+
+### Worth Greg's attention
+
+**17 of the 53 GL codes on inventory items are not in the FY2027 budget chart:**
+511.01, 511.02, 511.03, 511.05, 511.07, 513.04, 504, 218.05, 301.04, 301.08,
+301.11, 303.02, 303.03, 304.01, 304.02, 304.04, 304.06.
+
+They come through from the CSV and report fine — the code shows with a blank
+description. But it's worth knowing whether they are dead codes from the old
+system or live codes missing from the budget list.
+
+**14 inventory items have no GL code at all.**

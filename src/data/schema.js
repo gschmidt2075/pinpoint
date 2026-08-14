@@ -1246,9 +1246,16 @@ export const createFemaRate = (overrides = {}) => ({
 });
 
 // County / department info (singleton in settings)
+// How many invoices from one vendor the Clerk's claim form will hold before the
+// claim has to be split onto another sheet. Confirmed at 15 for Adams County —
+// kept as a setting because there is no reason to think every county's form is
+// the same.
+export const DEFAULT_INVOICES_PER_CLAIM = 15;
+
 export const createCountyInfo = (overrides = {}) => ({
   countyName:      "",
   departmentName:  "County Highway Department",
+  invoicesPerClaim: DEFAULT_INVOICES_PER_CLAIM,
   superintendentName: "",
   address:         "",
   city:            "",

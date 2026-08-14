@@ -77,9 +77,9 @@ export function Field({ label, children, required }) {
 }
 
 // ── Section card ──────────────────────────────────────────────────────────────
-export function SectionCard({ title, subtitle, children, action, icon }) {
+export function SectionCard({ title, subtitle, children, action, icon, className, style }) {
   return (
-    <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, overflow:"hidden", marginBottom:20 }}>
+    <div className={className} style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, overflow:"hidden", marginBottom:20, ...style }}>
       <div style={{ padding:"14px 18px", borderBottom:"1px solid #eee", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
         <div style={{ display:"flex", alignItems:"center", gap:8 }}>
           {icon && <Icon name={icon} size={16} color="#888" />}

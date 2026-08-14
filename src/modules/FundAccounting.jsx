@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { EXPENDITURE_CODES, REVENUE_CODES, FUNDS, FISCAL_YEAR, EXP_TYPES } from "../data/accountCodes.js";
 import { StatusBadge, ProgressBar, KPICard, Field, SectionCard, Table, Icon, inp, btn, fmt, fmtSm, pct } from "../components/shared.jsx";
+import { DEFAULT_INVOICES_PER_CLAIM } from "../data/schema.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function getNthTuesday(year, month, n) {
@@ -887,6 +888,18 @@ function ClaimCycles({ db, dispatch }) {
     const approvedCount = cycleExp.filter(e => e.status==="approved").length;
     const isFullyApproved = approvedCount === cycleExp.length && cycleExp.length > 0;
 
+    // The Clerk's claim form holds a fixed number of invoice lines for one
+    // vendor. Going over means the claim has to be split onto another sheet —
+    // better caught here than by the Clerk after the cycle has been submitted.
+    const perClaimLimit = Math.max(1, Number(db.countyInfo?.invoicesPerClaim) || DEFAULT_INVOICES_PER_CLAIM);
+    const overLimit = Object.entries(
+      cycleExp.reduce((acc, e) => {
+        const key = e.vendorId || e.vendor || "(no vendor)";
+        (acc[key] = acc[key] || { name: e.vendor || "(no vendor)", lines: 0 }).lines += (e.lines || []).length;
+        return acc;
+      }, {})
+    ).map(([, v]) => v).filter(v => v.lines > perClaimLimit);
+
     return (
       <div>
         <button onClick={()=>setSelectedCycle(null)} style={{ ...btn.ghost, marginBottom:20, fontSize:12, padding:"6px 14px" }}>← Back to cycles</button>
@@ -904,6 +917,21 @@ function ClaimCycles({ db, dispatch }) {
             {approvedCount>0  && <span style={{ background:"#e6f4ec", color:"#1a6b35", padding:"5px 12px", borderRadius:6, fontSize:12, fontWeight:600 }}>✓ {approvedCount} approved</span>}
           </div>
         </div>
+
+        {overLimit.length > 0 && (
+          <div style={{ background:"#fef8e8", border:"1px solid #f0d080", borderRadius:8, padding:"14px 18px", marginBottom:16, fontSize:13, color:"#7a4f00", lineHeight:1.6 }}>
+            <strong>Over the claim limit.</strong> The claim form holds {perClaimLimit} invoices for one
+            vendor. These will need splitting across more than one sheet:
+            <ul style={{ margin:"8px 0 0", paddingLeft:20 }}>
+              {overLimit.map(v => (
+                <li key={v.name} style={{ marginTop:3 }}>
+                  <strong>{v.name}</strong> — {v.lines} invoices
+                  {" "}({Math.ceil(v.lines / perClaimLimit)} sheets)
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* Workflow step banner */}
         {!isFullyApproved && cycleExp.length > 0 && (

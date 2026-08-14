@@ -1,7 +1,8 @@
 import { useState, useMemo } from "react";
 import { Field, SectionCard, Table, Icon, AlertBar, inp, btn, fmt, fmtSm } from "../components/shared.jsx";
 import { EXPENDITURE_CODES, REVENUE_CODES, FISCAL_YEAR } from "../data/accountCodes.js";
-import { LOOKUP_DEFS, createTownship, createStorageLocation, createTank } from "../data/schema.js";
+import { LOOKUP_DEFS, createTownship, createStorageLocation, createTank,
+         DEFAULT_INVOICES_PER_CLAIM } from "../data/schema.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const DEFAULT_TOWNSHIPS = [
@@ -95,15 +96,21 @@ function CountyInfo({ db, dispatch }) {
     email:            info.email            || "",
     superintendentName:  info.superintendentName  || "",
     superintendentTitle: info.superintendentTitle || "Highway Superintendent",
-    officeManagerName:   info.officeManagerName   || "Carlia Brundage",
+    officeManagerName:   info.officeManagerName   || "",
     officeManagerTitle:  info.officeManagerTitle  || "Office Manager",
     fundName:         info.fundName         || "Roads Fund",
+    // The Clerk's claim form holds a fixed number of invoice lines for one
+    // vendor. Counties differ, so it's a setting rather than a constant.
+    invoicesPerClaim: info.invoicesPerClaim ?? DEFAULT_INVOICES_PER_CLAIM,
   });
   const [saved, setSaved] = useState(false);
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
   const handleSave = () => {
-    dispatch({ type:"UPDATE_COUNTY_INFO", payload:form });
+    dispatch({ type:"UPDATE_COUNTY_INFO", payload:{
+      ...form,
+      invoicesPerClaim: Math.max(1, Number(form.invoicesPerClaim) || DEFAULT_INVOICES_PER_CLAIM),
+    }});
     setSaved(true);
     setTimeout(()=>setSaved(false), 2500);
   };
@@ -182,9 +189,19 @@ function CountyInfo({ db, dispatch }) {
               </div>
             </div>
           </div>
-          <Field label="Primary Fund Name">
-            <input type="text" value={form.fundName} onChange={e=>set("fundName",e.target.value)} style={inp} />
-          </Field>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+            <Field label="Primary Fund Name">
+              <input type="text" value={form.fundName} onChange={e=>set("fundName",e.target.value)} style={inp} />
+            </Field>
+            <Field label="Invoices Per Claim">
+              <input type="number" min="1" value={form.invoicesPerClaim}
+                onChange={e=>set("invoicesPerClaim", e.target.value)} style={inp} />
+              <div style={{ fontSize:11, color:"#888", marginTop:4, lineHeight:1.5 }}>
+                The most invoices the Clerk's claim form will hold for one vendor. A vendor with more
+                than this is split across additional claim sheets.
+              </div>
+            </Field>
+          </div>
         </div>
       </SectionCard>
 
