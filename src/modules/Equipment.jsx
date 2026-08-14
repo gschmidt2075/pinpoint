@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm, SearchSelect } from "../components/shared.jsx";
+import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm, SearchSelect, DateField, titleCase } from "../components/shared.jsx";
 import { createEquipmentUnit, createWorkOrder, createPMLog, createPMSchedule,
          createEquipmentPart, createEquipmentFluid, createEquipmentTire,
          EQUIPMENT_PART_KINDS, EQUIPMENT_FLUID_KINDS, TIRE_POSITIONS, FUEL_TYPES,
@@ -656,7 +656,7 @@ function WOForm({ unit, onSave, onCancel }) {
               placeholder="Assigned on save" style={{ ...inp, fontFamily:"monospace" }} />
           </Field>
           <Field label="Opened Date" required>
-            <input type="date" value={form.openedDate} onChange={e=>set("openedDate",e.target.value)} style={inp} />
+            <DateField value={form.openedDate} onChange={v => set("openedDate", v)} />
           </Field>
           <Field label="Reported By">
             <input type="text" value={form.reportedBy} onChange={e=>set("reportedBy",e.target.value)} style={inp} />
@@ -670,12 +670,12 @@ function WOForm({ unit, onSave, onCancel }) {
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14, marginBottom:14 }}>
           <Field label="Category">
             <select value={form.category} onChange={e=>set("category",e.target.value)} style={inp}>
-              {WO_CATEGORIES.map(c=><option key={c.value} value={c.value}>{c.label}</option>)}
+              {WO_CATEGORIES.map(c=><option key={c.value} value={c.value}>{titleCase(c.label)}</option>)}
             </select>
           </Field>
           <Field label="Priority">
             <select value={form.priority} onChange={e=>set("priority",e.target.value)} style={inp}>
-              {WO_PRIORITIES.map(p=><option key={p.value} value={p.value}>{p.label}</option>)}
+              {WO_PRIORITIES.map(p=><option key={p.value} value={p.value}>{titleCase(p.label)}</option>)}
             </select>
           </Field>
           <Field label="Meter Reading (open)">
@@ -838,7 +838,7 @@ function WOLaborTab({ wo, db = {}, dispatch }) {
           )}
           <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1.4fr", gap:12, marginBottom:12 }}>
             <Field label="Date" required>
-              <input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} />
+              <DateField value={form.date} onChange={v => set("date", v)} />
             </Field>
             <Field label="Employee" required>
               <SearchSelect
@@ -1240,7 +1240,7 @@ function WOPartsTab({ wo, unit, invItems, invBatches, dispatch }) {
           )}
 
           <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:12, marginBottom:12 }}>
-            <Field label="Date"><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <Field label="Date"><DateField value={form.date} onChange={v => set("date", v)} /></Field>
             <Field label="Part" required>
               <SearchSelect
                 items={ordered}
@@ -1357,7 +1357,7 @@ function WOServiceTab({ wo, dispatch }) {
       {showForm && (
         <div style={{ background:"#f7f7f5", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:16 }}>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr", gap:12, marginBottom:12 }}>
-            <Field label="Date"><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <Field label="Date"><DateField value={form.date} onChange={v => set("date", v)} /></Field>
             <Field label="Vendor / Shop"><input type="text" value={form.vendorName} onChange={e=>set("vendorName",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
             <Field label="Invoice #"><input type="text" value={form.invoiceNumber} onChange={e=>set("invoiceNumber",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
           </div>
@@ -1414,11 +1414,11 @@ function UnitPM({ unit, pmLogs, dispatch }) {
       {showForm && (
         <div style={{ background:"#f7f7f5", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:16 }}>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr 1fr", gap:12, marginBottom:12 }}>
-            <Field label="Date"><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <Field label="Date"><DateField value={form.date} onChange={v => set("date", v)} /></Field>
             <Field label="Service Performed">
               <select value={form.service} onChange={e=>set("service",e.target.value)} style={{ ...inp, margin:0 }}>
                 <option value="">Select…</option>
-                {PM_TASKS.map(t=><option key={t} value={t}>{t}</option>)}
+                {PM_TASKS.map(t=><option key={t} value={t}>{titleCase(t)}</option>)}
               </select>
             </Field>
             <Field label={`Meter (${unit.meterType||"hours"})`}><input type="number" min="0" step="any" value={form.meterReading} onChange={e=>set("meterReading",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
@@ -1641,7 +1641,7 @@ function FuelLogTab({ dispensing, units, tanks, tankTx, departments, dispatch })
               </div>
 
               <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr 1fr", gap:12, marginBottom:12 }}>
-                <Field label="Date" required><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+                <Field label="Date" required><DateField value={form.date} onChange={v => set("date", v)} /></Field>
 
                 {!isOutside ? (
                   <>
@@ -1660,7 +1660,7 @@ function FuelLogTab({ dispensing, units, tanks, tankTx, departments, dispatch })
                     <Field label="Department" required>
                       <select value={form.departmentName} onChange={e=>set("departmentName",e.target.value)} style={{ ...inp, margin:0 }}>
                         <option value="">Select…</option>
-                        {departments.map(d=><option key={d}>{d}</option>)}
+                        {departments.map(d=><option key={d} value={d}>{titleCase(d)}</option>)}
                       </select>
                     </Field>
                     <Field label="Their Vehicle">
@@ -2036,7 +2036,7 @@ function TanksTab({ tanks, tankTx, dispensing, dispatch }) {
                 <option value="portable_fill">Fill Portable Tank</option>
               </select>
             </Field>
-            <Field label="Date"><input type="date" value={txForm.date} onChange={e=>setTx("date",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <Field label="Date"><DateField value={txForm.date} onChange={v => setTx("date", v)} /></Field>
             <Field label={isFill ? "Tank being filled" : "Tank"}>
               <select value={txForm.tankId} onChange={e=>setTx("tankId",e.target.value)} style={{ ...inp, margin:0 }}>
                 <option value="">Select…</option>
@@ -2208,7 +2208,7 @@ function UnitForm({ unit, onSave, onCancel }) {
           <Field label="Equipment Type">
             <select value={form.equipmentType||""} onChange={e=>set("equipmentType",e.target.value)} style={inp}>
               <option value="">Select…</option>
-              {EQUIPMENT_TYPES.map(t=><option key={t} value={t}>{t}</option>)}
+              {EQUIPMENT_TYPES.map(t=><option key={t} value={t}>{titleCase(t)}</option>)}
             </select>
           </Field>
           <Field label="Status">
@@ -2233,12 +2233,12 @@ function UnitForm({ unit, onSave, onCancel }) {
               <option value="odometer">Odometer (miles)</option>
             </select>
           </Field>
-          <Field label="Date Acquired"><input type="date" value={form.dateAcquired} onChange={e=>set("dateAcquired",e.target.value)} style={inp} /></Field>
+          <Field label="Date Acquired"><DateField value={form.dateAcquired} onChange={v => set("dateAcquired", v)} /></Field>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:14, marginTop:14 }}>
           <Field label="Fuel Type">
             <select value={form.fuelType||"diesel"} onChange={e=>set("fuelType",e.target.value)} style={inp}>
-              {FUEL_TYPES.map(f=><option key={f.value} value={f.value}>{f.label}</option>)}
+              {FUEL_TYPES.map(f=><option key={f.value} value={f.value}>{titleCase(f.label)}</option>)}
             </select>
           </Field>
           <Field label={`Starting Meter (${form.meterType==="miles"?"miles":"hours"})`}>
@@ -2323,8 +2323,8 @@ function SpecRows({ title, hint, rows, columns, onAdd, onChange, onRemove, addLa
               {c.options ? (
                 <select value={row[c.key] ?? ""} onChange={e=>onChange(row.id, c.key, e.target.value)} style={{ ...inp, margin:0, fontSize:12 }}>
                   {c.options.map(o => typeof o === "string"
-                    ? <option key={o} value={o}>{o}</option>
-                    : <option key={o.value} value={o.value}>{o.label}</option>)}
+                    ? <option key={o} value={o}>{titleCase(o)}</option>
+                    : <option key={o.value} value={o.value}>{titleCase(o.label)}</option>)}
                 </select>
               ) : (
                 <input
@@ -2411,6 +2411,14 @@ function SpecLists({ form, set }) {
 // A machine has SEVERAL schedules at once — a grader is serviced at 250, 500
 // and 1000 hours, each a different job — so this is a list, and each row keeps
 // its own last-done reading. Closing a work order stamps the row it satisfied.
+const PM_COLS = "1.7fr 0.8fr 1fr 0.9fr 1fr 34px";
+
+// The services that actually get scheduled, offered as a shortcut. Typing
+// anything else is fine — this is a list of suggestions, not a set of choices.
+const PM_SERVICE_OPTIONS = [...new Set(
+  Object.values(PM_PRESETS).flat().map(p => p.service)
+)].map(v => ({ value: v, label: v }));
+
 function PMScheduleEditor({ form, set }) {
   const rows = form.pmSchedule || [];
   const unitWord = form.meterType === "miles" ? "miles" : "hours";
@@ -2460,29 +2468,43 @@ function PMScheduleEditor({ form, set }) {
         </div>
       )}
 
-      {rows.map((r,i) => (
-        <div key={r.id} style={{ display:"grid", gridTemplateColumns:"1.6fr 0.8fr 0.9fr 0.9fr 1fr 28px", gap:8, alignItems:"end", marginBottom:6 }}>
-          {["Service","Every","Measured in","Warn ahead","Last done"].map((h,n)=>(
-            i === 0 ? <div key={h} style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:"#aaa", marginBottom:3, gridColumn:n+1 }}>{h}</div> : null
+      {/* Column headings sit in their own row. Rendering them inside the first
+          data row put eleven things into a six-column grid and mangled it. */}
+      <datalist id="pm-service-options">
+        {PM_SERVICE_OPTIONS.map(o=><option key={o.value} value={o.value} />)}
+      </datalist>
+
+      {rows.length > 0 && (
+        <div style={{ display:"grid", gridTemplateColumns:PM_COLS, gap:8, marginBottom:4 }}>
+          {["Service","Every","Measured In","Warn Ahead","Last Done",""].map(h=>(
+            <div key={h} style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:"#aaa" }}>{h}</div>
           ))}
-          <input type="text" value={r.service||""} onChange={e=>change(r.id,"service",e.target.value)}
-            placeholder="Oil & Filter" style={{ ...inp, margin:0, fontSize:12 }} />
+        </div>
+      )}
+
+      {rows.map((r) => (
+        <div key={r.id} style={{ display:"grid", gridTemplateColumns:PM_COLS, gap:8, alignItems:"center", marginBottom:6 }}>
+          {/* A text input with suggestions, not a fixed list — the shop names
+              services their own way and shouldn't be trapped in our vocabulary. */}
+          <input type="text" list="pm-service-options" value={r.service||""}
+            onChange={e=>change(r.id,"service",e.target.value)}
+            placeholder="Name the service…" style={{ ...inp, margin:0, fontSize:12 }} />
           <input type="number" min="0" step="any" value={r.interval||0}
             onChange={e=>change(r.id,"interval",parseFloat(e.target.value)||0)}
             style={{ ...inp, margin:0, fontSize:12, fontFamily:"monospace" }} />
           <select value={r.intervalType||"hours"} onChange={e=>change(r.id,"intervalType",e.target.value)}
             style={{ ...inp, margin:0, fontSize:12 }}>
-            <option value="hours">hours</option>
-            <option value="miles">miles</option>
-            <option value="months">months</option>
+            <option value="hours">Hours</option>
+            <option value="miles">Miles</option>
+            <option value="months">Months</option>
           </select>
-          <input type="number" min="0" step="any" value={r.warnAhead||0}
+          <input type="number" min="0" step="any" value={r.warnAhead||""}
             onChange={e=>change(r.id,"warnAhead",parseFloat(e.target.value)||0)}
-            placeholder="auto" style={{ ...inp, margin:0, fontSize:12, fontFamily:"monospace" }} />
+            placeholder="Auto" style={{ ...inp, margin:0, fontSize:12, fontFamily:"monospace" }} />
           <input type="number" min="0" step="any" value={r.lastDoneMeter ?? ""}
             onChange={e=>change(r.id,"lastDoneMeter", e.target.value === "" ? null : (parseFloat(e.target.value)||0))}
-            placeholder="never" style={{ ...inp, margin:0, fontSize:12, fontFamily:"monospace" }} />
-          <button type="button" onClick={()=>remove(r.id)} title="Remove"
+            placeholder="Never" style={{ ...inp, margin:0, fontSize:12, fontFamily:"monospace" }} />
+          <button type="button" onClick={()=>remove(r.id)} title="Remove this interval"
             style={{ ...btn.ghost, padding:"7px 0", fontSize:13, color:"#c0392b", borderColor:"#f0d0d0" }}>×</button>
         </div>
       ))}
@@ -2570,7 +2592,7 @@ function PMDueTab({ units, dispatch, onOpen }) {
           <div style={{ background: chosen.length ? "#f0f8f4" : "#f7f7f5", border:`1px solid ${chosen.length?"#a8d5b5":"#ddd"}`, borderRadius:8, padding:16, marginBottom:16 }}>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1.5fr 2fr auto", gap:12, alignItems:"end" }}>
               <Field label="Date performed">
-                <input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} />
+                <DateField value={form.date} onChange={v => set("date", v)} />
               </Field>
               <Field label="Performed by">
                 <input type="text" value={form.reportedBy} onChange={e=>set("reportedBy",e.target.value)} style={{ ...inp, margin:0 }} />

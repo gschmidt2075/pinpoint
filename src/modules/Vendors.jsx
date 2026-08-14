@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm } from "../components/shared.jsx";
+import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm, DateField, titleCase } from "../components/shared.jsx";
 import { createVendor, createInsuranceCert, createContractRate, VENDOR_TYPES } from "../data/schema.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -115,7 +115,7 @@ function VendorList({ vendors, db, dispatch, onSelect, onNew }) {
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name, city, code…" style={{ ...inp, width:220, margin:0 }} />
           <select value={typeFilter} onChange={e=>setTypeFilter(e.target.value)} style={{ ...inp, margin:0 }}>
             <option value="all">All Types</option>
-            {VENDOR_TYPES.map(t=><option key={t.value} value={t.value}>{t.label}</option>)}
+            {VENDOR_TYPES.map(t=><option key={t.value} value={t.value}>{titleCase(t.label)}</option>)}
           </select>
           <button onClick={onNew} style={btn.primary}>+ New Vendor</button>
         </div>
@@ -414,13 +414,13 @@ function VendorRates({ vendor: v, dispatch }) {
             </Field>
             <Field label="Unit">
               <select value={form.unitOfMeasure} onChange={e=>set("unitOfMeasure",e.target.value)} style={{ ...inp, margin:0 }}>
-                {["CY","TON","LF"].map(u=><option key={u}>{u}</option>)}
+                {["CY","TON","LF"].map(u=><option key={u} value={u}>{titleCase(u)}</option>)}
               </select>
             </Field>
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 2fr", gap:12, marginBottom:12 }}>
             <Field label="Effective From" required>
-              <input type="date" value={form.effectiveDate} onChange={e=>set("effectiveDate",e.target.value)} style={{ ...inp, margin:0 }} />
+              <DateField value={form.effectiveDate} onChange={v => set("effectiveDate", v)} />
             </Field>
             <Field label="Bid Reference">
               <input type="text" value={form.bidReference} onChange={e=>set("bidReference",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} />
@@ -511,7 +511,7 @@ function VendorForm({ vendor, invItems, onSave, onCancel }) {
           </Field>
           <Field label="Type">
             <select value={form.type} onChange={e=>set("type",e.target.value)} style={inp}>
-              {VENDOR_TYPES.map(t=><option key={t.value} value={t.value}>{t.label}</option>)}
+              {VENDOR_TYPES.map(t=><option key={t.value} value={t.value}>{titleCase(t.label)}</option>)}
             </select>
           </Field>
           <Field label="Vendor Code">
@@ -598,7 +598,7 @@ function VendorForm({ vendor, invItems, onSave, onCancel }) {
                 <div key={c.id} style={{ display:"grid", gridTemplateColumns:"2fr 1.5fr 1fr auto 34px", gap:10, alignItems:"end", marginBottom:8 }}>
                   <Field label="Carrier"><input type="text" value={c.carrier} onChange={e=>setCert(c.id,"carrier",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
                   <Field label="Policy #"><input type="text" value={c.policyNumber} onChange={e=>setCert(c.id,"policyNumber",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
-                  <Field label="Expires"><input type="date" value={c.expirationDate} onChange={e=>setCert(c.id,"expirationDate",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+                  <Field label="Expires"><DateField value={c.expirationDate} onChange={v => setCert(c.id,"expirationDate", v)} /></Field>
                   <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, height:34, whiteSpace:"nowrap" }}>
                     <input type="checkbox" checked={!!c.certificateOnFile} onChange={e=>setCert(c.id,"certificateOnFile",e.target.checked)} />
                     On file

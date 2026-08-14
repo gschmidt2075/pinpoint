@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { EXPENDITURE_CODES, REVENUE_CODES, FUNDS, FISCAL_YEAR, EXP_TYPES } from "../data/accountCodes.js";
-import { StatusBadge, ProgressBar, KPICard, Field, SectionCard, Table, Icon, inp, btn, fmt, fmtSm, pct } from "../components/shared.jsx";
+import { StatusBadge, ProgressBar, KPICard, Field, SectionCard, Table, Icon, inp, btn, fmt, fmtSm, pct, DateField, titleCase } from "../components/shared.jsx";
 import { DEFAULT_INVOICES_PER_CLAIM } from "../data/schema.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -528,11 +528,11 @@ function ExpenditureForm({ db, dispatch, onDone, initialData = null }) {
         <div style={{ fontWeight:700, fontSize:13, marginBottom:14 }}>Transaction Header</div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginBottom:16 }}>
           <Field label="Date" required>
-            <input type="date" value={header.date} onChange={e=>set("date",e.target.value)} style={inp} />
+            <DateField value={header.date} onChange={v => set("date", v)} />
           </Field>
           <Field label="Transaction Type">
             <select value={header.type} onChange={e=>set("type",e.target.value)} style={inp}>
-              {EXP_TYPES.map(t=><option key={t.value} value={t.value}>{t.label}</option>)}
+              {EXP_TYPES.map(t=><option key={t.value} value={t.value}>{titleCase(t.label)}</option>)}
             </select>
           </Field>
           <Field label="Invoice / Reference #">
@@ -637,7 +637,7 @@ function ExpenditureForm({ db, dispatch, onDone, initialData = null }) {
                       { value:"project", label:"Project" },
                       { value:"machine", label:"Machine" },
                       { value:"asset",   label:"Asset" },
-                    ].map(t=><option key={t.value} value={t.value}>{t.label}</option>)}
+                    ].map(t=><option key={t.value} value={t.value}>{titleCase(t.label)}</option>)}
                   </select>
                 </Field>
                 {line.assignType && (
@@ -1149,7 +1149,7 @@ function RevenueForm({ db, dispatch, onDone, initialData = null }) {
       <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
         <div style={{ fontWeight:700, fontSize:13, marginBottom:14 }}>Transaction Header</div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
-          <Field label="Date" required><input type="date" value={header.date} onChange={e=>setH("date",e.target.value)} style={inp} /></Field>
+          <Field label="Date" required><DateField value={header.date} onChange={v => setH("date", v)} /></Field>
           <Field label="Reference #"><input type="text" placeholder="Check / warrant #…" value={header.reference} onChange={e=>setH("reference",e.target.value)} style={inp} /></Field>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
@@ -1369,7 +1369,7 @@ function JournalEntries({ db, dispatch }) {
         <div style={{ fontWeight:700, fontSize:13, marginBottom:14, color:"#1a1a1a" }}>New Journal Entry</div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
           <Field label="Date" required>
-            <input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} />
+            <DateField value={form.date} onChange={v => set("date", v)} />
           </Field>
           <Field label="Amount ($)" required>
             <input type="number" min="0" step="0.01" placeholder="0.00" value={form.amount}
@@ -1386,13 +1386,13 @@ function JournalEntries({ db, dispatch }) {
           <Field label="Debit (Account Code)" required>
             <select value={form.debitCode} onChange={e=>set("debitCode",e.target.value)} style={{ ...inp, fontFamily:"monospace", fontSize:12 }}>
               <option value="">Select debit code…</option>
-              {allCodes.map(c=><option key={c.value} value={c.value}>{c.label}</option>)}
+              {allCodes.map(c=><option key={c.value} value={c.value}>{titleCase(c.label)}</option>)}
             </select>
           </Field>
           <Field label="Credit (Account Code — optional)">
             <select value={form.creditCode} onChange={e=>set("creditCode",e.target.value)} style={{ ...inp, fontFamily:"monospace", fontSize:12 }}>
               <option value="">Select credit code (if applicable)…</option>
-              {allCodes.map(c=><option key={c.value} value={c.value}>{c.label}</option>)}
+              {allCodes.map(c=><option key={c.value} value={c.value}>{titleCase(c.label)}</option>)}
             </select>
           </Field>
         </div>
@@ -1452,7 +1452,7 @@ function Amendments({ db, dispatch }) {
       {saved && <div style={{ background:"#e6f4ec", border:"1px solid #a8d5b5", borderRadius:6, padding:"12px 16px", marginBottom:16, color:"#1a6b35", fontWeight:600, fontSize:13 }}>✓ Amendment recorded</div>}
       <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:20 }}>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
-          <Field label="Date" required><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} /></Field>
+          <Field label="Date" required><DateField value={form.date} onChange={v => set("date", v)} /></Field>
           <Field label="Amount ($) — negative to reduce" required>
             <input type="number" step="0.01" placeholder="e.g. 25000 or -10000" value={form.amount} onChange={e=>set("amount",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
           </Field>
@@ -1665,7 +1665,7 @@ function RevenueList({ db, dispatch, onNew }) {
               <input type="text" autoFocus value={receiptForm.receiptNumber} onChange={e=>setReceiptForm(f=>({...f,receiptNumber:e.target.value}))} style={{ ...inp, margin:0, fontFamily:"monospace" }} />
             </Field>
             <Field label="Receipt Date">
-              <input type="date" value={receiptForm.receiptDate} onChange={e=>setReceiptForm(f=>({...f,receiptDate:e.target.value}))} style={{ ...inp, margin:0 }} placeholder={today} />
+              <DateField value={receiptForm.receiptDate} onChange={v => setReceiptForm(f => ({...f, receiptDate: v}))} />
             </Field>
             <button onClick={doReceipt} disabled={!receiptForm.receiptNumber} style={{ ...btn.primary, background:"#1a6b35", opacity:receiptForm.receiptNumber?1:0.4 }}>Record Receipt</button>
             <button onClick={()=>{setReceipting(null); setReceiptForm({receiptNumber:"",receiptDate:""});}} style={btn.ghost}>Cancel</button>

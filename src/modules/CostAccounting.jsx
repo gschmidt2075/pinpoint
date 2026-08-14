@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm } from "../components/shared.jsx";
+import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm, DateField, titleCase } from "../components/shared.jsx";
 import { createLaborEntry, createEquipmentEntry, createMaterialEntry, createContractorEntry, createEngineeringEntry, uid, today } from "../data/schema.js";
 import { FEMA_EQUIPMENT_RATES } from "./Equipment.jsx";
 
@@ -389,7 +389,7 @@ function LaborEntries({ project, employees, dispatch }) {
         <div style={{ background:"#f7f7f5", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:16 }}>
           <div style={{ fontWeight:700, fontSize:12, marginBottom:12 }}>{editId?"Edit Labor Entry":"New Labor Entry"}</div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr", gap:12, marginBottom:12 }}>
-            <Field label="Date"><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <Field label="Date"><DateField value={form.date} onChange={v => set("date", v)} /></Field>
             <Field label="Employee">
               {employees.length>0
                 ? <select value={form.employeeId} onChange={e=>fillEmployee(e.target.value)} style={{ ...inp, margin:0 }}>
@@ -496,7 +496,7 @@ function EquipmentEntries({ project, equipment, dispatch }) {
       {showForm && (
         <div style={{ background:"#f7f7f5", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:16 }}>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr 1fr 1fr 1fr", gap:12, marginBottom:12 }}>
-            <Field label="Date"><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <Field label="Date"><DateField value={form.date} onChange={v => set("date", v)} /></Field>
             <Field label="Equipment Unit">
               <select value={form.equipmentId} onChange={e=>fillUnit(e.target.value)} style={{ ...inp, margin:0 }}>
                 <option value="">Select unit…</option>
@@ -600,7 +600,7 @@ function MaterialEntries({ project, invItems, invBatches, dispatch }) {
       {showForm && (
         <div style={{ background:"#f7f7f5", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:16 }}>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr 1fr 1fr", gap:12, marginBottom:12 }}>
-            <Field label="Date"><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <Field label="Date"><DateField value={form.date} onChange={v => set("date", v)} /></Field>
             <Field label="Item (catalog or manual)">
               <select value={form.itemId} onChange={e=>fillItem(e.target.value)} style={{ ...inp, margin:0 }}>
                 <option value="">Manual entry…</option>
@@ -700,7 +700,7 @@ function ContractorEntries({ project, vendors, dispatch }) {
       {showForm && (
         <div style={{ background:"#f7f7f5", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:16 }}>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr", gap:12, marginBottom:12 }}>
-            <Field label="Date"><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <Field label="Date"><DateField value={form.date} onChange={v => set("date", v)} /></Field>
             <Field label="Contractor">
               {vendors.filter(v=>v.type==="contractor").length>0
                 ? <select value={form.vendorId} onChange={e=>fillVendor(e.target.value)} style={{ ...inp, margin:0 }}>
@@ -787,7 +787,7 @@ function EngineeringEntries({ project, vendors, dispatch }) {
       {showForm && (
         <div style={{ background:"#f7f7f5", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:16 }}>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr 1fr", gap:12, marginBottom:12 }}>
-            <Field label="Date"><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <Field label="Date"><DateField value={form.date} onChange={v => set("date", v)} /></Field>
             <Field label="Engineering Firm">
               {vendors.filter(v=>v.type==="engineering_firm").length>0
                 ? <select value={form.vendorId} onChange={e=>fillFirm(e.target.value)} style={{ ...inp, margin:0 }}>

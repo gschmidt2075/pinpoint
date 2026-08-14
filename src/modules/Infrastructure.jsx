@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm } from "../components/shared.jsx";
+import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm, DateField, titleCase } from "../components/shared.jsx";
 import { createRoad, createBridge, createStructure, createStructureBarrel, createSign, createSignHistory, barrelLabel, barrelsSummary } from "../data/schema.js";
 
 
@@ -166,7 +166,7 @@ function BarrelEditor({ barrels, typeOptions, onChange }) {
           <Field label={i === 0 ? "Type" : ""}>
             <select value={b.type} onChange={e=>setField(b.id,"type",e.target.value)} style={{ ...inp, margin:0 }}>
               <option value="">Select…</option>
-              {typeOptions.map(t=><option key={t}>{t}</option>)}
+              {typeOptions.map(t=><option key={t} value={t}>{titleCase(t)}</option>)}
             </select>
           </Field>
           <Field label={i === 0 ? "Notes" : ""}>
@@ -529,7 +529,7 @@ function RoadForm({ road, onSave, onCancel }) {
           <Field label="Surface Type">
             <select value={form.surfaceType} onChange={e=>set("surfaceType",e.target.value)} style={inp}>
               <option value="">Select…</option>
-              {["Concrete","Bituminous","Gravel","Dirt"].map(s=><option key={s}>{s}</option>)}
+              {["Concrete","Bituminous","Gravel","Dirt"].map(s=><option key={s} value={s}>{titleCase(s)}</option>)}
             </select>
           </Field>
         </div>
@@ -554,9 +554,9 @@ function RoadForm({ road, onSave, onCancel }) {
           <div style={{ fontSize:12, fontWeight:700, color:"#555", marginBottom:3 }}>Surface Work History</div>
           <div style={{ fontSize:11, color:"#888", marginBottom:11 }}>Leave blank if it's never been done or isn't known.</div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14 }}>
-            <Field label="Last Graveled"><input type="date" value={form.lastGraveled} onChange={e=>set("lastGraveled",e.target.value)} style={inp} /></Field>
-            <Field label="Last Bladed"><input type="date" value={form.lastBladed} onChange={e=>set("lastBladed",e.target.value)} style={inp} /></Field>
-            <Field label="Last Sealed"><input type="date" value={form.lastSealed} onChange={e=>set("lastSealed",e.target.value)} style={inp} /></Field>
+            <Field label="Last Graveled"><DateField value={form.lastGraveled} onChange={v => set("lastGraveled", v)} /></Field>
+            <Field label="Last Bladed"><DateField value={form.lastBladed} onChange={v => set("lastBladed", v)} /></Field>
+            <Field label="Last Sealed"><DateField value={form.lastSealed} onChange={v => set("lastSealed", v)} /></Field>
           </div>
         </div>
 
@@ -816,7 +816,7 @@ function BridgeForm({ bridge, onSave, onCancel }) {
             </select>
           </Field>
           <Field label="Last Inspected">
-            <input type="date" value={form.nbisInspected} onChange={e=>set("nbisInspected",e.target.value)} style={inp} />
+            <DateField value={form.nbisInspected} onChange={v => set("nbisInspected", v)} />
           </Field>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:14, marginBottom:14, alignItems:"end" }}>
@@ -847,7 +847,7 @@ function BridgeForm({ bridge, onSave, onCancel }) {
           <Field label="Longitude"><input type="text" value={form.longitude} onChange={e=>set("longitude",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
           <Field label="Status">
             <select value={form.status} onChange={e=>set("status",e.target.value)} style={inp}>
-              {["active","replaced","removed","closed"].map(s=><option key={s} value={s}>{s}</option>)}
+              {["active","replaced","removed","closed"].map(s=><option key={s} value={s}>{titleCase(s)}</option>)}
             </select>
           </Field>
         </div>
@@ -952,7 +952,7 @@ function StructuresTab({ structures, projects, db, dispatch }) {
         </div>
         <select value={townFilter} onChange={e=>setTownFilter(e.target.value)} style={{ ...inp, margin:0, fontSize:12, minWidth:140 }}>
           <option value="all">All Townships</option>
-          {towns.map(t=><option key={t} value={t}>{t}</option>)}
+          {towns.map(t=><option key={t} value={t}>{titleCase(t)}</option>)}
         </select>
       </div>
 
@@ -1076,12 +1076,12 @@ function StructureForm({ structure, structureTypes = [], townshipList = [], onSa
           <Field label="Culvert Number"><input type="text" value={form.culvertNumber} onChange={e=>set("culvertNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="A 1.1" /></Field>
           <Field label="Designation">
             <select value={form.designation} onChange={e=>set("designation",e.target.value)} style={inp}>
-              {["Structure","Culvert","Bridge"].map(d=><option key={d}>{d}</option>)}
+              {["Structure","Culvert","Bridge"].map(d=><option key={d} value={d}>{titleCase(d)}</option>)}
             </select>
           </Field>
           <Field label="Road Designation">
             <select value={form.roadDesignation} onChange={e=>set("roadDesignation",e.target.value)} style={inp}>
-              {["Primary","Secondary"].map(d=><option key={d}>{d}</option>)}
+              {["Primary","Secondary"].map(d=><option key={d} value={d}>{titleCase(d)}</option>)}
             </select>
           </Field>
           <Field label="Year Built"><input type="text" value={form.yearBuilt} onChange={e=>set("yearBuilt",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
@@ -1091,7 +1091,7 @@ function StructureForm({ structure, structureTypes = [], townshipList = [], onSa
           <Field label="Township">
             <select value={form.township} onChange={e=>set("township",e.target.value)} style={inp}>
               <option value="">Select…</option>
-              {townshipList.map(t=><option key={t}>{t}</option>)}
+              {townshipList.map(t=><option key={t} value={t}>{titleCase(t)}</option>)}
             </select>
           </Field>
         </div>
@@ -1184,7 +1184,7 @@ function SignsTab({ signs, signHistory, projects, dispatch }) {
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Sign type, road, name…" style={{ ...inp, width:200, margin:0 }} />
           <select value={townFilter} onChange={e=>setTownFilter(e.target.value)} style={{ ...inp, margin:0, fontSize:12, minWidth:130 }}>
             <option value="all">All Townships</option>
-            {towns.map(t=><option key={t} value={t}>{t}</option>)}
+            {towns.map(t=><option key={t} value={t}>{titleCase(t)}</option>)}
           </select>
           <button onClick={()=>setShowForm(true)} style={btn.primary}>+ Add Sign</button>
         </div>
@@ -1307,10 +1307,10 @@ function SignDetail({ sign: s, history, projects, onBack, onEdit, dispatch }) {
           {showHist && (
             <div style={{ background:"#f7f7f5", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:16 }}>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 2fr 1fr", gap:12, marginBottom:12 }}>
-                <Field label="Date"><input type="date" value={hForm.date} onChange={e=>setH("date",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+                <Field label="Date"><DateField value={hForm.date} onChange={v => setH("date", v)} /></Field>
                 <Field label="Event Type">
                   <select value={hForm.eventType} onChange={e=>setH("eventType",e.target.value)} style={{ ...inp, margin:0 }}>
-                    {SIGN_EVENT_TYPES.map(t=><option key={t} value={t}>{t.replace(/_/g," ")}</option>)}
+                    {SIGN_EVENT_TYPES.map(t=><option key={t} value={t}>{titleCase(t)}</option>)}
                   </select>
                 </Field>
                 <Field label="Description"><input type="text" value={hForm.description} onChange={e=>setH("description",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
@@ -1357,19 +1357,19 @@ function SignForm({ sign, onSave, onCancel }) {
           <Field label="Township">
             <select value={form.township} onChange={e=>set("township",e.target.value)} style={inp}>
               <option value="">Select…</option>
-              {TOWNSHIPS_NE.map(t=><option key={t}>{t}</option>)}
+              {TOWNSHIPS_NE.map(t=><option key={t} value={t}>{titleCase(t)}</option>)}
             </select>
           </Field>
           <Field label="Side of Road">
             <select value={form.sideOfRoad} onChange={e=>set("sideOfRoad",e.target.value)} style={inp}>
               <option value="">Select…</option>
-              {["N","S","E","W","NE","NW","SE","SW"].map(s=><option key={s}>{s}</option>)}
+              {["N","S","E","W","NE","NW","SE","SW"].map(s=><option key={s} value={s}>{titleCase(s)}</option>)}
             </select>
           </Field>
           <Field label="Travel Direction">
             <select value={form.travelDirection} onChange={e=>set("travelDirection",e.target.value)} style={inp}>
               <option value="">Select…</option>
-              {["N","S","E","W"].map(d=><option key={d}>{d}</option>)}
+              {["N","S","E","W"].map(d=><option key={d} value={d}>{titleCase(d)}</option>)}
             </select>
           </Field>
           <Field label="Offset"><input type="text" value={form.offset} onChange={e=>set("offset",e.target.value)} style={inp} /></Field>
@@ -1388,12 +1388,12 @@ function SignForm({ sign, onSave, onCancel }) {
           <Field label="Reason">
             <select value={form.reason} onChange={e=>set("reason",e.target.value)} style={inp}>
               <option value="">Select…</option>
-              {SIGN_REASONS.map(r=><option key={r}>{r}</option>)}
+              {SIGN_REASONS.map(r=><option key={r} value={r}>{titleCase(r)}</option>)}
             </select>
           </Field>
           <Field label="Status">
             <select value={form.status} onChange={e=>set("status",e.target.value)} style={inp}>
-              {["active","removed","replaced"].map(s=><option key={s}>{s}</option>)}
+              {["active","removed","replaced"].map(s=><option key={s} value={s}>{titleCase(s)}</option>)}
             </select>
           </Field>
         </div>

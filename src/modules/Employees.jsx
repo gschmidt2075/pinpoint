@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm } from "../components/shared.jsx";
+import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm, DateField, titleCase } from "../components/shared.jsx";
 import {
   createEmployee, createPayScale, createEmployeeAssignment,
   createFringeProfile, createFringeComponent, createCertification,
@@ -385,7 +385,7 @@ function RateTab({ employee: e, payScales, db, dispatch }) {
 
       <div style={{ display:"flex", alignItems:"flex-end", gap:14, marginBottom:16, flexWrap:"wrap" }}>
         <Field label="Show the rate as of">
-          <input type="date" value={asOf} onChange={ev=>setAsOf(ev.target.value)} style={{ ...inp, margin:0, width:170 }} />
+          <DateField value={asOf} onChange={v => setAsOf(v)} />
         </Field>
         <div style={{ fontSize:12, color:"#888", paddingBottom:9 }}>
           {r.classification || "No classification"}
@@ -495,12 +495,12 @@ function CertsTab({ employee: e, db, dispatch }) {
             <Field label="Type" required>
               <select value={form.type} onChange={ev=>set("type",ev.target.value)} style={{ ...inp, margin:0 }}>
                 <option value="">Select…</option>
-                {types.map(t=><option key={t}>{t}</option>)}
+                {types.map(t=><option key={t} value={t}>{titleCase(t)}</option>)}
               </select>
             </Field>
             <Field label="Number"><input type="text" value={form.certificateNumber} onChange={ev=>set("certificateNumber",ev.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
-            <Field label="Issued"><input type="date" value={form.issuedDate} onChange={ev=>set("issuedDate",ev.target.value)} style={{ ...inp, margin:0 }} /></Field>
-            <Field label="Expires"><input type="date" value={form.expirationDate} onChange={ev=>set("expirationDate",ev.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <Field label="Issued"><DateField value={form.issuedDate} onChange={v => set("issuedDate", v)} /></Field>
+            <Field label="Expires"><DateField value={form.expirationDate} onChange={v => set("expirationDate", v)} /></Field>
           </div>
           <div style={{ display:"flex", gap:10 }}>
             <Field label="Notes" style={{ flex:1 }}><input type="text" value={form.notes} onChange={ev=>set("notes",ev.target.value)} style={{ ...inp, margin:0 }} /></Field>
@@ -635,11 +635,11 @@ function PayScales({ db, dispatch }) {
             <Field label="Classification" required>
               <select value={form.classification} onChange={e=>set("classification",e.target.value)} style={{ ...inp, margin:0 }}>
                 <option value="">Select…</option>
-                {classifications.map(c=><option key={c}>{c}</option>)}
+                {classifications.map(c=><option key={c} value={c}>{titleCase(c)}</option>)}
               </select>
             </Field>
             <Field label="Effective From" required>
-              <input type="date" value={form.effectiveDate} onChange={e=>set("effectiveDate",e.target.value)} style={{ ...inp, margin:0 }} />
+              <DateField value={form.effectiveDate} onChange={v => set("effectiveDate", v)} />
             </Field>
             <Field label="Hourly Rate" required>
               <input type="number" min="0" step="0.01" value={form.hourlyRate} onChange={e=>set("hourlyRate",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} />
@@ -761,7 +761,7 @@ function EmployeeForm({ employee, db, canSeeRates, onSave, onCancel }) {
         </div>
 
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:16, marginBottom:16 }}>
-          <Field label="Hired"><input type="date" value={form.hireDate} onChange={e=>set("hireDate",e.target.value)} style={inp} /></Field>
+          <Field label="Hired"><DateField value={form.hireDate} onChange={v => set("hireDate", v)} /></Field>
           <Field label="Phone"><input type="text" value={form.phone} onChange={e=>set("phone",e.target.value)} style={inp} /></Field>
           <Field label="Email"><input type="text" value={form.email} onChange={e=>set("email",e.target.value)} style={inp} /></Field>
           <Field label="Assigned Equipment">
@@ -794,11 +794,11 @@ function EmployeeForm({ employee, db, canSeeRates, onSave, onCancel }) {
             )}
             {(form.assignments||[]).map(a=>(
               <div key={a.id} style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr 2fr 34px", gap:10, alignItems:"end", marginBottom:8 }}>
-                <Field label="Effective"><input type="date" value={a.effectiveDate} onChange={e=>setAssignment(a.id,"effectiveDate",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+                <Field label="Effective"><DateField value={a.effectiveDate} onChange={v => setAssignment(a.id,"effectiveDate", v)} /></Field>
                 <Field label="Classification">
                   <select value={a.classification} onChange={e=>setAssignment(a.id,"classification",e.target.value)} style={{ ...inp, margin:0 }}>
                     <option value="">Select…</option>
-                    {classifications.map(c=><option key={c}>{c}</option>)}
+                    {classifications.map(c=><option key={c} value={c}>{titleCase(c)}</option>)}
                   </select>
                 </Field>
                 <Field label="Rate Override">
@@ -825,7 +825,7 @@ function EmployeeForm({ employee, db, canSeeRates, onSave, onCancel }) {
             {(form.fringeProfiles||[]).map(p=>(
               <div key={p.id} style={{ background:"#fafaf8", border:"1px solid #eee", borderRadius:6, padding:14, marginBottom:10 }}>
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 34px", gap:10, alignItems:"end", marginBottom:12 }}>
-                  <Field label="Effective From"><input type="date" value={p.effectiveDate} onChange={e=>setProfileField(p.id,"effectiveDate",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+                  <Field label="Effective From"><DateField value={p.effectiveDate} onChange={v => setProfileField(p.id,"effectiveDate", v)} /></Field>
                   <Field label="Notes"><input type="text" value={p.notes} onChange={e=>setProfileField(p.id,"notes",e.target.value)} style={{ ...inp, margin:0 }} placeholder="e.g. family plan, 10 yr service" /></Field>
                   <button onClick={()=>removeProfile(p.id)} style={{ ...btn.danger, padding:"7px 0", fontSize:14, height:34 }}>×</button>
                 </div>
@@ -856,7 +856,7 @@ function EmployeeForm({ employee, db, canSeeRates, onSave, onCancel }) {
         </div>
 
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
-          <Field label="End Date"><input type="date" value={form.endDate} onChange={e=>set("endDate",e.target.value)} style={inp} /></Field>
+          <Field label="End Date"><DateField value={form.endDate} onChange={v => set("endDate", v)} /></Field>
           <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontSize:13, paddingTop:20 }}>
             <input type="checkbox" checked={form.active !== false} onChange={e=>set("active",e.target.checked)} />
             Current employee <span style={{ color:"#888", fontSize:12 }}>— unchecking keeps history but hides them</span>

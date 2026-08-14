@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Icon, Field, SectionCard, Table, KPICard, StatusBadge, inp, btn, fmt, fmtSm, pct, ProgressBar } from "../components/shared.jsx";
+import { Icon, Field, SectionCard, Table, KPICard, StatusBadge, inp, btn, fmt, fmtSm, pct, ProgressBar, DateField, titleCase } from "../components/shared.jsx";
 import { createProject } from "../data/schema.js";
 import { FISCAL_YEAR } from "../data/accountCodes.js";
 
@@ -460,7 +460,7 @@ function LaborEntryForm({ entry, onSave, onCancel }) {
       </div>
       <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:20, marginBottom:16 }}>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr", gap:14, marginBottom:14 }}>
-          <Field label="Date" required><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} /></Field>
+          <Field label="Date" required><DateField value={form.date} onChange={v => set("date", v)} /></Field>
           <Field label="Employee" required><input type="text" value={form.employeeName} onChange={e=>set("employeeName",e.target.value)} style={inp} /></Field>
           <Field label="Hours" required><input type="number" min="0" step="0.25" value={form.hoursWorked} onChange={e=>set("hoursWorked",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
         </div>
@@ -550,7 +550,7 @@ function EquipmentEntryForm({ entry, units, onSave, onCancel }) {
       </div>
       <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:20, marginBottom:16 }}>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:14, marginBottom:14 }}>
-          <Field label="Date" required><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} /></Field>
+          <Field label="Date" required><DateField value={form.date} onChange={v => set("date", v)} /></Field>
           <Field label="Equipment Unit" required>
             <select value={form.equipmentId} onChange={e=>handleUnitSelect(e.target.value)} style={inp}>
               <option value="">Select unit…</option>
@@ -650,7 +650,7 @@ function MaterialEntryForm({ entry, invItems, onSave, onCancel }) {
           💡 Materials issued from Inventory appear here automatically with FIFO cost. Use this form for contractor-supplied or other materials.
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:14, marginBottom:14 }}>
-          <Field label="Date" required><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} /></Field>
+          <Field label="Date" required><DateField value={form.date} onChange={v => set("date", v)} /></Field>
           <Field label="Item (from catalog — optional)">
             <select value={form.itemId} onChange={e=>handleItemSelect(e.target.value)} style={inp}>
               <option value="">Manual / not in catalog</option>
@@ -744,7 +744,7 @@ function ContractorEntryForm({ entry, onSave, onCancel }) {
       </div>
       <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:20, marginBottom:16 }}>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr", gap:14, marginBottom:14 }}>
-          <Field label="Date" required><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} /></Field>
+          <Field label="Date" required><DateField value={form.date} onChange={v => set("date", v)} /></Field>
           <Field label="Contractor" required><input type="text" value={form.contractorName} onChange={e=>set("contractorName",e.target.value)} style={inp} /></Field>
           <Field label="Invoice #"><input type="text" value={form.invoiceNumber} onChange={e=>set("invoiceNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
         </div>
@@ -764,7 +764,7 @@ function ContractorEntryForm({ entry, onSave, onCancel }) {
           </Field>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 2fr", gap:14, marginBottom:14 }}>
-          {form.paymentStatus==="paid" && <Field label="Payment Date"><input type="date" value={form.paymentDate} onChange={e=>set("paymentDate",e.target.value)} style={inp} /></Field>}
+          {form.paymentStatus==="paid" && <Field label="Payment Date"><DateField value={form.paymentDate} onChange={v => set("paymentDate", v)} /></Field>}
           <Field label="Change Order">
             <div style={{ display:"flex", gap:8, alignItems:"center", paddingTop:8 }}>
               <label style={{ display:"flex", gap:6, alignItems:"center", fontSize:13, cursor:"pointer" }}>
@@ -841,14 +841,14 @@ function EngineeringEntryForm({ entry, onSave, onCancel }) {
       </div>
       <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:20, marginBottom:16 }}>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr", gap:14, marginBottom:14 }}>
-          <Field label="Date" required><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} /></Field>
+          <Field label="Date" required><DateField value={form.date} onChange={v => set("date", v)} /></Field>
           <Field label="Engineering Firm" required><input type="text" value={form.firmName} onChange={e=>set("firmName",e.target.value)} style={inp} /></Field>
           <Field label="Invoice #"><input type="text" value={form.invoiceNumber} onChange={e=>set("invoiceNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:14 }}>
           <Field label="Service Type">
             <select value={form.serviceType} onChange={e=>set("serviceType",e.target.value)} style={inp}>
-              {["Design","Survey","Inspection","Geotechnical","Environmental","Construction Mgmt","Other"].map(s=><option key={s} value={s}>{s}</option>)}
+              {["Design","Survey","Inspection","Geotechnical","Environmental","Construction Mgmt","Other"].map(s=><option key={s} value={s}>{titleCase(s)}</option>)}
             </select>
           </Field>
           <Field label="Phase"><input type="text" value={form.phase} onChange={e=>set("phase",e.target.value)} style={inp} placeholder="Preliminary, Final…" /></Field>
@@ -968,11 +968,11 @@ function ProjectForm({ type: initialType, project, projects, assets, equipment, 
           <Field label="Work Type">
             <select value={form.projectType} onChange={e=>set("projectType",e.target.value)} style={inp}>
               <option value="">Select…</option>
-              {(isCapital?PROJECT_TYPES_CAPITAL:isMaint?PROJECT_TYPES_MAINT:[]).map(t=><option key={t} value={t}>{t}</option>)}
+              {(isCapital?PROJECT_TYPES_CAPITAL:isMaint?PROJECT_TYPES_MAINT:[]).map(t=><option key={t} value={t}>{titleCase(t)}</option>)}
             </select>
           </Field>
-          <Field label="Start Date"><input type="date" value={form.startDate} onChange={e=>set("startDate",e.target.value)} style={inp} /></Field>
-          <Field label="End / Target Date"><input type="date" value={form.endDate} onChange={e=>set("endDate",e.target.value)} style={inp} /></Field>
+          <Field label="Start Date"><DateField value={form.startDate} onChange={v => set("startDate", v)} /></Field>
+          <Field label="End / Target Date"><DateField value={form.endDate} onChange={v => set("endDate", v)} /></Field>
         </div>
         <div style={{ marginBottom:16 }}>
           <Field label="Work Description">
@@ -982,7 +982,7 @@ function ProjectForm({ type: initialType, project, projects, assets, equipment, 
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
           <Field label="Funding Source">
             <select value={form.fundingSource} onChange={e=>set("fundingSource",e.target.value)} style={inp}>
-              {FUNDING_SOURCES.map(f=><option key={f} value={f}>{f}</option>)}
+              {FUNDING_SOURCES.map(f=><option key={f} value={f}>{titleCase(f)}</option>)}
             </select>
           </Field>
           {isMisc && <Field label="Calendar Year"><input type="number" value={form.calendarYear} onChange={e=>set("calendarYear",parseInt(e.target.value)||new Date().getFullYear())} style={{ ...inp, fontFamily:"monospace" }} /></Field>}
@@ -1005,7 +1005,7 @@ function ProjectForm({ type: initialType, project, projects, assets, equipment, 
             <Field label="Estimated Cost ($)"><input type="number" min="0" step="1000" value={form.estimatedCost||""} onChange={e=>set("estimatedCost",parseFloat(e.target.value)||0)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
             <Field label="Contractor"><input type="text" value={form.contractor||""} onChange={e=>set("contractor",e.target.value)} style={inp} /></Field>
             <Field label="Contract Amount ($)"><input type="number" min="0" step="1000" value={form.contractAmount||""} onChange={e=>set("contractAmount",parseFloat(e.target.value)||0)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
-            <Field label="Bid Date"><input type="date" value={form.bidDate||""} onChange={e=>set("bidDate",e.target.value)} style={inp} /></Field>
+            <Field label="Bid Date"><DateField value={form.bidDate||""} onChange={v => set("bidDate", v)} /></Field>
           </div>
           <div style={{ display:"flex", gap:16, alignItems:"center" }}>
             <label style={{ display:"flex", gap:8, alignItems:"center", fontSize:13, cursor:"pointer" }}>
@@ -1014,7 +1014,7 @@ function ProjectForm({ type: initialType, project, projects, assets, equipment, 
             </label>
             {form.isOneSixYear && (
               <select value={form.oneSixYear||"Year 1"} onChange={e=>set("oneSixYear",e.target.value)} style={{ ...inp, margin:0, width:120 }}>
-                {ONE_SIX_YEARS.map(y=><option key={y} value={y}>{y}</option>)}
+                {ONE_SIX_YEARS.map(y=><option key={y} value={y}>{titleCase(y)}</option>)}
               </select>
             )}
           </div>

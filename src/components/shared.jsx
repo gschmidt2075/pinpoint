@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 // ── Shared UI Components ──────────────────────────────────────────────────────
 
 // ── Icon component ────────────────────────────────────────────────────────────
@@ -92,6 +92,148 @@ export function SectionCard({ title, subtitle, children, action, icon, className
         {action}
       </div>
       {children}
+    </div>
+  );
+}
+
+// ── Label text ────────────────────────────────────────────────────────────────
+// Stored values are lower_snake_case because that is what code wants to compare.
+// People should never see that. Everything user-facing goes through here.
+const SMALL_WORDS = new Set(["a","an","and","by","for","in","of","on","or","the","to","vs"]);
+const ALWAYS_CAPS = { pm:"PM", wo:"WO", gl:"GL", vin:"VIN", def:"DEF", psi:"PSI",
+                      fema:"FEMA", oem:"OEM", cdl:"CDL", dot:"DOT", hvac:"HVAC",
+                      id:"ID", po:"PO", ot:"OT", ac:"A/C", rv:"RV", atv:"ATV" };
+
+export function titleCase(value) {
+  if (value == null || value === "") return "";
+  return String(value)
+    // Underscores only. Hyphens are load-bearing in this domain — 15W-40,
+    // F350SD 4X4, W1-1R — and splitting on them corrupts real part numbers.
+    .replace(/_+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .map((word, i) => {
+      const bare = word.toLowerCase();
+      if (ALWAYS_CAPS[bare]) return ALWAYS_CAPS[bare];
+      // Leave anything already carrying capitals alone — "McCloud", "4WD",
+      // "15W-40" are written the way they are on purpose.
+      if (/[A-Z0-9]/.test(word) && word !== bare) return word;
+      if (i > 0 && SMALL_WORDS.has(bare)) return bare;
+      return bare.charAt(0).toUpperCase() + bare.slice(1);
+    })
+    .join(" ");
+}
+
+// ── DateField ─────────────────────────────────────────────────────────────────
+//
+// A native date input makes you land on a segment and step through it, which is
+// slow for anything that isn't today — and most of what gets entered here is
+// last week's ticket or last month's invoice.
+//
+// This takes a date the way someone would write one: 8/14/26, 08142026,
+// 8-14-2026, or the full 2026-08-14. It tidies up when you leave the field, and
+// the calendar button is still there when picking off a calendar is easier.
+// Stored value is always ISO yyyy-mm-dd.
+const iso = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+const todayISO = () => iso(new Date());
+
+export function parseLooseDate(text, today = new Date()) {
+  const raw = String(text || "").trim();
+  if (!raw) return "";
+
+  // Already ISO
+  let m = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) return build(+m[1], +m[2], +m[3]);
+
+  // 8/14/26 · 08-14-2026 · 8.14.26
+  m = raw.match(/^(\d{1,2})[/\-.](\d{1,2})(?:[/\-.](\d{2,4}))?$/);
+  if (m) return build(year(m[3]), +m[1], +m[2]);
+
+  // 081426 · 08142026 — typed straight through with no separators
+  m = raw.match(/^(\d{2})(\d{2})(\d{2}|\d{4})$/);
+  if (m) return build(year(m[3]), +m[1], +m[2]);
+
+  // A bare number is a day in the current month — "14" means the 14th.
+  m = raw.match(/^(\d{1,2})$/);
+  if (m) return build(today.getFullYear(), today.getMonth()+1, +m[1]);
+
+  return null;                       // unparseable — caller keeps the raw text
+
+  function year(y) {
+    if (!y) return today.getFullYear();
+    const n = +y;
+    // Two digits: this century unless that lands far in the future, in which
+    // case they meant the last one.
+    return y.length <= 2 ? (n + 2000 > today.getFullYear() + 5 ? n + 1900 : n + 2000) : n;
+  }
+  function build(y, mo, d) {
+    if (!(mo >= 1 && mo <= 12) || !(d >= 1 && d <= 31)) return null;
+    const dt = new Date(y, mo-1, d);
+    // Rejects 31 February rather than rolling it into March.
+    return (dt.getMonth() === mo-1 && dt.getDate() === d) ? iso(dt) : null;
+  }
+}
+
+export const formatDateUS = (value) => {
+  const m = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[2]}/${m[3]}/${m[1]}` : (value || "");
+};
+
+export function DateField({ value, onChange, style = {}, required, disabled, showToday = true }) {
+  const [text, setText]    = useState("");
+  const [editing, setEditing] = useState(false);
+  const [bad, setBad]      = useState(false);
+  const nativeRef = useRef(null);
+
+  const shown = editing ? text : formatDateUS(value);
+
+  const commit = (raw) => {
+    if (!String(raw).trim()) { onChange(""); setBad(false); return; }
+    const parsed = parseLooseDate(raw);
+    if (parsed) { onChange(parsed); setBad(false); }
+    else setBad(true);
+  };
+
+  return (
+    <div style={{ position:"relative", display:"flex", gap:6, alignItems:"stretch" }}>
+      <input
+        type="text"
+        inputMode="numeric"
+        value={shown}
+        disabled={disabled}
+        placeholder="mm/dd/yyyy"
+        onFocus={() => { setEditing(true); setText(formatDateUS(value)); }}
+        onChange={(e) => { setText(e.target.value); setBad(false); }}
+        onBlur={() => { setEditing(false); commit(text); }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") { commit(text); setEditing(false); e.currentTarget.blur(); }
+          if (e.key === "Escape") { setEditing(false); setText(formatDateUS(value)); setBad(false); }
+        }}
+        style={{ ...inp, margin:0, flex:1, fontFamily:"monospace",
+                 borderColor: bad ? "#c0392b" : (style.borderColor || undefined), ...style }}
+      />
+      {showToday && (
+        <button type="button" title="Today" disabled={disabled}
+          onClick={() => { onChange(todayISO()); setBad(false); setEditing(false); }}
+          style={{ ...btn.ghost, padding:"0 10px", fontSize:11, whiteSpace:"nowrap" }}>Today</button>
+      )}
+      <button type="button" title="Pick from a calendar" disabled={disabled}
+        onClick={() => { nativeRef.current?.showPicker ? nativeRef.current.showPicker() : nativeRef.current?.focus(); }}
+        style={{ ...btn.ghost, padding:"0 10px", fontSize:13 }}>▾</button>
+      <input
+        ref={nativeRef}
+        type="date"
+        value={value || ""}
+        onChange={(e) => { onChange(e.target.value); setBad(false); }}
+        tabIndex={-1}
+        aria-hidden="true"
+        style={{ position:"absolute", right:0, bottom:0, width:1, height:1, opacity:0, pointerEvents:"none" }}
+      />
+      {bad && (
+        <div style={{ position:"absolute", top:"100%", left:0, marginTop:2, fontSize:11, color:"#c0392b", whiteSpace:"nowrap", zIndex:5 }}>
+          Not a date — try 8/14/26
+        </div>
+      )}
     </div>
   );
 }

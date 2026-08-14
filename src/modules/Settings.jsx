@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Field, SectionCard, Table, Icon, AlertBar, inp, btn, fmt, fmtSm } from "../components/shared.jsx";
+import { Field, SectionCard, Table, Icon, AlertBar, inp, btn, fmt, fmtSm, DateField, titleCase } from "../components/shared.jsx";
 import { EXPENDITURE_CODES, REVENUE_CODES, FISCAL_YEAR } from "../data/accountCodes.js";
 import { LOOKUP_DEFS, createTownship, createStorageLocation, createTank,
          DEFAULT_INVOICES_PER_CLAIM } from "../data/schema.js";
@@ -350,10 +350,10 @@ function FiscalYearWizard({ db, dispatch }) {
                 <input type="text" placeholder="e.g. FY2028" value={fyForm.label} onChange={e=>setFy("label",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
               </Field>
               <Field label="Start Date">
-                <input type="date" value={fyForm.start} onChange={e=>setFy("start",e.target.value)} style={inp} />
+                <DateField value={fyForm.start} onChange={v => setFy("start", v)} />
               </Field>
               <Field label="End Date">
-                <input type="date" value={fyForm.end} onChange={e=>setFy("end",e.target.value)} style={inp} />
+                <DateField value={fyForm.end} onChange={v => setFy("end", v)} />
               </Field>
               <Field label="Claim Cycle Rule">
                 <input type="text" value={fyForm.claimRule} readOnly style={{ ...inp, background:"#f7f7f5", color:"#888" }} />

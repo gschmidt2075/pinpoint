@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Icon, Field, SectionCard, Table, KPICard, StatusBadge, SearchSelect, inp, btn, fmt, fmtSm } from "../components/shared.jsx";
+import { Icon, Field, SectionCard, Table, KPICard, StatusBadge, SearchSelect, inp, btn, fmt, fmtSm, DateField, titleCase } from "../components/shared.jsx";
 import { locationLabel, locationFor } from "../data/schema.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -754,7 +754,7 @@ function ItemForm({ item, locations, groupList, equipment, onSave, onCancel }) {
           </Field>
           <Field label="Unit of Measure" required>
             <select value={form.unitOfMeasure} onChange={e=>set("unitOfMeasure",e.target.value)} style={inp}>
-              {withCurrent(UNITS, form.unitOfMeasure).map(u=><option key={u} value={u}>{u}</option>)}
+              {withCurrent(UNITS, form.unitOfMeasure).map(u=><option key={u} value={u}>{titleCase(u)}</option>)}
             </select>
           </Field>
           <Field label="GL Account Code">
@@ -933,7 +933,7 @@ function ReceiveForm({ db, dispatch, onDone }) {
       <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginBottom:16 }}>
           <Field label="Date" required>
-            <input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} />
+            <DateField value={form.date} onChange={v => set("date", v)} />
           </Field>
           <Field label="Vendor">
             <input type="text" value={form.vendorName} onChange={e=>set("vendorName",e.target.value)} style={inp} placeholder="Vendor name…" />
@@ -1196,7 +1196,7 @@ function ScaleTicket({ db, dispatch, onDone }) {
             {/* Row 1: Date / Material / Ticket # */}
             <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr", gap:16, marginBottom:16 }}>
               <Field label="Date" required>
-                <input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} />
+                <DateField value={form.date} onChange={v => set("date", v)} />
               </Field>
               <Field label="Material" required>
                 <select value={form.itemId} onChange={e=>set("itemId",e.target.value)} style={inp}>
@@ -1223,7 +1223,7 @@ function ScaleTicket({ db, dispatch, onDone }) {
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:16, marginBottom:16 }}>
               <Field label="Hauled By">
                 <select value={form.haulType} onChange={e=>set("haulType",e.target.value)} style={inp}>
-                  {HAUL_TYPES.map(h=><option key={h.value} value={h.value}>{h.label}</option>)}
+                  {HAUL_TYPES.map(h=><option key={h.value} value={h.value}>{titleCase(h.label)}</option>)}
                 </select>
               </Field>
               <Field label={form.haulType==="county_pickup" ? "Driver / Equipment" : "Hauler Name"}>
@@ -1235,7 +1235,7 @@ function ScaleTicket({ db, dispatch, onDone }) {
               </Field>
               <Field label="Unit">
                 <select value={form.unitOfMeasure} onChange={e=>set("unitOfMeasure",e.target.value)} style={inp}>
-                  {withCurrent(["CY","TON","LF"], form.unitOfMeasure).map(u=><option key={u} value={u}>{u}</option>)}
+                  {withCurrent(["CY","TON","LF"], form.unitOfMeasure).map(u=><option key={u} value={u}>{titleCase(u)}</option>)}
                 </select>
               </Field>
             </div>
@@ -1245,7 +1245,7 @@ function ScaleTicket({ db, dispatch, onDone }) {
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
                 <Field label="Delivered To" required>
                   <select value={form.destinationType} onChange={e=>set("destinationType",e.target.value)} style={inp}>
-                    {DEST_TYPES.map(d=><option key={d.value} value={d.value}>{d.label}</option>)}
+                    {DEST_TYPES.map(d=><option key={d.value} value={d.value}>{titleCase(d.label)}</option>)}
                   </select>
                 </Field>
                 {isRoadSegment ? (
@@ -1334,7 +1334,7 @@ function ScaleTicket({ db, dispatch, onDone }) {
                     <input type="text" value={reconInvoice} onChange={e=>setReconInvoice(e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="Invoice number…" />
                   </Field>
                   <Field label="Invoice Date">
-                    <input type="date" value={reconDate} onChange={e=>setReconDate(e.target.value)} style={inp} />
+                    <DateField value={reconDate} onChange={v => setReconDate(v)} />
                   </Field>
                 </div>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
@@ -1575,7 +1575,7 @@ function IssueForm({ db, dispatch, onDone }) {
       <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
           <Field label="Date" required>
-            <input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} />
+            <DateField value={form.date} onChange={v => set("date", v)} />
           </Field>
           <Field label="Project (optional)">
             <select value={form.projectId} onChange={e=>set("projectId",e.target.value)} style={inp}>
@@ -1726,7 +1726,7 @@ function TransferForm({ db, dispatch, onDone }) {
       <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
           <Field label="Date" required>
-            <input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} />
+            <DateField value={form.date} onChange={v => set("date", v)} />
           </Field>
           <Field label="From Shed" required>
             <select value={form.fromLocation} onChange={e=>{ set("fromLocation",e.target.value); set("itemId",""); }} style={inp}>
@@ -1852,7 +1852,7 @@ function AdjustForm({ db, dispatch, onDone }) {
       <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
           <Field label="Date" required>
-            <input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={inp} />
+            <DateField value={form.date} onChange={v => set("date", v)} />
           </Field>
           <Field label="Location" required>
             <select value={form.location} onChange={e=>set("location",e.target.value)} style={inp}>
@@ -1984,7 +1984,7 @@ function YearEndCount({ db }) {
           <Field label="Group">
             <select value={selectedGroup} onChange={e=>setSelectedGroup(e.target.value)} style={{ ...inp, margin:0, maxWidth:220 }}>
               <option value="__all__">All Groups (multi-page)</option>
-              {grouped.map(([g])=><option key={g} value={g}>{g}</option>)}
+              {grouped.map(([g])=><option key={g} value={g}>{titleCase(g)}</option>)}
             </select>
           </Field>
           <button onClick={handlePrint} style={{ ...btn.primary, marginTop:20 }}>🖨 Print</button>
