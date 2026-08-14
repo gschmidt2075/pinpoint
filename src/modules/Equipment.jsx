@@ -1,6 +1,9 @@
 import { useState, useMemo } from "react";
 import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm, SearchSelect } from "../components/shared.jsx";
-import { createEquipmentUnit, createWorkOrder, createPMLog } from "../data/schema.js";
+import { createEquipmentUnit, createWorkOrder, createPMLog, createPMSchedule,
+         createEquipmentPart, createEquipmentFluid, createEquipmentTire,
+         EQUIPMENT_PART_KINDS, EQUIPMENT_FLUID_KINDS, TIRE_POSITIONS, FUEL_TYPES,
+         PM_PRESETS, PM_PRESET_LABELS, laborRateFor } from "../data/schema.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const EQUIPMENT_TYPES = [
@@ -74,6 +77,10 @@ function StatusChip({ status }) {
   return <span style={{ background:m.bg, color:m.color, padding:"2px 9px", borderRadius:99, fontSize:11, fontWeight:700 }}>{m.label}</span>;
 }
 
+// Today, as the app writes dates. Most entries are for today, so forms open on
+// it rather than blank — a blank date input is a small tax paid on every row.
+const today = () => new Date().toISOString().split("T")[0];
+
 function fmtDate(str) {
   if (!str) return "—";
   const [y,m,d] = str.split("-");
@@ -110,6 +117,7 @@ export default function Equipment({ db, dispatch }) {
         unit={units.find(u=>u.id===selectedWO.unitId)}
         invItems={invItems}
         invBatches={invBatches}
+        db={db}
         dispatch={dispatch}
         onBack={() => setSelectedWOId(null)}
       />
@@ -342,8 +350,10 @@ function UnitDetail({ unit, workOrders, pmLogs, dispensing, invItems, invBatches
 
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:16, flexWrap:"wrap", gap:12 }}>
         <div>
-          <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.08em", color:"#888", marginBottom:3 }}>Unit {unit.unitNumber||"—"}</div>
-          <div style={{ fontSize:20, fontWeight:700 }}>{unit.year} {unit.make} {unit.model}</div>
+          <div style={{ fontSize:28, fontWeight:800, fontFamily:"monospace", color:"#1a3a5c", lineHeight:1.1 }}>
+            {unit.unitNumber||"—"}
+          </div>
+          <div style={{ fontSize:14, color:"#555", marginTop:2 }}>{[unit.year,unit.make,unit.model].filter(Boolean).join(" ")}</div>
           {unit.serialNumber && <div style={{ fontSize:12, color:"#888", fontFamily:"monospace", marginTop:3 }}>S/N: {unit.serialNumber}</div>}
         </div>
         <div style={{ display:"flex", gap:10, alignItems:"center" }}>
@@ -553,8 +563,11 @@ function UnitOverview({ unit: u, workOrders, dispensing }) {
       <SectionCard title="Cost Accounting">
         <div style={{ padding:"0 2px" }}>
           {[
-            ["FEMA Rate",     u.femaRate?`${fmtSm(u.femaRate)}/hr`:"Not set"],
-            ["Internal Rate", u.internalRate?`${fmtSm(u.internalRate)}/hr`:"Not set"],
+            ["Hourly Rate",   u.femaRate?`${fmtSm(u.femaRate)}/hr`:"Not set"],
+            ["Purchase Price", u.purchasePrice?fmt(u.purchasePrice):"Not recorded"],
+            ["Hours Since Acquired", (u.startingMeter || u.startingMeter === 0) && u.currentMeter
+              ? `${Math.max(0, (Number(u.currentMeter)||0) - (Number(u.startingMeter)||0)).toLocaleString()} ${u.meterType==="miles"?"mi":"hr"}`
+              : "—"],
           ].map(([label,val])=>(
             <div key={label} style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:"1px solid #f0f0ee", fontSize:13 }}>
               <span style={{ color:"#666" }}>{label}</span>
@@ -682,7 +695,7 @@ function WOForm({ unit, onSave, onCancel }) {
 }
 
 // ── Work Order Detail ─────────────────────────────────────────────────────────
-function WorkOrderDetail({ wo, unit, invItems, invBatches, dispatch, onBack }) {
+function WorkOrderDetail({ wo, unit, invItems, invBatches, db, dispatch, onBack }) {
   const [tab, setTab] = useState("labor");
   const priorityMeta = WO_PRIORITIES.find(p=>p.value===wo.priority)||{ color:"#888" };
 
@@ -698,10 +711,16 @@ function WorkOrderDetail({ wo, unit, invItems, invBatches, dispatch, onBack }) {
 
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:16, flexWrap:"wrap", gap:12 }}>
         <div>
-          <div style={{ fontSize:11, fontFamily:"monospace", color:"#888", marginBottom:3 }}>{wo.workOrderNumber}</div>
-          <div style={{ fontSize:18, fontWeight:700 }}>{wo.description||"Work Order"}</div>
-          <div style={{ fontSize:13, color:"#666", marginTop:3 }}>
-            {unit?`${unit.unitNumber} — ${unit.year||""} ${unit.make||""} ${unit.model||""}`.trim():wo.unitDescription}
+          <div style={{ fontSize:24, fontWeight:800, fontFamily:"monospace", color:"#1a3a5c", lineHeight:1.15 }}>
+            {wo.workOrderNumber||"—"}
+          </div>
+          <div style={{ fontSize:13, color:"#555", marginTop:2 }}>
+            {unit ? <strong style={{ fontFamily:"monospace", color:"#1a3a5c" }}>Unit {unit.unitNumber}</strong> : null}
+            {unit && wo.description ? " · " : ""}
+            <span style={{ color:"#777" }}>{wo.description||"Work Order"}</span>
+          </div>
+          <div style={{ fontSize:11, color:"#999", marginTop:3 }}>
+            {unit ? [unit.year,unit.make,unit.model].filter(Boolean).join(" ") : wo.unitDescription}
           </div>
         </div>
         <div style={{ display:"flex", gap:10, alignItems:"center" }}>
@@ -735,7 +754,7 @@ function WorkOrderDetail({ wo, unit, invItems, invBatches, dispatch, onBack }) {
         ))}
       </div>
 
-      {tab==="labor"   && <WOLaborTab   wo={wo} dispatch={dispatch} />}
+      {tab==="labor"   && <WOLaborTab   wo={wo} db={db} dispatch={dispatch} />}
       {tab==="parts"   && <WOPartsTab   wo={wo} unit={unit} invItems={invItems} invBatches={invBatches} dispatch={dispatch} />}
       {tab==="service" && <WOServiceTab wo={wo} dispatch={dispatch} />}
     </div>
@@ -743,56 +762,157 @@ function WorkOrderDetail({ wo, unit, invItems, invBatches, dispatch, onBack }) {
 }
 
 // ── WO Labor tab ──────────────────────────────────────────────────────────────
-function WOLaborTab({ wo, dispatch }) {
+// Labor on a work order is the same labor as anywhere else: a real employee,
+// their classification on that date, and the rate in force then. This used to
+// take a typed name and a typed rate — it never received the employee list at
+// all, so the shop was retyping what the system already knew and could get
+// wrong in a way nothing would catch.
+function WOLaborTab({ wo, db = {}, dispatch }) {
   const [showForm, setShowForm] = useState(false);
+  const [justAdded, setJustAdded] = useState(0);
   const entries = wo.laborEntries || [];
 
-  const [form, setForm] = useState({ date:"", employeeName:"", hoursWorked:"", hourlyRate:"", notes:"" });
-  const set = (k,v) => setForm(f=>({...f,[k]:v}));
-  const cost = (parseFloat(form.hoursWorked)||0)*(parseFloat(form.hourlyRate)||0);
+  const employees = (db.employees || []).filter(e => e.active !== false);
+  const payScales = db.payScales || [];
 
-  const handleSave = () => {
-    if (!form.date||!form.employeeName||!form.hoursWorked) return;
+  const EMPTY = { date: today(), employeeId:"", hoursWorked:"", overtimeHours:"", notes:"" };
+  const [form, setForm] = useState(EMPTY);
+  const set = (k,v) => setForm(f=>({...f,[k]:v}));
+
+  const employee = employees.find(e => e.id === form.employeeId);
+  // Resolved for the entry's OWN date, so a repair logged after a raise still
+  // costs what it cost on the day.
+  const resolved = employee ? laborRateFor(employee, form.date || today(), payScales) : null;
+
+  const st   = parseFloat(form.hoursWorked)   || 0;
+  const ot   = parseFloat(form.overtimeHours) || 0;
+  const cost = resolved ? st * resolved.loadedRate + ot * (resolved.overtimeRate + resolved.fringePerHour) : 0;
+
+  const canSave = form.date && form.employeeId && (st > 0 || ot > 0);
+
+  const handleSave = ({ keepOpen } = {}) => {
+    if (!canSave) return;
     const entry = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
-      date: form.date, employeeName: form.employeeName,
-      hoursWorked: parseFloat(form.hoursWorked)||0,
-      hourlyRate:  parseFloat(form.hourlyRate)||0,
-      totalCost:   cost, notes: form.notes,
-      createdAt:   new Date().toISOString(),
+      date: form.date,
+      employeeId:     employee.id,
+      employeeName:   employee.name || [employee.firstName, employee.lastName].filter(Boolean).join(" "),
+      classification: resolved?.classification || "",
+      hoursWorked:    st,
+      overtimeHours:  ot,
+      hourlyRate:     resolved?.hourlyRate  || 0,
+      fringePerHour:  resolved?.fringePerHour || 0,
+      loadedRate:     resolved?.loadedRate  || 0,
+      rateSource:     resolved?.rateSource  || "",
+      totalCost:      cost,
+      notes:          form.notes,
+      createdAt:      new Date().toISOString(),
     };
     dispatch({ type:"ADD_WORK_ORDER_ENTRY", payload:{ workOrderId:wo.id, entryType:"laborEntries", entry } });
-    setForm({ date:"", employeeName:"", hoursWorked:"", hourlyRate:"", notes:"" });
-    setShowForm(false);
+    // Keep the date so a run of entries for one day doesn't mean retyping it.
+    setForm(f => ({ ...EMPTY, date: f.date }));
+    setJustAdded(n => n + 1);
+    if (!keepOpen) setShowForm(false);
   };
 
   return (
     <div>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
         <div style={{ fontSize:13 }}>Total labor: <strong style={{ color:"#1a6b35" }}>{fmtSm(wo.totalLaborCost||0)}</strong></div>
-        <button onClick={()=>setShowForm(s=>!s)} style={btn.primary}>{showForm?"Cancel":"+ Add Labor"}</button>
+        <button onClick={()=>{ setShowForm(s=>!s); setJustAdded(0); }} style={btn.primary}>{showForm?"Done":"+ Add Labor"}</button>
       </div>
-      {showForm && (
+
+      {showForm && employees.length === 0 && (
+        <div style={{ background:"#fef8e8", border:"1px solid #f0d080", borderRadius:8, padding:"12px 16px", marginBottom:16, fontSize:13, color:"#7a4f00" }}>
+          No employees on file yet. Add them under <strong>Employees</strong> and their classification and rate
+          will fill in here automatically.
+        </div>
+      )}
+
+      {showForm && employees.length > 0 && (
         <div style={{ background:"#f7f7f5", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:16 }}>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr 1fr 1fr", gap:12, marginBottom:12 }}>
-            <Field label="Date"><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
-            <Field label="Employee"><input type="text" value={form.employeeName} onChange={e=>set("employeeName",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
-            <Field label="Hours"><input type="number" min="0" step="0.25" value={form.hoursWorked} onChange={e=>set("hoursWorked",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
-            <Field label="Rate ($/hr)"><input type="number" min="0" step="0.01" value={form.hourlyRate} onChange={e=>set("hourlyRate",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
-            <Field label="Cost"><div style={{ ...inp, margin:0, background:"#fff", fontFamily:"monospace", fontWeight:700, color:"#1a6b35" }}>{fmtSm(cost)}</div></Field>
+          {justAdded > 0 && (
+            <div style={{ background:"#e6f4ec", border:"1px solid #a8d5b5", borderRadius:6, padding:"7px 12px", marginBottom:12, fontSize:12, color:"#1a6b35", fontWeight:600 }}>
+              ✓ {justAdded} {justAdded===1?"entry":"entries"} added — the form stays open, keep going
+            </div>
+          )}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1.4fr", gap:12, marginBottom:12 }}>
+            <Field label="Date" required>
+              <input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} />
+            </Field>
+            <Field label="Employee" required>
+              <SearchSelect
+                items={employees}
+                value={form.employeeId}
+                onChange={id=>set("employeeId",id)}
+                placeholder="Type a name…"
+                getLabel={e=>e.name || [e.firstName,e.lastName].filter(Boolean).join(" ")}
+                getSearch={e=>`${e.name||""} ${e.firstName||""} ${e.lastName||""} ${e.employeeNumber||""}`}
+                renderRow={e=>(
+                  <div style={{ display:"flex", justifyContent:"space-between", gap:10 }}>
+                    <span>{e.name || [e.firstName,e.lastName].filter(Boolean).join(" ")}</span>
+                    <span style={{ fontFamily:"monospace", color:"#888", fontSize:11 }}>{e.employeeNumber||""}</span>
+                  </div>
+                )}
+              />
+            </Field>
+            <Field label="Classification">
+              <div style={{ ...inp, margin:0, background:"#fff", color: resolved?.classification ? "#1a1a1a" : "#bbb" }}>
+                {resolved?.classification || "—"}
+              </div>
+            </Field>
           </div>
-          <div style={{ display:"flex", gap:10 }}>
-            <Field label="Notes" style={{ flex:1 }}><input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
-            <button onClick={handleSave} style={{ ...btn.primary, marginTop:20 }}>Add</button>
+
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:12, marginBottom:12 }}>
+            <Field label="Straight Hours">
+              <input type="number" min="0" step="0.25" value={form.hoursWorked} onChange={e=>set("hoursWorked",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} />
+            </Field>
+            <Field label="Overtime Hours">
+              <input type="number" min="0" step="0.25" value={form.overtimeHours} onChange={e=>set("overtimeHours",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} />
+            </Field>
+            <Field label="Loaded Rate">
+              <div style={{ ...inp, margin:0, background:"#fff", fontFamily:"monospace", color: resolved ? "#1a1a1a" : "#bbb" }}>
+                {resolved ? `${fmtSm(resolved.loadedRate)}/hr` : "—"}
+              </div>
+            </Field>
+            <Field label="Cost">
+              <div style={{ ...inp, margin:0, background:"#fff", fontFamily:"monospace", fontWeight:700, color:"#1a6b35" }}>{fmtSm(cost)}</div>
+            </Field>
+          </div>
+
+          {resolved && (
+            <div style={{ fontSize:11, color:"#888", marginBottom:12 }}>
+              {fmtSm(resolved.hourlyRate)}/hr base + {fmtSm(resolved.fringePerHour)}/hr fringe
+              {resolved.scaleDate ? ` · scale effective ${fmtDate(resolved.scaleDate)}` : ""}
+              {resolved.rateSource === "employee" ? " · rate set on the employee record" : ""}
+            </div>
+          )}
+
+          <div style={{ display:"flex", gap:10, alignItems:"flex-end" }}>
+            <Field label="Notes" style={{ flex:1 }}>
+              <input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={{ ...inp, margin:0 }} />
+            </Field>
+            <button onClick={()=>handleSave({ keepOpen:true })} disabled={!canSave}
+              style={{ ...btn.primary, opacity: canSave?1:0.45, cursor: canSave?"pointer":"not-allowed" }}>
+              Add &amp; keep going
+            </button>
+            <button onClick={()=>handleSave()} disabled={!canSave}
+              style={{ ...btn.ghost, opacity: canSave?1:0.45, cursor: canSave?"pointer":"not-allowed" }}>
+              Add &amp; close
+            </button>
           </div>
         </div>
       )}
+
       <Table
-        headers={[{label:"Date"},{label:"Employee"},{label:"Hours"},{label:"Rate"},{label:"Cost"},{label:"Notes"}]}
+        headers={[{label:"Date"},{label:"Employee"},{label:"Classification"},{label:"Hours"},{label:"OT"},{label:"Rate"},{label:"Cost"},{label:"Notes"}]}
         rows={entries.map(e=>[
           <span style={{fontFamily:"monospace",fontSize:12}}>{fmtDate(e.date)}</span>,
-          e.employeeName, <span style={{fontFamily:"monospace"}}>{e.hoursWorked}</span>,
-          <span style={{fontFamily:"monospace"}}>{fmtSm(e.hourlyRate||0)}</span>,
+          e.employeeName,
+          <span style={{fontSize:12,color:"#666"}}>{e.classification||"—"}</span>,
+          <span style={{fontFamily:"monospace"}}>{e.hoursWorked}</span>,
+          <span style={{fontFamily:"monospace",color:e.overtimeHours?"#d97706":"#ccc"}}>{e.overtimeHours||"—"}</span>,
+          <span style={{fontFamily:"monospace"}}>{fmtSm(e.loadedRate||e.hourlyRate||0)}</span>,
           <span style={{fontFamily:"monospace",fontWeight:700}}>{fmtSm(e.totalCost||0)}</span>,
           <span style={{fontSize:12,color:"#888"}}>{e.notes||"—"}</span>,
         ])}
@@ -1034,7 +1154,8 @@ function buildFIFO(itemId, qty, batches) {
 // not standard cost, and issuing decrements the batches.
 function WOPartsTab({ wo, unit, invItems, invBatches, dispatch }) {
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm]         = useState({ date:"", itemId:"", quantity:"", notes:"" });
+  const [justAdded, setJustAdded] = useState(0);
+  const [form, setForm]         = useState({ date: today(), itemId:"", quantity:"", notes:"" });
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
   const entries = wo.partEntries || [];
@@ -1056,7 +1177,7 @@ function WOPartsTab({ wo, unit, invItems, invBatches, dispatch }) {
   const preview  = form.itemId && qty > 0 ? buildFIFO(form.itemId, qty, invBatches) : null;
   const canSave  = form.date && form.itemId && qty > 0 && preview?.canFulfill;
 
-  const handleSave = () => {
+  const handleSave = ({ keepOpen } = {}) => {
     if (!canSave) return;
     const entryId = `${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
     const entry = {
@@ -1094,15 +1215,17 @@ function WOPartsTab({ wo, unit, invItems, invBatches, dispatch }) {
       },
     });
 
-    setForm({ date:"", itemId:"", quantity:"", notes:"" });
-    setShowForm(false);
+    // Keep the date — a run of parts on one job shouldn't mean retyping it.
+    setForm(f => ({ date: f.date, itemId:"", quantity:"", notes:"" }));
+    setJustAdded(n => n + 1);
+    if (!keepOpen) setShowForm(false);
   };
 
   return (
     <div>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
         <div style={{ fontSize:13 }}>Total parts: <strong style={{ color:"#5a1a8a" }}>{fmtSm(wo.totalPartsCost||0)}</strong></div>
-        <button onClick={()=>setShowForm(s=>!s)} style={btn.primary}>{showForm?"Cancel":"+ Add Part"}</button>
+        <button onClick={()=>{ setShowForm(s=>!s); setJustAdded(0); }} style={btn.primary}>{showForm?"Done":"+ Add Part"}</button>
       </div>
 
       {showForm && (
@@ -1110,6 +1233,11 @@ function WOPartsTab({ wo, unit, invItems, invBatches, dispatch }) {
           <div style={{ fontSize:11, color:"#888", marginBottom:12 }}>
             Parts are issued from inventory at FIFO cost. If it isn't in the catalog, add it in Inventory first.
           </div>
+          {justAdded > 0 && (
+            <div style={{ background:"#e6f4ec", border:"1px solid #a8d5b5", borderRadius:6, padding:"7px 12px", marginBottom:12, fontSize:12, color:"#1a6b35", fontWeight:600 }}>
+              ✓ {justAdded} {justAdded===1?"part":"parts"} issued — the form stays open, keep going
+            </div>
+          )}
 
           <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:12, marginBottom:12 }}>
             <Field label="Date"><input type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
@@ -1170,9 +1298,16 @@ function WOPartsTab({ wo, unit, invItems, invBatches, dispatch }) {
             </div>
           )}
 
-          <button onClick={handleSave} disabled={!canSave} style={{ ...btn.primary, opacity: canSave ? 1 : 0.4 }}>
-            Issue to Work Order
-          </button>
+          <div style={{ display:"flex", gap:10 }}>
+            <button onClick={()=>handleSave({ keepOpen:true })} disabled={!canSave}
+              style={{ ...btn.primary, opacity: canSave ? 1 : 0.4, cursor: canSave?"pointer":"not-allowed" }}>
+              Issue &amp; keep going
+            </button>
+            <button onClick={()=>handleSave()} disabled={!canSave}
+              style={{ ...btn.ghost, opacity: canSave ? 1 : 0.4, cursor: canSave?"pointer":"not-allowed" }}>
+              Issue &amp; close
+            </button>
+          </div>
         </div>
       )}
 
@@ -1197,7 +1332,7 @@ function WOPartsTab({ wo, unit, invItems, invBatches, dispatch }) {
 function WOServiceTab({ wo, dispatch }) {
   const [showForm, setShowForm] = useState(false);
   const entries = wo.serviceEntries || [];
-  const [form, setForm] = useState({ date:"", vendorName:"", description:"", invoiceNumber:"", amount:"", expenditureRef:"", notes:"" });
+  const [form, setForm] = useState({ date: today(), vendorName:"", description:"", invoiceNumber:"", amount:"", expenditureRef:"", notes:"" });
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
   const handleSave = () => {
@@ -1209,7 +1344,7 @@ function WOServiceTab({ wo, dispatch }) {
       expenditureRef: form.expenditureRef, notes: form.notes, createdAt: new Date().toISOString(),
     };
     dispatch({ type:"ADD_WORK_ORDER_ENTRY", payload:{ workOrderId:wo.id, entryType:"serviceEntries", entry } });
-    setForm({ date:"", vendorName:"", description:"", invoiceNumber:"", amount:"", expenditureRef:"", notes:"" });
+    setForm({ date: today(), vendorName:"", description:"", invoiceNumber:"", amount:"", expenditureRef:"", notes:"" });
     setShowForm(false);
   };
 
@@ -1255,7 +1390,7 @@ function WOServiceTab({ wo, dispatch }) {
 // ── Unit PM ───────────────────────────────────────────────────────────────────
 function UnitPM({ unit, pmLogs, dispatch }) {
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ date:"", service:"", meterReading:"", performedBy:"", cost:"", notes:"" });
+  const [form, setForm] = useState({ date: today(), service:"", meterReading:"", performedBy:"", cost:"", notes:"" });
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
   const handleSave = () => {
@@ -1266,7 +1401,7 @@ function UnitPM({ unit, pmLogs, dispatch }) {
       meterReading:parseFloat(form.meterReading)||0, performedBy:form.performedBy,
       cost:parseFloat(form.cost)||0, notes:form.notes, createdAt:new Date().toISOString(),
     }});
-    setForm({ date:"", service:"", meterReading:"", performedBy:"", cost:"", notes:"" });
+    setForm({ date: today(), service:"", meterReading:"", performedBy:"", cost:"", notes:"" });
     setShowForm(false);
   };
 
@@ -1403,7 +1538,7 @@ function FuelLogTab({ dispensing, units, tanks, tankTx, departments, dispatch })
   const [showForm, setShowForm] = useState(false);
   const [view, setView]         = useState("log");   // log | billing
   const EMPTY = {
-    date:"", consumer:"county_equipment",
+    date: today(), consumer:"county_equipment",
     equipmentId:"", meterReading:"",
     departmentName:"", outsideVehicle:"", outsideOdometer:"",
     fuelType:"diesel", gallons:"", pumpedBy:"", taxClass:"off_road",
@@ -1782,7 +1917,7 @@ function FuelBilling({ dispensing, dispatch }) {
 function TanksTab({ tanks, tankTx, dispensing, dispatch }) {
   const [showNew, setShowNew] = useState(false);
   const [selectedTankId, setSelectedTankId] = useState(null);
-  const [txForm, setTxForm] = useState({ type:"delivery", date:"", tankId:"", sourceTankId:"", gallons:"", vendorName:"", invoiceNumber:"", unitCost:"", dipReading:"", notes:"" });
+  const [txForm, setTxForm] = useState({ type:"delivery", date: today(), tankId:"", sourceTankId:"", gallons:"", vendorName:"", invoiceNumber:"", unitCost:"", dipReading:"", notes:"" });
   const setTx = (k,v) => setTxForm(f=>({...f,[k]:v}));
 
   // What a tank's fuel cost per gallon, taken from its most recent delivery.
@@ -1848,7 +1983,7 @@ function TanksTab({ tanks, tankTx, dispensing, dispatch }) {
       variance: (txForm.type==="dip_reading"||txForm.type==="monitor_reading") ? (parseFloat(txForm.dipReading)||0) - ((tank?.currentLevel)||0) : 0,
       notes:txForm.notes, createdAt:new Date().toISOString(),
     }});
-    setTxForm({ type:"delivery", date:"", tankId:"", sourceTankId:"", gallons:"", vendorName:"", invoiceNumber:"", unitCost:"", dipReading:"", notes:"" });
+    setTxForm({ type:"delivery", date: today(), tankId:"", sourceTankId:"", gallons:"", vendorName:"", invoiceNumber:"", unitCost:"", dipReading:"", notes:"" });
     setShowTxForm(false);
   };
 
@@ -2100,16 +2235,33 @@ function UnitForm({ unit, onSave, onCancel }) {
           </Field>
           <Field label="Date Acquired"><input type="date" value={form.dateAcquired} onChange={e=>set("dateAcquired",e.target.value)} style={inp} /></Field>
         </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:14, marginTop:14 }}>
+          <Field label="Fuel Type">
+            <select value={form.fuelType||"diesel"} onChange={e=>set("fuelType",e.target.value)} style={inp}>
+              {FUEL_TYPES.map(f=><option key={f.value} value={f.value}>{f.label}</option>)}
+            </select>
+          </Field>
+          <Field label={`Starting Meter (${form.meterType==="miles"?"miles":"hours"})`}>
+            <input type="number" min="0" step="any" value={form.startingMeter||0}
+              onChange={e=>set("startingMeter",parseFloat(e.target.value)||0)} style={{ ...inp, fontFamily:"monospace" }} />
+            <div style={{ fontSize:11, color:"#888", marginTop:4 }}>What it read when the county got it.</div>
+          </Field>
+          <Field label="Engine Make"><input type="text" value={form.engineMake||""} onChange={e=>set("engineMake",e.target.value)} style={inp} placeholder="Cat, Cummins…" /></Field>
+          <Field label="Engine Model / Size"><input type="text" value={form.engineModel||""} onChange={e=>set("engineModel",e.target.value)} style={inp} placeholder="C9 ACERT, 6.7L…" /></Field>
+        </div>
       </div>
+
+      <SpecLists form={form} set={set} />
+      <PMScheduleEditor form={form} set={set} />
 
       <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:14 }}>
         <div style={{ fontWeight:700, fontSize:11, textTransform:"uppercase", letterSpacing:"0.06em", color:"#888", marginBottom:14 }}>Cost Accounting</div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14 }}>
-          <Field label="FEMA Rate ($/hr)">
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+          <Field label="Hourly Rate ($/hr)">
             <input type="number" min="0" step="0.01" value={form.femaRate} onChange={e=>set("femaRate",parseFloat(e.target.value)||0)} style={{ ...inp, fontFamily:"monospace" }} />
-          </Field>
-          <Field label="Internal Rate ($/hr)">
-            <input type="number" min="0" step="0.01" value={form.internalRate} onChange={e=>set("internalRate",parseFloat(e.target.value)||0)} style={{ ...inp, fontFamily:"monospace" }} />
+            <div style={{ fontSize:11, color:"#888", marginTop:4 }}>
+              The published FEMA rate, used for internal costing too — they were always the same number.
+            </div>
           </Field>
           <Field label="Purchase Price ($)">
             <input type="number" min="0" step="100" value={form.purchasePrice} onChange={e=>set("purchasePrice",parseFloat(e.target.value)||0)} style={{ ...inp, fontFamily:"monospace" }} />
@@ -2138,6 +2290,209 @@ function UnitForm({ unit, onSave, onCancel }) {
         <button onClick={()=>onSave(form)} style={btn.primary}>{unit?"Save Changes":"Add Unit"}</button>
         <button onClick={onCancel} style={btn.ghost}>Cancel</button>
       </div>
+    </div>
+  );
+}
+
+// ── Specification lists ───────────────────────────────────────────────────────
+//
+// Filters, fluids and tires, as repeatable rows rather than fixed fields. A
+// motor grader has three hydraulic filters and a pickup has one oil filter, so
+// any fixed set of columns is wrong for something the day it ships.
+//
+// The OEM number earns its place here: the county often buys aftermarket, but
+// every cross-reference is keyed on the OEM part, so it is the number you need
+// when you are on the phone to a supplier with the machine down.
+function SpecRows({ title, hint, rows, columns, onAdd, onChange, onRemove, addLabel }) {
+  return (
+    <div style={{ marginBottom:18 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:6 }}>
+        <div>
+          <div style={{ fontWeight:700, fontSize:12 }}>{title}</div>
+          {hint && <div style={{ fontSize:11, color:"#888", marginTop:2 }}>{hint}</div>}
+        </div>
+        <button type="button" onClick={onAdd} style={{ ...btn.ghost, fontSize:11, padding:"4px 10px" }}>{addLabel}</button>
+      </div>
+      {rows.length === 0 ? (
+        <div style={{ fontSize:12, color:"#bbb", padding:"10px 0", borderTop:"1px solid #f0f0ee" }}>None recorded</div>
+      ) : rows.map((row, i) => (
+        <div key={row.id} style={{ display:"grid", gridTemplateColumns:`${columns.map(c=>c.width||"1fr").join(" ")} 28px`, gap:8, alignItems:"end", marginBottom:6 }}>
+          {columns.map(c => (
+            <div key={c.key}>
+              {i === 0 && <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:"#aaa", marginBottom:3 }}>{c.label}</div>}
+              {c.options ? (
+                <select value={row[c.key] ?? ""} onChange={e=>onChange(row.id, c.key, e.target.value)} style={{ ...inp, margin:0, fontSize:12 }}>
+                  {c.options.map(o => typeof o === "string"
+                    ? <option key={o} value={o}>{o}</option>
+                    : <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              ) : (
+                <input
+                  type={c.type || "text"}
+                  value={row[c.key] ?? ""}
+                  min={c.type === "number" ? 0 : undefined}
+                  step={c.type === "number" ? "any" : undefined}
+                  placeholder={c.placeholder || ""}
+                  onChange={e=>onChange(row.id, c.key, c.type === "number" ? (parseFloat(e.target.value)||0) : e.target.value)}
+                  style={{ ...inp, margin:0, fontSize:12, fontFamily: c.mono ? "monospace" : undefined }} />
+              )}
+            </div>
+          ))}
+          <button type="button" onClick={()=>onRemove(row.id)} title="Remove"
+            style={{ ...btn.ghost, padding:"7px 0", fontSize:13, color:"#c0392b", borderColor:"#f0d0d0" }}>×</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SpecLists({ form, set }) {
+  const listOps = (key, factory) => ({
+    onAdd:    () => set(key, [...(form[key] || []), factory()]),
+    onChange: (id, field, value) => set(key, (form[key] || []).map(r => r.id === id ? { ...r, [field]: value } : r)),
+    onRemove: (id) => set(key, (form[key] || []).filter(r => r.id !== id)),
+  });
+
+  return (
+    <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:14 }}>
+      <div style={{ fontWeight:700, fontSize:11, textTransform:"uppercase", letterSpacing:"0.06em", color:"#888", marginBottom:14 }}>
+        What This Machine Takes
+      </div>
+
+      <SpecRows
+        title="Filters & serviceable parts"
+        hint="OEM number is what cross-references are keyed on, even when you buy aftermarket."
+        rows={form.filters || []} addLabel="+ Filter"
+        {...listOps("filters", createEquipmentPart)}
+        columns={[
+          { key:"kind",     label:"Type",     options:EQUIPMENT_PART_KINDS, width:"1.4fr" },
+          { key:"position", label:"Position", placeholder:"primary, left…", width:"1fr" },
+          { key:"oemPartNumber",       label:"OEM Part #",   mono:true, width:"1.2fr" },
+          { key:"alternatePartNumber", label:"Aftermarket #", mono:true, width:"1.2fr" },
+          { key:"quantity", label:"Qty",      type:"number", mono:true, width:"0.5fr" },
+        ]}
+      />
+
+      <SpecRows
+        title="Fluids & capacities"
+        hint="Capacity is the point — how much to draw when the machine is down."
+        rows={form.fluids || []} addLabel="+ Fluid"
+        {...listOps("fluids", createEquipmentFluid)}
+        columns={[
+          { key:"kind",          label:"Fluid", options:EQUIPMENT_FLUID_KINDS, width:"1.3fr" },
+          { key:"specification", label:"Spec",  placeholder:"15W-40, TO-4 30wt…", width:"1.4fr" },
+          { key:"capacity",      label:"Capacity", type:"number", mono:true, width:"0.7fr" },
+          { key:"unitOfMeasure", label:"Unit",  options:["QT","GAL","L"], width:"0.6fr" },
+        ]}
+      />
+
+      <SpecRows
+        title="Tires"
+        hint="Front and rear usually differ on this equipment, so position is part of the answer."
+        rows={form.tires || []} addLabel="+ Tire"
+        {...listOps("tires", createEquipmentTire)}
+        columns={[
+          { key:"position", label:"Position", options:TIRE_POSITIONS, width:"0.8fr" },
+          { key:"size",     label:"Size",     placeholder:"14.00R24", mono:true, width:"1.2fr" },
+          { key:"ply",      label:"Ply",      width:"0.5fr" },
+          { key:"quantity", label:"Qty",      type:"number", mono:true, width:"0.5fr" },
+          { key:"pressure", label:"PSI cold", mono:true, width:"0.7fr" },
+        ]}
+      />
+    </div>
+  );
+}
+
+// ── PM schedule editor ────────────────────────────────────────────────────────
+//
+// Until now schedules were read but never editable, so nothing tied a meter
+// reading to a service and the PM Due list could only ever be empty.
+//
+// A machine has SEVERAL schedules at once — a grader is serviced at 250, 500
+// and 1000 hours, each a different job — so this is a list, and each row keeps
+// its own last-done reading. Closing a work order stamps the row it satisfied.
+function PMScheduleEditor({ form, set }) {
+  const rows = form.pmSchedule || [];
+  const unitWord = form.meterType === "miles" ? "miles" : "hours";
+
+  const add    = (preset) => set("pmSchedule", [...rows, createPMSchedule({ equipmentId: form.id, ...preset })]);
+  const change = (id, field, value) => set("pmSchedule", rows.map(r => r.id === id ? { ...r, [field]: value } : r));
+  const remove = (id) => set("pmSchedule", rows.filter(r => r.id !== id));
+
+  const applyPreset = (key) => {
+    const preset = PM_PRESETS[key] || [];
+    set("pmSchedule", [
+      ...rows,
+      ...preset
+        .filter(p => !rows.some(r => r.service === p.service))
+        .map(p => createPMSchedule({ equipmentId: form.id, ...p })),
+    ]);
+  };
+
+  return (
+    <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:14 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:6, flexWrap:"wrap", gap:10 }}>
+        <div>
+          <div style={{ fontWeight:700, fontSize:11, textTransform:"uppercase", letterSpacing:"0.06em", color:"#888" }}>
+            Preventive Maintenance Intervals
+          </div>
+          <div style={{ fontSize:11, color:"#888", marginTop:3 }}>
+            What drives the PM Due list. A machine can have several — 250, 500 and 1000 {unitWord} are different jobs.
+          </div>
+        </div>
+        <button type="button" onClick={()=>add({ intervalType: form.meterType || "hours" })}
+          style={{ ...btn.ghost, fontSize:11, padding:"4px 10px" }}>+ Interval</button>
+      </div>
+
+      {rows.length === 0 && (
+        <div style={{ background:"#f7f7f5", border:"1px dashed #ccc", borderRadius:6, padding:14, marginBottom:12 }}>
+          <div style={{ fontSize:12, color:"#666", marginBottom:8 }}>
+            No intervals set, so this machine will never appear on the PM Due list. Start from a standard set:
+          </div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            {Object.keys(PM_PRESETS).map(k=>(
+              <button key={k} type="button" onClick={()=>applyPreset(k)}
+                style={{ ...btn.small, background:"#f0f0ee", color:"#555", fontSize:11 }}>
+                {PM_PRESET_LABELS?.[k] || k.replace(/_/g," ")}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {rows.map((r,i) => (
+        <div key={r.id} style={{ display:"grid", gridTemplateColumns:"1.6fr 0.8fr 0.9fr 0.9fr 1fr 28px", gap:8, alignItems:"end", marginBottom:6 }}>
+          {["Service","Every","Measured in","Warn ahead","Last done"].map((h,n)=>(
+            i === 0 ? <div key={h} style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:"#aaa", marginBottom:3, gridColumn:n+1 }}>{h}</div> : null
+          ))}
+          <input type="text" value={r.service||""} onChange={e=>change(r.id,"service",e.target.value)}
+            placeholder="Oil & Filter" style={{ ...inp, margin:0, fontSize:12 }} />
+          <input type="number" min="0" step="any" value={r.interval||0}
+            onChange={e=>change(r.id,"interval",parseFloat(e.target.value)||0)}
+            style={{ ...inp, margin:0, fontSize:12, fontFamily:"monospace" }} />
+          <select value={r.intervalType||"hours"} onChange={e=>change(r.id,"intervalType",e.target.value)}
+            style={{ ...inp, margin:0, fontSize:12 }}>
+            <option value="hours">hours</option>
+            <option value="miles">miles</option>
+            <option value="months">months</option>
+          </select>
+          <input type="number" min="0" step="any" value={r.warnAhead||0}
+            onChange={e=>change(r.id,"warnAhead",parseFloat(e.target.value)||0)}
+            placeholder="auto" style={{ ...inp, margin:0, fontSize:12, fontFamily:"monospace" }} />
+          <input type="number" min="0" step="any" value={r.lastDoneMeter ?? ""}
+            onChange={e=>change(r.id,"lastDoneMeter", e.target.value === "" ? null : (parseFloat(e.target.value)||0))}
+            placeholder="never" style={{ ...inp, margin:0, fontSize:12, fontFamily:"monospace" }} />
+          <button type="button" onClick={()=>remove(r.id)} title="Remove"
+            style={{ ...btn.ghost, padding:"7px 0", fontSize:13, color:"#c0392b", borderColor:"#f0d0d0" }}>×</button>
+        </div>
+      ))}
+
+      {rows.length > 0 && (
+        <div style={{ fontSize:11, color:"#888", marginTop:8, lineHeight:1.6 }}>
+          Leave <strong>warn ahead</strong> at 0 for a sensible default. <strong>Last done</strong> is the lifetime
+          meter reading at the last service — closing a PM work order fills it in from then on.
+        </div>
+      )}
     </div>
   );
 }

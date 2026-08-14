@@ -2,6 +2,10 @@ import { useState } from "react";
 import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm } from "../components/shared.jsx";
 import { createRoad, createBridge, createStructure, createStructureBarrel, createSign, createSignHistory, barrelLabel, barrelsSummary } from "../data/schema.js";
 
+
+// Most entries are for today, so date fields open on it rather than blank. A
+// blank date input is a small tax paid on every single row.
+const today = () => new Date().toISOString().split("T")[0];
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmtDate(str) {
   if (!str) return "—";
@@ -1236,7 +1240,7 @@ function SignsTab({ signs, signHistory, projects, dispatch }) {
 function SignDetail({ sign: s, history, projects, onBack, onEdit, dispatch }) {
   const [tab, setTab]   = useState("details");
   const [showHist, setShowHist] = useState(false);
-  const [hForm, setHForm] = useState({ date:"", eventType:"replacement", description:"", materialsUsed:"", performedBy:"", notes:"" });
+  const [hForm, setHForm] = useState({ date: today(), eventType:"replacement", description:"", materialsUsed:"", performedBy:"", notes:"" });
   const setH = (k,v) => setHForm(f=>({...f,[k]:v}));
 
   const saveHistory = () => {
@@ -1245,7 +1249,7 @@ function SignDetail({ sign: s, history, projects, onBack, onEdit, dispatch }) {
       id:`${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
       signId:s.id, ...hForm, createdAt:new Date().toISOString(),
     }});
-    setHForm({ date:"", eventType:"replacement", description:"", materialsUsed:"", performedBy:"", notes:"" });
+    setHForm({ date: today(), eventType:"replacement", description:"", materialsUsed:"", performedBy:"", notes:"" });
     setShowHist(false);
   };
 

@@ -30,6 +30,10 @@ const DEST_TYPES = [
 // ── FIFO Helpers ──────────────────────────────────────────────────────────────
 // Location is compared as a string because codes arrive as both "7" and 7
 // depending on whether they came from the crosswalk or a form.
+// Most entries are for today, so date fields open on it rather than blank. A
+// blank date input is a small tax paid on every single row.
+const today = () => new Date().toISOString().split("T")[0];
+
 function getOnHand(itemId, batches, location = null) {
   return batches
     .filter(b => b.itemId === itemId && b.status === "open"
@@ -864,7 +868,7 @@ function ReceiveForm({ db, dispatch, onDone }) {
   const today     = new Date().toISOString().split("T")[0];
 
   const [form, setForm] = useState({
-    date:"", itemId:"", vendorName:"", invoiceNumber:"",
+    date: today(), itemId:"", vendorName:"", invoiceNumber:"",
     quantity:"", unitCost:"", location:"", notes:"",
   });
   const [saved, setSaved] = useState(false);
@@ -915,7 +919,7 @@ function ReceiveForm({ db, dispatch, onDone }) {
       },
     });
     setSaved(true);
-    setForm({ date:"", itemId:"", vendorName:"", invoiceNumber:"", quantity:"", unitCost:"", location:"", notes:"" });
+    setForm({ date: today(), itemId:"", vendorName:"", invoiceNumber:"", quantity:"", unitCost:"", location:"", notes:"" });
     setTimeout(()=>{ setSaved(false); onDone(); }, 1400);
   };
 
@@ -985,7 +989,7 @@ function ScaleTicket({ db, dispatch, onDone }) {
   const pendingBatches = (db.inventoryBatches||[]).filter(b => b.invoiceStatus==="pending_reconciliation");
 
   const EMPTY_FORM = {
-    date:"", itemId:"", vendorName:"", ticketNumber:"",
+    date: today(), itemId:"", vendorName:"", ticketNumber:"",
     source:"", haulerName:"",
     quantity:"", unitOfMeasure:"CY",
     haulType:"county_pickup",
@@ -1498,7 +1502,7 @@ function IssueForm({ db, dispatch, onDone }) {
   const locations= db.storageLocations || [];
 
   const [form, setForm] = useState({
-    date:"", itemId:"", location:"all", quantity:"", projectId:"", notes:"",
+    date: today(), itemId:"", location:"all", quantity:"", projectId:"", notes:"",
   });
   const [preview, setPreview] = useState(null);
   const [saved, setSaved]     = useState(false);
@@ -1556,7 +1560,7 @@ function IssueForm({ db, dispatch, onDone }) {
       });
     }
     setSaved(true);
-    setForm({ date:"", itemId:"", location:"all", quantity:"", projectId:"", notes:"" });
+    setForm({ date: today(), itemId:"", location:"all", quantity:"", projectId:"", notes:"" });
     setPreview(null);
     setTimeout(()=>{ setSaved(false); onDone(); }, 1400);
   };
@@ -1659,7 +1663,7 @@ function TransferForm({ db, dispatch, onDone }) {
   // Only shed locations for transfers (no stockpiles, no portable tanks)
   const shedLocations = (db.storageLocations||[]).filter(l => l.type === "shed");
 
-  const [form, setForm] = useState({ date:"", itemId:"", fromLocation:"", toLocation:"", toEquipment:false, equipmentUnit:"", quantity:"", notes:"" });
+  const [form, setForm] = useState({ date: today(), itemId:"", fromLocation:"", toLocation:"", toEquipment:false, equipmentUnit:"", quantity:"", notes:"" });
   const [saved, setSaved] = useState(false);
   const [showEmpty, setShowEmpty] = useState(false);
   const set = (k,v) => setForm(f=>({ ...f,[k]:v }));
@@ -1707,7 +1711,7 @@ function TransferForm({ db, dispatch, onDone }) {
       },
     });
     setSaved(true);
-    setForm({ date:"", itemId:"", fromLocation:"", toLocation:"", toEquipment:false, equipmentUnit:"", quantity:"", notes:"" });
+    setForm({ date: today(), itemId:"", fromLocation:"", toLocation:"", toEquipment:false, equipmentUnit:"", quantity:"", notes:"" });
     setTimeout(()=>{ setSaved(false); onDone(); }, 1400);
   };
 
@@ -1807,7 +1811,7 @@ function AdjustForm({ db, dispatch, onDone }) {
   const locations= db.storageLocations||[];
   const batches  = db.inventoryBatches||[];
 
-  const [form, setForm] = useState({ date:"", itemId:"", location:"", quantityAdjustment:"", reason:"", notes:"" });
+  const [form, setForm] = useState({ date: today(), itemId:"", location:"", quantityAdjustment:"", reason:"", notes:"" });
   const [saved, setSaved] = useState(false);
   const set = (k,v) => setForm(f=>({ ...f,[k]:v }));
 
@@ -1834,7 +1838,7 @@ function AdjustForm({ db, dispatch, onDone }) {
       },
     });
     setSaved(true);
-    setForm({ date:"", itemId:"", location:"", quantityAdjustment:"", reason:"", notes:"" });
+    setForm({ date: today(), itemId:"", location:"", quantityAdjustment:"", reason:"", notes:"" });
     setTimeout(()=>{ setSaved(false); onDone(); }, 1400);
   };
 

@@ -500,8 +500,25 @@ export const createEquipmentUnit = (overrides = {}) => ({
   // lifetime total is still knowable: lifetime = meterOffset + currentMeter.
   meterOffset:     0,
   meterHistory:    [],           // createMeterReplacement[]
+  // One rate. The internal rate was always set equal to the FEMA published rate
+  // in practice, and two fields holding the same number is two things to keep
+  // in step and one of them to get wrong.
   femaRate:        0,            // $/hour
-  internalRate:    0,            // $/hour
+  // What the machine burns, so fuelling can be checked against the tank and a
+  // gasoline unit is never filled from the diesel tank by accident.
+  fuelType:        "diesel",     // diesel | gasoline | def | propane | electric
+  // A machine arrives with hours already on it — even a new one. Without this
+  // the first service interval is measured from the wrong place.
+  startingMeter:   0,
+  engineMake:      "",
+  engineModel:     "",
+  engineSize:      "",           // "6.7L", "C9 ACERT"
+  // Serviceable parts and capacities. Lists rather than fixed fields, because a
+  // grader has three hydraulic filters and a pickup has one oil filter — any
+  // fixed set of columns is wrong for something on day one.
+  filters:         [],           // createEquipmentPart[]
+  fluids:          [],           // createEquipmentFluid[]
+  tires:           [],           // createEquipmentTire[]
   dateAcquired:    "",
   purchasePrice:   0,
   status:          "active",     // active | out_of_service | sold
@@ -516,6 +533,97 @@ export const createEquipmentUnit = (overrides = {}) => ({
 });
 
 // PM log entry
+// ── What a machine takes ─────────────────────────────────────────────────────
+//
+// The OEM number is the one stamped on the part. It is recorded even when the
+// county buys aftermarket, because it is the number every cross-reference is
+// keyed on — you look up the OEM part to find out what fits.
+//
+// itemId optionally ties the entry to a catalog item, so the shop can see
+// whether the filter is on the shelf without leaving the machine's record.
+export const createEquipmentPart = (overrides = {}) => ({
+  id:              uid(),
+  kind:            "oil",        // see EQUIPMENT_PART_KINDS
+  position:        "",           // "primary", "secondary", "left bank" — when there is more than one
+  oemPartNumber:   "",
+  alternatePartNumber: "",       // the aftermarket equivalent actually bought
+  quantity:        1,
+  itemId:          null,         // catalog item, when it is stocked
+  notes:           "",
+  ...overrides,
+});
+
+// Filters and other regularly-changed parts. Greg listed air, oil and hydraulic;
+// the rest are the ones that also get changed on a schedule and are worth having
+// a number for when the machine is down and someone is on the phone to a supplier.
+export const EQUIPMENT_PART_KINDS = [
+  { value:"oil",           label:"Oil Filter" },
+  { value:"air_primary",   label:"Air Filter — Primary" },
+  { value:"air_secondary", label:"Air Filter — Secondary / Safety" },
+  { value:"hydraulic",     label:"Hydraulic Filter" },
+  { value:"fuel",          label:"Fuel Filter" },
+  { value:"water_separator", label:"Fuel / Water Separator" },
+  { value:"transmission",  label:"Transmission Filter" },
+  { value:"cabin_air",     label:"Cab Air Filter" },
+  { value:"coolant",       label:"Coolant Filter" },
+  { value:"def",           label:"DEF Filter" },
+  { value:"breather",      label:"Breather / Vent" },
+  { value:"belt",          label:"Belt" },
+  { value:"battery",       label:"Battery" },
+  { value:"wiper",         label:"Wiper Blade" },
+  { value:"other",         label:"Other" },
+];
+
+// Fluids and how much goes in. Capacity is the point — it is what you need at
+// 6am when the machine is down and someone has to know how many gallons to draw.
+export const createEquipmentFluid = (overrides = {}) => ({
+  id:              uid(),
+  kind:            "engine_oil", // see EQUIPMENT_FLUID_KINDS
+  specification:   "",           // "15W-40 CJ-4", "TO-4 30wt", "50/50 ELC"
+  capacity:        0,
+  unitOfMeasure:   "QT",         // QT | GAL | L
+  notes:           "",
+  ...overrides,
+});
+
+export const EQUIPMENT_FLUID_KINDS = [
+  { value:"engine_oil",     label:"Engine Oil" },
+  { value:"hydraulic",      label:"Hydraulic Oil" },
+  { value:"transmission",   label:"Transmission" },
+  { value:"coolant",        label:"Coolant" },
+  { value:"differential",   label:"Differential" },
+  { value:"final_drive",    label:"Final Drive / Planetary" },
+  { value:"transfer_case",  label:"Transfer Case" },
+  { value:"def",            label:"DEF" },
+  { value:"grease",         label:"Grease" },
+  { value:"brake",          label:"Brake Fluid" },
+  { value:"power_steering", label:"Power Steering" },
+  { value:"other",          label:"Other" },
+];
+
+// Tyre sizes differ front to back on most of this equipment, so position is
+// part of the answer rather than a detail.
+export const createEquipmentTire = (overrides = {}) => ({
+  id:              uid(),
+  position:        "front",      // front | rear | all | inner | outer | spare
+  size:            "",           // "14.00R24", "LT265/70R17"
+  ply:             "",
+  quantity:        0,
+  pressure:        "",           // cold PSI
+  itemId:          null,
+  notes:           "",
+  ...overrides,
+});
+
+export const TIRE_POSITIONS = ["front", "rear", "all", "inner", "outer", "spare"];
+
+export const FUEL_TYPES = [
+  { value:"diesel",   label:"Diesel" },
+  { value:"gasoline", label:"Gasoline" },
+  { value:"propane",  label:"Propane" },
+  { value:"electric", label:"Electric" },
+];
+
 // A meter swap. The old gauge's final reading is banked into the unit's
 // meterOffset so lifetime totals survive the replacement.
 export const createMeterReplacement = (overrides = {}) => ({

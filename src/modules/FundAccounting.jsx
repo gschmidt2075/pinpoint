@@ -4,6 +4,10 @@ import { StatusBadge, ProgressBar, KPICard, Field, SectionCard, Table, Icon, inp
 import { DEFAULT_INVOICES_PER_CLAIM } from "../data/schema.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+// Most entries are for today, so date fields open on it rather than blank. A
+// blank date input is a small tax paid on every single row.
+const today = () => new Date().toISOString().split("T")[0];
+
 function getNthTuesday(year, month, n) {
   const d = new Date(year, month, 1);
   const dow = d.getDay();
@@ -489,7 +493,7 @@ function ExpenditureForm({ db, dispatch, onDone, initialData = null }) {
         });
       });
 
-      setHeader({ date:"", vendorName:"", type:"invoice", reference:"", claimCycleId:"" });
+      setHeader({ date: today(), vendorName:"", type:"invoice", reference:"", claimCycleId:"" });
       setLines([emptyLine()]);
       setSaved(true);
       setTimeout(() => { setSaved(false); onDone(); }, 1400);
@@ -756,7 +760,7 @@ function ExpenditureForm({ db, dispatch, onDone, initialData = null }) {
           {isEdit?"Save Changes":"Save to Claim Cycle"}
         </button>
         {!isEdit && (
-          <button onClick={()=>{ setHeader({date:"",vendorName:"",type:"invoice",reference:"",claimCycleId:""}); setLines([emptyLine()]); }} style={btn.ghost}>Clear</button>
+          <button onClick={()=>{ setHeader({date: today(),vendorName:"",type:"invoice",reference:"",claimCycleId:""}); setLines([emptyLine()]); }} style={btn.ghost}>Clear</button>
         )}
       </div>
     </div>
@@ -1125,7 +1129,7 @@ function RevenueForm({ db, dispatch, onDone, initialData = null }) {
     };
     dispatch({ type: isEdit ? "UPDATE_REVENUE" : "ADD_REVENUE", payload });
     if (isEdit) { onDone(); return; }
-    setHeader({ date:"", sourceName:"", reference:"", description:"" });
+    setHeader({ date: today(), sourceName:"", reference:"", description:"" });
     setLines([emptyLine()]);
     setSaved(true);
     setTimeout(()=>{ setSaved(false); onDone(); },1400);
@@ -1214,7 +1218,7 @@ function RevenueForm({ db, dispatch, onDone, initialData = null }) {
         <button onClick={handleSubmit} style={{ ...btn.primary, background:"#1a6b35" }}>{isEdit?"Save Changes":"Record Revenue"}</button>
         {isEdit
           ? <button onClick={onDone} style={btn.ghost}>Cancel</button>
-          : <button onClick={()=>{ setHeader({date:"",sourceName:"",reference:"",description:""}); setLines([emptyLine()]); }} style={btn.ghost}>Clear</button>}
+          : <button onClick={()=>{ setHeader({date: today(),sourceName:"",reference:"",description:""}); setLines([emptyLine()]); }} style={btn.ghost}>Clear</button>}
       </div>
     </div>
   );
@@ -1321,7 +1325,7 @@ function Ledger({ db }) {
 // ── Journal Entries ───────────────────────────────────────────────────────────
 function JournalEntries({ db, dispatch }) {
   const [form, setForm] = useState({
-    date:"", description:"", debitCode:"", creditCode:"", amount:"", reason:"", claimCycleId:"",
+    date: today(), description:"", debitCode:"", creditCode:"", amount:"", reason:"", claimCycleId:"",
   });
   const [saved, setSaved] = useState(false);
   const set = (k,v) => setForm(f=>({ ...f,[k]:v }));
@@ -1347,7 +1351,7 @@ function JournalEntries({ db, dispatch }) {
       status:      "posted",
       createdAt:   new Date().toISOString(),
     }});
-    setForm({ date:"", description:"", debitCode:"", creditCode:"", amount:"", reason:"", claimCycleId:"" });
+    setForm({ date: today(), description:"", debitCode:"", creditCode:"", amount:"", reason:"", claimCycleId:"" });
     setSaved(true);
     setTimeout(()=>setSaved(false),2500);
   };
@@ -1427,14 +1431,14 @@ function JournalEntries({ db, dispatch }) {
 
 // ── Budget Amendments ─────────────────────────────────────────────────────────
 function Amendments({ db, dispatch }) {
-  const [form, setForm] = useState({ date:"", code:"", amount:"", reason:"" });
+  const [form, setForm] = useState({ date: today(), code:"", amount:"", reason:"" });
   const [saved, setSaved] = useState(false);
   const set = (k,v) => setForm(f=>({ ...f,[k]:v }));
 
   const handleSubmit = () => {
     if (!form.date||!form.code||!form.amount) return;
     dispatch({ type:"ADD_AMENDMENT", payload:{ id:Date.now(), ...form, amount:parseFloat(form.amount) }});
-    setForm({ date:"", code:"", amount:"", reason:"" });
+    setForm({ date: today(), code:"", amount:"", reason:"" });
     setSaved(true);
     setTimeout(()=>setSaved(false),2500);
   };
