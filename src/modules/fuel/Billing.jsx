@@ -6,7 +6,7 @@ import { fmtDate } from "./shared.js";
 // cost. Reconciled weekly, billed on the 1st. Revenue is recognised when the
 // check arrives, not when the bill goes out.
 
-function FuelBilling({ dispensing, dispatch }) {
+export function FuelBilling({ dispensing, dispatch }) {
   const outside = dispensing.filter(f => f.consumer === "other_department");
 
   const periods = [...new Set(outside.map(f => f.billingPeriod || (f.date||"").slice(0,7)).filter(Boolean))]

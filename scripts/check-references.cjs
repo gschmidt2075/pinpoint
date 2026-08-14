@@ -47,4 +47,76 @@ for (const f of files) {
     },
   });
 }
-console.log(problems ? `\n${problems} unresolved identifier(s)` : `\nNo unresolved identifiers across ${files.length} files ✓`);
+// ── Do imports resolve to real exports? ───────────────────────────────────────
+//
+// The check above finds names used but never bound INSIDE a file. This one
+// finds the other half: a file importing something its neighbour does not
+// actually export. Vite catches this, but only at build time, and I have no
+// build here — so it has to be checked directly or it reaches Greg.
+//
+// It reached him once: FuelBilling was extracted into its own file without the
+// export keyword, and the first thing he saw was a failed build.
+function exportsOf(file) {
+  const code = fs.readFileSync(file, "utf8");
+  let ast; try { ast = parser.parse(code, { sourceType:"module", plugins:["jsx"] }); }
+  catch { return { names:new Set(), hasDefault:false }; }
+  const names = new Set(); let hasDefault = false;
+  for (const node of ast.program.body) {
+    if (node.type === "ExportDefaultDeclaration") hasDefault = true;
+    else if (node.type === "ExportNamedDeclaration") {
+      if (node.declaration) {
+        const d = node.declaration;
+        if (d.id?.name) names.add(d.id.name);
+        for (const decl of d.declarations || []) if (decl.id?.name) names.add(decl.id.name);
+      }
+      for (const sp of node.specifiers || []) names.add(sp.exported?.name || sp.local?.name);
+    } else if (node.type === "ExportAllDeclaration") names.add("*");
+  }
+  return { names, hasDefault };
+}
+
+const resolve = (from, spec) => {
+  const base = path.resolve(path.dirname(from), spec);
+  for (const c of [base, base + ".js", base + ".jsx",
+                   path.join(base, "index.js"), path.join(base, "index.jsx")])
+    if (fs.existsSync(c) && fs.statSync(c).isFile()) return c;
+  return null;
+};
+
+let importProblems = 0;
+for (const f of files) {
+  let ast; try { ast = parser.parse(fs.readFileSync(f,"utf8"), { sourceType:"module", plugins:["jsx"] }); }
+  catch { continue; }
+  for (const node of ast.program.body) {
+    if (node.type !== "ImportDeclaration") continue;
+    const spec = node.source.value;
+    if (!spec.startsWith(".")) continue;
+    const target = resolve(f, spec);
+    if (!target) {
+      console.log(`  ${f}  →  cannot resolve "${spec}" (line ${node.loc.start.line})`);
+      importProblems++; continue;
+    }
+    const { names, hasDefault } = exportsOf(target);
+    if (names.has("*")) continue;
+    for (const sp of node.specifiers) {
+      if (sp.type === "ImportDefaultSpecifier") {
+        if (!hasDefault) {
+          console.log(`  ${f}  →  ${path.basename(target)} has no default export (line ${node.loc.start.line})`);
+          importProblems++;
+        }
+      } else if (sp.type === "ImportSpecifier") {
+        const want = sp.imported.name;
+        if (!names.has(want)) {
+          console.log(`  ${f}  →  ${want} is not exported by ${path.basename(target)} (line ${node.loc.start.line})`);
+          importProblems++;
+        }
+      }
+    }
+  }
+}
+
+const total = problems + importProblems;
+console.log(total
+  ? `\n${problems} unresolved identifier(s), ${importProblems} bad import(s)`
+  : `\nClean across ${files.length} files — no unresolved names, every import resolves to a real export ✓`);
+process.exit(total ? 1 : 0);
