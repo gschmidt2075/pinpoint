@@ -1601,6 +1601,173 @@ export const createCountyInfo = (overrides = {}) => ({
   ...overrides,
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ROLES AND PERMISSIONS
+//
+// What this is, and what it is not.
+//
+// There is no login yet. Until the county server and Azure AD arrive, anyone can
+// pick any role from the switcher, so this shapes what people SEE rather than
+// what they are able to do. That is worth being honest about: it is guard rails
+// and tidiness now, and becomes enforcement when identity is real.
+//
+// Access is per module — can this person open Inventory, and can they change
+// it. Blunt, but it is the granularity a four-person department can actually
+// keep correct. A permission grid nobody maintains is worse than none.
+//
+// FOUR THINGS ARE NOT IN THE GRID. They are fixed in code because a wrong tick
+// on any of them costs real money or real history, and none of them should ever
+// be delegable through a settings screen:
+//
+//   · seeing pay rates            Superintendent, Office Manager
+//   · approving a claim cycle     Superintendent, Office Manager
+//   · deleting records            Superintendent
+//   · account codes & fiscal year Superintendent, Office Manager
+//   · editing this grid           Superintendent, Office Manager
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const MODULES = [
+  { id:"fund",           label:"Fund Accounting" },
+  { id:"cost",           label:"Cost Accounting" },
+  { id:"projects",       label:"Projects" },
+  { id:"inventory",      label:"Inventory" },
+  { id:"equipment",      label:"Equipment" },
+  { id:"fuel",           label:"Fuel & Tanks" },
+  { id:"infrastructure", label:"Infrastructure" },
+  { id:"vendors",        label:"Vendors" },
+  { id:"payroll",        label:"Employees" },
+  { id:"reporting",      label:"Reporting" },
+  { id:"settings",       label:"Settings" },
+];
+
+export const ACCESS_LEVELS = [
+  { id:"none", label:"—",    description:"Cannot open it" },
+  { id:"view", label:"View", description:"Can look, cannot change" },
+  { id:"edit", label:"Edit", description:"Can add and change" },
+];
+
+// The capabilities that stay in code. `roles` lists who holds each.
+export const LOCKED_CAPABILITIES = [
+  { id:"seeRates",     label:"See pay rates",
+    why:"Payroll Q33 — rates are visible to the Superintendent and Office Manager only",
+    roles:["superintendent","office_manager"] },
+  { id:"approveClaims", label:"Approve a claim cycle",
+    why:"The moment money is authorised",
+    roles:["superintendent","office_manager"] },
+  { id:"deleteRecords", label:"Delete records",
+    why:"Deactivating keeps history; deleting destroys it",
+    roles:["superintendent"] },
+  { id:"editChartOfAccounts", label:"Edit account codes and fiscal year",
+    why:"Changing these mid-year moves every report",
+    roles:["superintendent","office_manager"] },
+  { id:"editPermissions", label:"Change what everyone is allowed to do",
+    why:"Otherwise a role could quietly widen itself",
+    roles:["superintendent","office_manager"] },
+];
+
+export const createRole = (overrides = {}) => ({
+  id:          uid(),
+  label:       "",
+  description: "",
+  // System roles cannot be deleted — something has to hold the locked
+  // capabilities, and a department that deletes its own Superintendent role
+  // locks itself out.
+  system:      false,
+  permissions: Object.fromEntries(MODULES.map(m => [m.id, "none"])),
+  ...overrides,
+});
+
+const perms = (map) => ({
+  ...Object.fromEntries(MODULES.map(m => [m.id, "none"])),
+  ...map,
+});
+
+// Agreed with Greg 2026-08-15, module by module.
+export const DEFAULT_ROLES = [
+  createRole({
+    id:"superintendent", label:"Superintendent", system:true,
+    description:"Runs the department. Everything, including who is allowed what.",
+    permissions: Object.fromEntries(MODULES.map(m => [m.id, "edit"])),
+  }),
+  createRole({
+    id:"office_manager", label:"Office Manager", system:true,
+    description:"Claims, payroll costing, vendors, reports. Sees pay rates.",
+    permissions: perms({
+      fund:"edit", cost:"edit", projects:"edit", inventory:"view", equipment:"edit",
+      fuel:"edit", infrastructure:"edit", vendors:"edit", payroll:"edit",
+      reporting:"edit", settings:"edit",
+    }),
+  }),
+  createRole({
+    id:"project_accountant", label:"Project Accountant", system:true,
+    description:"Costs work to projects. Reads claims rather than entering them.",
+    permissions: perms({
+      fund:"view", cost:"edit", projects:"edit", inventory:"view", equipment:"view",
+      fuel:"view", infrastructure:"edit", vendors:"edit",
+      reporting:"edit", settings:"edit",
+    }),
+  }),
+  createRole({
+    id:"parts_manager", label:"Parts Manager", system:true,
+    description:"The parts room, fuel, work orders from the shop's paper, and the claims that follow.",
+    permissions: perms({
+      fund:"edit", inventory:"edit", equipment:"edit", fuel:"edit",
+      infrastructure:"edit", vendors:"edit", reporting:"edit", settings:"edit",
+    }),
+  }),
+  createRole({
+    id:"staff", label:"Staff", system:true,
+    description:"Placeholder. Nobody holds this yet — anyone added starts closed rather than open.",
+    permissions: perms({}),
+  }),
+];
+
+// A person who uses the system.
+//
+// Deliberately separate from the employee record. "Someone we pay" and "someone
+// who logs in" are different sets that drift apart in both directions: a
+// seasonal laborer never opens the system, and county IT might need to. It also
+// keeps whoever administers accounts out of payroll data.
+export const createUser = (overrides = {}) => ({
+  id:          uid(),
+  name:        "",
+  employeeId:  null,      // optional link to the employee record
+  roleIds:     [],        // people wear several hats; permissions are the sum
+  active:      true,
+  notes:       "",
+  createdAt:   now(),
+  ...overrides,
+});
+
+const RANK = { none:0, view:1, edit:2 };
+
+// What a set of roles can do with a module. Several roles combine to the most
+// permissive — someone who is both Parts Manager and Project Accountant gets
+// what either allows, which is the point of wearing two hats.
+export function accessTo(moduleId, roleIds = [], roles = DEFAULT_ROLES) {
+  let best = "none";
+  for (const rid of roleIds) {
+    const level = roles.find(r => r.id === rid)?.permissions?.[moduleId] || "none";
+    if (RANK[level] > RANK[best]) best = level;
+  }
+  return best;
+}
+
+export const canView = (moduleId, roleIds, roles) => RANK[accessTo(moduleId, roleIds, roles)] >= 1;
+export const canEdit = (moduleId, roleIds, roles) => accessTo(moduleId, roleIds, roles) === "edit";
+
+// The locked capabilities. Checked against role IDs directly and never against
+// the grid, so no amount of ticking can open them.
+export function hasCapability(capabilityId, roleIds = []) {
+  const cap = LOCKED_CAPABILITIES.find(c => c.id === capabilityId);
+  if (!cap) return false;
+  return roleIds.some(r => cap.roles.includes(r));
+}
+
+// Legacy single-role helper, kept so existing calls keep working.
+export const canSeeRates = (roleOrRoles) =>
+  hasCapability("seeRates", Array.isArray(roleOrRoles) ? roleOrRoles : [roleOrRoles]);
+
 // User role
 export const createUserRole = (overrides = {}) => ({
   id:              uid(),

@@ -13,22 +13,26 @@ import Reporting from "./modules/Reporting.jsx";
 import { FISCAL_YEAR } from "./data/accountCodes.js";
 import { DEFAULT_TOWNSHIPS, DEFAULT_LOOKUPS, DEFAULT_TANKS, nextWorkOrderNumber,
          createTank, createStorageLocation, createInventoryItem, createEquipmentUnit,
-         createWorkOrder, createVendor, createEmployee } from "./data/schema.js";
+         createWorkOrder, createVendor, createEmployee,
+         DEFAULT_ROLES, createRole, createUser, MODULES,
+         accessTo, canView, canEdit, hasCapability } from "./data/schema.js";
 import { INITIAL_INVENTORY_ITEMS, INITIAL_INVENTORY_BATCHES, INITIAL_INVENTORY_TRANSACTIONS,
          INITIAL_STORAGE_LOCATIONS } from "./data/inventoryData.js";
 import { Icon } from "./components/shared.jsx";
 
 // ── Roles ─────────────────────────────────────────────────────────────────────
-// Pay rates are visible to the Superintendent and the Office Manager (Payroll
-// Q33). Staff see everything else but no money.
-export const ROLES = [
-  { id:"superintendent", label:"Superintendent", description:"Full access" },
-  { id:"office_manager", label:"Office Manager", description:"Enters claims and payroll costing — sees pay rates" },
-  { id:"staff",          label:"Staff",          description:"Day-to-day entry — pay rates hidden" },
-];
+// Defined in schema.js alongside the permission rules, so the roles and what
+// they may do live in one place rather than drifting apart.
+//
+// There is no login yet — the switcher lets anyone pick any role. Until Azure AD
+// arrives on the county server this shapes what people SEE, not what they are
+// able to do, and it is worth not pretending otherwise.
+export { DEFAULT_ROLES as ROLES, canSeeRates } from "./data/schema.js";
 
-// Who may see pay rates and loaded labor cost.
-export const canSeeRates = (role) => role === "superintendent" || role === "office_manager";
+// The role currently selected in the switcher, as a list — permissions are
+// written against a set of roles because people wear several hats, and one
+// selected role is just a set of one.
+const asRoles = (role) => (Array.isArray(role) ? role : [role]).filter(Boolean);
 
 // ── Global State ──────────────────────────────────────────────────────────────
 const initialState = {
@@ -87,6 +91,9 @@ const initialState = {
   townships:          DEFAULT_TOWNSHIPS,
   // Editable dropdown lists — managed in Settings, never hardcoded in modules
   lookups:            DEFAULT_LOOKUPS,
+  // Roles are editable; the locked capabilities in schema.js are not.
+  roles:              DEFAULT_ROLES,
+  users:              [],   // createUser[] — separate from employees, on purpose
   customFunds:        [],
   customAccountCodes: {},
   femaRates:          [],
@@ -572,6 +579,27 @@ function reducer(state, action) {
       return { ...state, tankTransactions, expenditures };
     }
 
+    // ── Roles & users ──────────────────────────────────────────────────────
+    case "UPDATE_ROLE_PERMISSION":
+      return { ...state, roles: state.roles.map(r =>
+        r.id !== action.payload.roleId ? r
+          : { ...r, permissions: { ...r.permissions, [action.payload.moduleId]: action.payload.level } }) };
+    case "ADD_ROLE":
+      return { ...state, roles: [...state.roles, action.payload] };
+    case "UPDATE_ROLE":
+      return { ...state, roles: state.roles.map(r => r.id === action.payload.id ? action.payload : r) };
+    // System roles cannot be deleted — something has to hold the locked
+    // capabilities, and a department that deletes its Superintendent role locks
+    // itself out of its own software.
+    case "DELETE_ROLE":
+      return { ...state, roles: state.roles.filter(r => r.id !== action.payload || r.system) };
+    case "ADD_USER":
+      return { ...state, users: [...(state.users||[]), action.payload] };
+    case "UPDATE_USER":
+      return { ...state, users: (state.users||[]).map(u => u.id === action.payload.id ? action.payload : u) };
+    case "DELETE_USER":
+      return { ...state, users: (state.users||[]).filter(u => u.id !== action.payload) };
+
     case "ADD_DAILY_INVENTORY":
       return { ...state, dailyInventory: [...(state.dailyInventory||[]), action.payload] };
     case "UPDATE_DAILY_INVENTORY":
@@ -793,6 +821,8 @@ function mergeSaved(defaults, saved) {
 // adding a field can never break somebody's existing data again.
 const REHYDRATE = {
   tanks:            createTank,
+  roles:            createRole,
+  users:            createUser,
   storageLocations: createStorageLocation,
   inventoryItems:   createInventoryItem,
   equipment:        createEquipmentUnit,
@@ -843,6 +873,23 @@ export default function App() {
 
   const currentTab = ALL_TABS.find(t => t.id === activeTab);
 
+  // Permissions are written against a SET of roles, because people wear several
+  // hats. The switcher picks one, so today the set has one member.
+  const myRoles = asRoles(role);
+  // Passed to every module so it can dim what cannot be changed, rather than
+  // each module working it out from the role name.
+  const access = {
+    roles:   myRoles,
+    can:     (m) => accessTo(m, myRoles, db.roles),
+    canView: (m) => canView(m, myRoles, db.roles),
+    canEdit: (m) => canEdit(m, myRoles, db.roles),
+    has:     (cap) => hasCapability(cap, myRoles),
+  };
+
+  // Landing on a tab you cannot see — after a permission change, or a stale
+  // link — should not show an empty screen with no explanation.
+  const allowedTab = !currentTab || currentTab.soon || access.canView(activeTab);
+
   return (
     <div style={{ minHeight:"100vh", background:"#f5f4f0", fontFamily:"'Segoe UI', system-ui, sans-serif", display:"flex", flexDirection:"column" }}>
 
@@ -862,14 +909,14 @@ export default function App() {
           <div style={{ display:"flex", alignItems:"center", gap:12 }}>
             <div style={{ fontSize:12, opacity:0.5 }}>Roads Fund · {FISCAL_YEAR.start} – {FISCAL_YEAR.end}</div>
             <div style={{ display:"flex", background:"rgba(255,255,255,0.1)", borderRadius:6, padding:2 }}>
-              {ROLES.map(r => (
+              {(db.roles || DEFAULT_ROLES).map(r => (
                 <button key={r.id} onClick={() => setRole(r.id)} title={r.description} style={{ padding:"4px 10px", fontSize:11, fontWeight:600, border:"none", borderRadius:4, cursor:"pointer", background:role===r.id?"#fff":"transparent", color:role===r.id?"#1a3a5c":"rgba(255,255,255,0.6)", whiteSpace:"nowrap" }}>
                   {r.label}
                 </button>
               ))}
             </div>
           </div>
-          {role === "superintendent" && (
+          {access.has("deleteRecords") && (
             <button
               onClick={() => {
                 if (window.confirm("Reset all data back to the starting inventory?\n\nThis erases everything entered since — work orders, projects, receipts, all of it. Cannot be undone.")) {
@@ -898,7 +945,7 @@ export default function App() {
             {NAV_GROUPS.map(group => (
               <div key={group.label} style={{ marginBottom:8 }}>
                 <div style={{ fontSize:10, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", color:"#aaa", padding:"8px 16px 4px" }}>{group.label}</div>
-                {group.items.filter(item => !item.adminOnly || role === "superintendent").map(item => (
+                {group.items.filter(item => item.soon || canView(item.id, myRoles, db.roles)).map(item => (
                   <button key={item.id} onClick={() => !item.soon && setActiveTab(item.id)} style={{
                     display:"flex", alignItems:"center", gap:10, width:"100%",
                     padding:"9px 16px", background: activeTab===item.id ? "#eef2f8" : "transparent",
@@ -920,17 +967,29 @@ export default function App() {
 
         {/* Main content */}
         <div style={{ flex:1, overflowY:"auto", padding:"24px 28px" }}>
-          {activeTab==="fund"           && <FundAccounting  db={db} dispatch={dispatch} />}
-          {activeTab==="cost"           && <CostAccounting  db={db} dispatch={dispatch} />}
-          {activeTab==="inventory"      && <Inventory        db={db} dispatch={dispatch} />}
-          {activeTab==="equipment"      && <Equipment        db={db} dispatch={dispatch} />}
-          {activeTab==="fuel"           && <Fuel             db={db} dispatch={dispatch} />}
-          {activeTab==="infrastructure" && <Infrastructure   db={db} dispatch={dispatch} />}
-          {activeTab==="projects"       && <Projects         db={db} dispatch={dispatch} />}
-          {activeTab==="vendors"        && <Vendors          db={db} dispatch={dispatch} />}
-          {activeTab==="payroll"        && <Employees        db={db} dispatch={dispatch} role={role} />}
-          {activeTab==="reporting"      && <Reporting        db={db} dispatch={dispatch} role={role} />}
-          {activeTab==="settings"       && <Settings         db={db} dispatch={dispatch} />}
+          {!allowedTab && (
+            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", minHeight:360, textAlign:"center" }}>
+              <Icon name="lock" size={40} color="#ddd" style={{ marginBottom:14 }} />
+              <div style={{ fontSize:16, fontWeight:700, color:"#555", marginBottom:6 }}>
+                {currentTab?.label} is not open to this role
+              </div>
+              <div style={{ fontSize:13, color:"#999", maxWidth:340, lineHeight:1.6 }}>
+                Access is set in Settings → Roles & Permissions by the Superintendent
+                or Office Manager.
+              </div>
+            </div>
+          )}
+          {allowedTab && activeTab==="fund"           && <FundAccounting  db={db} dispatch={dispatch} access={access} />}
+          {allowedTab && activeTab==="cost"           && <CostAccounting  db={db} dispatch={dispatch} access={access} />}
+          {allowedTab && activeTab==="inventory"      && <Inventory       db={db} dispatch={dispatch} access={access} />}
+          {allowedTab && activeTab==="equipment"      && <Equipment       db={db} dispatch={dispatch} access={access} />}
+          {allowedTab && activeTab==="fuel"           && <Fuel            db={db} dispatch={dispatch} access={access} />}
+          {allowedTab && activeTab==="infrastructure" && <Infrastructure  db={db} dispatch={dispatch} access={access} />}
+          {allowedTab && activeTab==="projects"       && <Projects        db={db} dispatch={dispatch} access={access} />}
+          {allowedTab && activeTab==="vendors"        && <Vendors         db={db} dispatch={dispatch} access={access} />}
+          {allowedTab && activeTab==="payroll"        && <Employees        db={db} dispatch={dispatch} role={role} access={access} />}
+          {allowedTab && activeTab==="reporting"      && <Reporting        db={db} dispatch={dispatch} role={role} access={access} />}
+          {allowedTab && activeTab==="settings"       && <Settings         db={db} dispatch={dispatch} access={access} />}
           {/* Whether a module exists is already recorded on the nav item as
               `soon`. This used to be a hardcoded list of built tabs, which went
               stale the moment Fuel was added — the module rendered AND the

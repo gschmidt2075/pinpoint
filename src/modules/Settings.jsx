@@ -2,7 +2,8 @@ import { useState, useMemo } from "react";
 import { Field, SectionCard, Table, Icon, AlertBar, inp, btn, fmt, fmtSm, DateField, titleCase } from "../components/shared.jsx";
 import { EXPENDITURE_CODES, REVENUE_CODES, FISCAL_YEAR } from "../data/accountCodes.js";
 import { LOOKUP_DEFS, createTownship, createStorageLocation, createTank,
-         DEFAULT_INVOICES_PER_CLAIM } from "../data/schema.js";
+         DEFAULT_INVOICES_PER_CLAIM, MODULES, ACCESS_LEVELS, LOCKED_CAPABILITIES,
+         DEFAULT_ROLES, createRole } from "../data/schema.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const DEFAULT_TOWNSHIPS = [
@@ -22,7 +23,7 @@ const DEFAULT_LOCATIONS = [
 ];
 
 // ── Settings Module ───────────────────────────────────────────────────────────
-export default function Settings({ db, dispatch }) {
+export default function Settings({ db, dispatch, access }) {
   const [view, setView] = useState("county");
 
   const tabs = [
@@ -30,6 +31,9 @@ export default function Settings({ db, dispatch }) {
     { id:"fiscal",    label:"Fiscal Year",       icon:"calendar-event" },
     { id:"accounts",  label:"Account Codes",     icon:"receipt" },
     { id:"system",    label:"System Settings",   icon:"adjustments-horizontal" },
+    // Only the two roles that hold the capability see this at all — it is not a
+    // grid setting, so it cannot be ticked open.
+    ...(access?.has?.("editPermissions") ? [{ id:"roles", label:"Roles & Permissions", icon:"lock" }] : []),
   ];
 
   return (
@@ -75,6 +79,7 @@ export default function Settings({ db, dispatch }) {
           {view==="fiscal"   && <FiscalYearWizard db={db} dispatch={dispatch} />}
           {view==="accounts" && <AccountCodes  db={db} dispatch={dispatch} />}
           {view==="system"   && <SystemSettings db={db} dispatch={dispatch} />}
+          {view==="roles"    && <RolesAndPermissions db={db} dispatch={dispatch} />}
         </div>
       </div>
     </div>
@@ -1179,5 +1184,174 @@ function TankSettings({ tanks, dispatch }) {
         emptyMessage="No tanks configured yet"
       />
     </SectionCard>
+  );
+}
+
+
+// ── Roles & permissions ───────────────────────────────────────────────────────
+//
+// A grid: roles across the top, modules down the side, three answers in each
+// cell. Blunt on purpose — this is the granularity a four-person department can
+// keep correct, and a permission grid nobody maintains is worse than none.
+//
+// The locked capabilities are shown but not editable. They are fixed in code
+// because a wrong tick on any of them costs real money or real history, and
+// showing them here — greyed, with the reason — is how someone learns they
+// exist rather than wondering why a button never appears.
+function RolesAndPermissions({ db, dispatch }) {
+  const roles = db.roles?.length ? db.roles : DEFAULT_ROLES;
+  const [showNew, setShowNew] = useState(false);
+  const [newRole, setNewRole] = useState({ label:"", description:"" });
+
+  const LEVEL_STYLE = {
+    none: { bg:"#f7f7f5", color:"#bbb",    border:"#e8e8e5" },
+    view: { bg:"#eef2f8", color:"#1a3a5c", border:"#c8d8ec" },
+    edit: { bg:"#e6f4ec", color:"#1a5a3a", border:"#a8d5b5" },
+  };
+
+  const cycle = (roleId, moduleId, current) => {
+    const order = ["none","view","edit"];
+    const next  = order[(order.indexOf(current) + 1) % order.length];
+    dispatch({ type:"UPDATE_ROLE_PERMISSION", payload:{ roleId, moduleId, level: next } });
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom:20 }}>
+        <div style={{ fontSize:16, fontWeight:700, color:"#1a1a1a", display:"flex", alignItems:"center", gap:8 }}>
+          <Icon name="lock" size={18} color="#1a3a5c" />
+          Roles & Permissions
+        </div>
+        <div style={{ fontSize:13, color:"#888", marginTop:3 }}>
+          Who can open what, and who can change it. Click a cell to cycle through — · View · Edit.
+        </div>
+      </div>
+
+      <div style={{ background:"#fef8e8", border:"1px solid #f0d080", borderRadius:8, padding:"12px 16px", marginBottom:18, fontSize:12, color:"#7a4f00", lineHeight:1.7 }}>
+        <strong>There is no login yet.</strong> Anyone can pick any role from the switcher in the top
+        corner, so this decides what people SEE rather than what they are able to do. It becomes real
+        enforcement when the county server and Azure AD arrive — the grid you set here carries over.
+      </div>
+
+      <SectionCard title="Module Access" subtitle={`${roles.length} roles · ${MODULES.length} modules`} icon="table">
+        <div style={{ overflowX:"auto" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+            <thead>
+              <tr style={{ background:"#f7f7f5" }}>
+                <th style={{ padding:"9px 14px", textAlign:"left", fontWeight:700, fontSize:10, textTransform:"uppercase", letterSpacing:"0.05em", color:"#666", borderBottom:"1px solid #eee", position:"sticky", left:0, background:"#f7f7f5" }}>Module</th>
+                {roles.map(r => (
+                  <th key={r.id} title={r.description} style={{ padding:"9px 10px", textAlign:"center", fontWeight:700, fontSize:10, textTransform:"uppercase", letterSpacing:"0.04em", color:"#666", borderBottom:"1px solid #eee", minWidth:96 }}>
+                    {r.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {MODULES.map((m,i) => (
+                <tr key={m.id} style={{ borderTop:"1px solid #f0f0ee", background:i%2===0?"#fff":"#fafaf8" }}>
+                  <td style={{ padding:"8px 14px", fontWeight:600, position:"sticky", left:0, background:i%2===0?"#fff":"#fafaf8" }}>{m.label}</td>
+                  {roles.map(r => {
+                    const level = r.permissions?.[m.id] || "none";
+                    const st = LEVEL_STYLE[level];
+                    return (
+                      <td key={r.id} style={{ padding:"5px 8px", textAlign:"center" }}>
+                        <button
+                          onClick={()=>cycle(r.id, m.id, level)}
+                          title={`${r.label} · ${m.label} — click to change`}
+                          style={{
+                            width:"100%", padding:"5px 0", borderRadius:5, cursor:"pointer",
+                            background:st.bg, color:st.color, border:`1px solid ${st.border}`,
+                            fontSize:11, fontWeight:700,
+                          }}>
+                          {ACCESS_LEVELS.find(a=>a.id===level)?.label}
+                        </button>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ padding:"12px 16px", borderTop:"1px solid #eee", display:"flex", gap:18, fontSize:11, color:"#888", flexWrap:"wrap" }}>
+          {ACCESS_LEVELS.map(a=>(
+            <span key={a.id} style={{ display:"inline-flex", alignItems:"center", gap:6 }}>
+              <span style={{ display:"inline-block", width:26, textAlign:"center", padding:"2px 0", borderRadius:4,
+                             background:LEVEL_STYLE[a.id].bg, color:LEVEL_STYLE[a.id].color,
+                             border:`1px solid ${LEVEL_STYLE[a.id].border}`, fontWeight:700 }}>{a.label}</span>
+              {a.description}
+            </span>
+          ))}
+        </div>
+      </SectionCard>
+
+      <SectionCard title="Fixed in Code" subtitle="Not in the grid, and not delegable" icon="shield-lock">
+        <div style={{ padding:"12px 16px", fontSize:12, color:"#888", lineHeight:1.65, borderBottom:"1px solid #f0f0ee" }}>
+          These five stay where they are no matter what the grid says. Each one costs real money or real
+          history if it goes to the wrong person, so none of them can be opened by ticking a box.
+        </div>
+        <Table
+          headers={[{label:"Capability"},{label:"Who holds it"},{label:"Why"}]}
+          rows={LOCKED_CAPABILITIES.map(c => [
+            <span style={{ fontWeight:600 }}>{c.label}</span>,
+            <span style={{ fontSize:12 }}>
+              {c.roles.map(rid => roles.find(r=>r.id===rid)?.label || rid).join(", ")}
+            </span>,
+            <span style={{ fontSize:12, color:"#888" }}>{c.why}</span>,
+          ])}
+        />
+      </SectionCard>
+
+      <SectionCard
+        title="Roles"
+        subtitle="The five that came with the system cannot be deleted — something has to hold the locked capabilities"
+        icon="users"
+        action={<button onClick={()=>setShowNew(s=>!s)} style={{ ...btn.ghost, fontSize:11, padding:"5px 12px" }}>{showNew?"Cancel":"+ Add Role"}</button>}
+      >
+        {showNew && (
+          <div style={{ padding:16, background:"#f7f7f5", borderBottom:"1px solid #eee" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr auto", gap:12, alignItems:"end" }}>
+              <Field label="Role name" required>
+                <input type="text" value={newRole.label} onChange={e=>setNewRole(r=>({...r,label:e.target.value}))}
+                  placeholder="Sign Tech" style={{ ...inp, margin:0 }} />
+              </Field>
+              <Field label="What this role is for">
+                <input type="text" value={newRole.description} onChange={e=>setNewRole(r=>({...r,description:e.target.value}))}
+                  style={{ ...inp, margin:0 }} />
+              </Field>
+              <button
+                onClick={()=>{
+                  if (!newRole.label.trim()) return;
+                  dispatch({ type:"ADD_ROLE", payload: createRole({ ...newRole, label:newRole.label.trim() }) });
+                  setNewRole({ label:"", description:"" }); setShowNew(false);
+                }}
+                disabled={!newRole.label.trim()}
+                style={{ ...btn.primary, opacity:newRole.label.trim()?1:0.45 }}>Add</button>
+            </div>
+            <div style={{ fontSize:11, color:"#888", marginTop:8 }}>
+              A new role starts with no access to anything. Open what it needs in the grid above.
+            </div>
+          </div>
+        )}
+        <Table
+          headers={[{label:"Role"},{label:"What it is for"},{label:"Modules open"},{label:""}]}
+          rows={roles.map(r => {
+            const open = MODULES.filter(m => (r.permissions?.[m.id]||"none") !== "none").length;
+            return [
+              <span style={{ fontWeight:600 }}>
+                {r.label}
+                {r.system && <span style={{ marginLeft:7, fontSize:10, color:"#888" }}>system</span>}
+              </span>,
+              <span style={{ fontSize:12, color:"#666" }}>{r.description || "—"}</span>,
+              <span style={{ fontFamily:"monospace", color: open ? "#1a5a3a" : "#bbb" }}>{open} of {MODULES.length}</span>,
+              r.system
+                ? <span style={{ fontSize:11, color:"#ccc" }}>cannot delete</span>
+                : <button onClick={()=>dispatch({ type:"DELETE_ROLE", payload:r.id })}
+                    style={{ ...btn.ghost, fontSize:11, padding:"4px 10px", color:"#c0392b", borderColor:"#f0d0d0" }}>Delete</button>,
+            ];
+          })}
+        />
+      </SectionCard>
+    </div>
   );
 }
