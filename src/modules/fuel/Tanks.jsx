@@ -104,75 +104,6 @@ function DeliveryInvoices({ tankTx, dispatch }) {
   );
 }
 
-function ReconciliationPanel({ tanks, tankTx }) {
-  const rows = tanks
-    .filter(t => t.status !== "out_of_service")
-    .map(t => ({ tank: t, rec: reconciliationStatus(t, tankTx) }))
-    .sort((a,b) => {
-      const rank = s => s === "overdue" ? 0 : s === "never" ? 1 : 2;
-      return rank(a.rec.state) - rank(b.rec.state);
-    });
-
-  const needing = rows.filter(r => r.rec.state !== "ok");
-  if (!needing.length) return null;
-
-  return (
-    <div style={{ background:"#fff", border:"2px solid #f0d080", borderRadius:8, padding:16, marginBottom:18 }}>
-      <div style={{ fontSize:14, fontWeight:700, color:"#7a4f00", marginBottom:3 }}>
-        ◷ {needing.length} tank{needing.length!==1?"s":""} need reconciling
-      </div>
-      <div style={{ fontSize:11, color:"#888", marginBottom:12 }}>
-        Monitored tanks are balanced against the logs daily. The rest are dipped once a year.
-      </div>
-      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-        <thead>
-          <tr style={{ background:"#f7f7f5" }}>
-            {["Tank","Method","Last Done","Last Variance","Status"].map(h=>(
-              <th key={h} style={{ padding:"7px 10px", textAlign:h==="Last Variance"?"right":"left", fontWeight:700, fontSize:10, textTransform:"uppercase", letterSpacing:"0.05em", color:"#666", borderBottom:"1px solid #eee" }}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {needing.map(({ tank, rec }, i) => (
-            <tr key={tank.id} style={{ borderTop:"1px solid #f0f0ee", background:i%2===0?"#fff":"#fafaf8" }}>
-              <td style={{ padding:"8px 10px", fontWeight:600 }}>
-                {tank.name}
-                {tank.filledByContractor && <span style={{ fontSize:10, color:"#888", marginLeft:6 }}>(contractor filled)</span>}
-              </td>
-              <td style={{ padding:"8px 10px", color:"#888" }}>{rec.cadence === "daily" ? "Monitor · daily" : "Dip · annual"}</td>
-              <td style={{ padding:"8px 10px", fontFamily:"monospace", color:"#888" }}>
-                {rec.last ? `${fmtDate(rec.last.date)} (${rec.age}d ago)` : "never"}
-              </td>
-              <td style={{ padding:"8px 10px", textAlign:"right", fontFamily:"monospace", color: Math.abs(rec.variance||0) > 0 ? "#c0392b" : "#888" }}>
-                {rec.variance === null ? "—" : `${rec.variance > 0 ? "+" : ""}${rec.variance.toFixed(0)} gal`}
-              </td>
-              <td style={{ padding:"8px 10px" }}>
-                <span style={{
-                  background: rec.state==="overdue" ? "#fdecea" : "#f4f4f2",
-                  color:      rec.state==="overdue" ? "#8c1b18" : "#888",
-                  border:`1px solid ${rec.state==="overdue" ? "#f5c6c6" : "#ddd"}`,
-                  borderRadius:99, padding:"2px 9px", fontSize:10, fontWeight:700,
-                }}>
-                  {rec.state === "overdue" ? "Overdue" : "Never done"}
-                </span>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// ── Operating cost ────────────────────────────────────────────────────────────
-// What it costs to run a machine: fuel, parts, oils, shop supplies, all repairs,
-// in-house and outside labor. Deliberately excludes depreciation (confirmed
-// 2026-07-27) — this is cash out the door, not book value.
-//
-// Meters only ever move forward, so cost per hour/mile is measured across the
-// metered life we can actually see: from the earliest reading on record to the
-// unit's current lifetime meter.
-
 export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode = "302.09", dispatch }) {
   const [showNew, setShowNew] = useState(false);
   const [selectedTankId, setSelectedTankId] = useState(null);
@@ -187,6 +118,11 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
   const setNT = (k,v) => setNewTank(f=>({...f,[k]:v}));
 
   const selectedTank = tanks.find(t=>t.id===selectedTankId);
+
+  const needingReading = useMemo(
+    () => tanks.filter(t => t.status !== "out_of_service"
+                         && reconciliationStatus(t, tankTx).state !== "ok"),
+    [tanks, tankTx]);
 
   // A portable fill touches two tanks — it leaves one and enters the other — so
   // it belongs in both histories, not just the destination's.
@@ -290,7 +226,6 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
       </div>
 
       <DeliveryInvoices tankTx={tankTx} dispatch={dispatch} />
-      <ReconciliationPanel tanks={tanks} tankTx={tankTx} />
 
       {showNew && (
         <div style={{ background:"#f7f7f5", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:16 }}>
@@ -465,13 +400,23 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
         </div>
       )}
 
-      {/* Tank cards */}
+      {needingReading.length > 0 && (
+        <div style={{ background:"#fef8e8", border:"1px solid #f0d080", borderRadius:8,
+                      padding:"10px 14px", marginBottom:14, fontSize:12, color:"#7a4f00" }}>
+          <strong>{needingReading.length} of {tanks.length} tanks need a reading.</strong>{" "}
+          Monitored tanks are balanced against the logs daily; the rest are dipped once a year.
+          Each is marked on its card below.
+        </div>
+      )}
+
+      {/* Tank cards — level and reconciliation together, one card per tank */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))", gap:14, marginBottom:24 }}>
         {tanks.length===0 && <div style={{ gridColumn:"1/-1", padding:48, textAlign:"center", color:"#aaa", border:"1px dashed #ccc", borderRadius:8 }}>No tanks configured yet</div>}
         {tanks.map(t => {
           const pct = t.capacityGallons > 0 ? Math.min(100, Math.round((t.currentLevel||0)/t.capacityGallons*100)) : 0;
           const barColor = pct < 20 ? "#c0392b" : pct < 40 ? "#d97706" : "#1a6b35";
           const isOpen = selectedTankId === t.id;
+          const rec = reconciliationStatus(t, tankTx);
           return (
             <div key={t.id}
               onClick={()=>setSelectedTankId(isOpen ? null : t.id)}
@@ -499,8 +444,37 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
                 </div>
               )}
               {pct < 20 && t.capacityGallons > 0 && (
-                <div style={{ fontSize:11, color:"#c0392b", fontWeight:600, marginTop:6 }}>⚠️ Low — order fuel</div>
+                <div style={{ fontSize:11, color:"#c0392b", fontWeight:600, marginTop:6 }}>Low — order fuel</div>
               )}
+
+              {/* Reconciliation lives on the tank, not in a separate table
+                  listing the same eight tanks over again. */}
+              <div style={{ marginTop:10, paddingTop:9, borderTop:"1px solid #f0f0ee",
+                            display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
+                <div style={{ fontSize:11, color:"#888", lineHeight:1.5 }}>
+                  <div>{rec.cadence === "daily" ? "Monitored · read daily" : "Dipped · once a year"}</div>
+                  <div style={{ color: rec.state === "overdue" ? "#c0392b" : "#aaa" }}>
+                    {rec.last
+                      ? <>Last {fmtDate(rec.last.date)}
+                          {rec.variance !== null && rec.variance !== 0 &&
+                            <span style={{ color:"#c0392b", fontWeight:600 }}>
+                              {" "}· {rec.variance > 0 ? "+" : ""}{rec.variance.toFixed(0)} gal out
+                            </span>}
+                        </>
+                      : "Never reconciled"}
+                  </div>
+                </div>
+                {rec.state !== "ok" && (
+                  <span style={{
+                    background: rec.state === "overdue" ? "#fdecea" : "#f4f4f2",
+                    color:      rec.state === "overdue" ? "#8c1b18" : "#888",
+                    border:`1px solid ${rec.state === "overdue" ? "#f5c6c6" : "#ddd"}`,
+                    borderRadius:99, padding:"2px 9px", fontSize:10, fontWeight:700, whiteSpace:"nowrap",
+                  }}>
+                    {rec.state === "overdue" ? "Reading overdue" : "Never read"}
+                  </span>
+                )}
+              </div>
             </div>
           );
         })}

@@ -920,7 +920,11 @@ export default function App() {
           {activeTab==="payroll"        && <Employees        db={db} dispatch={dispatch} role={role} />}
           {activeTab==="reporting"      && <Reporting        db={db} dispatch={dispatch} role={role} />}
           {activeTab==="settings"       && <Settings         db={db} dispatch={dispatch} />}
-          {!["fund","cost","inventory","equipment","infrastructure","projects","vendors","payroll","reporting","settings"].includes(activeTab) && <ComingSoon tab={currentTab} />}
+          {/* Whether a module exists is already recorded on the nav item as
+              `soon`. This used to be a hardcoded list of built tabs, which went
+              stale the moment Fuel was added — the module rendered AND the
+              "coming next" placeholder rendered underneath it. */}
+          {currentTab?.soon && <ComingSoon tab={currentTab} />}
         </div>
       </div>
 
