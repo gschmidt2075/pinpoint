@@ -112,6 +112,25 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
     deliveryTicket:"", bidReference:"", claimCycleId:"", glCode: fuelGLCode });
   const setTx = (k,v) => setTxForm(f=>({...f,[k]:v}));
 
+  // Everything in and out of every tank. Deliveries, transfers and readings —
+  // the movement record behind the levels.
+  const exportTankTx = () => {
+    const esc = v => { const t = v==null?"":String(v); return /[",\n]/.test(t) ? `"${t.replace(/"/g,'""')}"` : t; };
+    const rows = [
+      ["Date","Type","Tank","Gallons","From Tank","Vendor","Delivery Ticket","Bid Ref",
+       "Invoice #","$/gal","Amount","Invoice Status","Invoiced","Dip/Monitor Reads","Variance","Notes"],
+      ...[...(tankTx||[])].sort((a,b)=>String(a.date).localeCompare(String(b.date))).map(t=>[
+        t.date, t.type, t.tankName, t.gallons, t.sourceTankName, t.vendorName,
+        t.deliveryTicket, t.bidReference, t.invoiceNumber, t.unitCost, t.deliveryCost,
+        t.invoiceStatus, t.invoicedAmount, t.dipReading, t.variance, t.notes,
+      ]),
+    ];
+    const blob = new Blob([rows.map(r=>r.map(esc).join(",")).join("\n")], { type:"text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob); const a = document.createElement("a");
+    a.href = url; a.download = "tank-transactions.csv";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  };
+
   const [showTxForm, setShowTxForm] = useState(false);
 
   const [newTank, setNewTank] = useState({ name:"", fuelType:"diesel", tankType:"underground", capacityGallons:"", location:"", notes:"" });
@@ -226,6 +245,7 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
         <div style={{ fontSize:16, fontWeight:700 }}>Fuel Tanks</div>
         <div style={{ display:"flex", gap:8 }}>
+          <button onClick={exportTankTx} style={{ ...btn.secondary, fontSize:12 }}>Export CSV</button>
           <button onClick={()=>setShowTxForm(s=>!s)} style={{ ...btn.secondary, fontSize:12 }}>{showTxForm?"Cancel":"+ Delivery / Reading"}</button>
           <button onClick={()=>setShowNew(s=>!s)} style={btn.primary}>{showNew?"Cancel":"+ Add Tank"}</button>
         </div>

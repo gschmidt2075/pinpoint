@@ -3,6 +3,7 @@ import { Icon } from "../../components/shared.jsx";
 import { TanksTab } from "./Tanks.jsx";
 import { FuelLogTab } from "./Dispensing.jsx";
 import { FuelBilling } from "./Billing.jsx";
+import { DailyInventoryTab } from "./DailyInventory.jsx";
 
 // ── Fuel ──────────────────────────────────────────────────────────────────────
 //
@@ -30,6 +31,7 @@ export default function Fuel({ db, dispatch }) {
   const TABS = [
     { id:"log",     label:"Dispensing Log", icon:"droplet" },
     { id:"tanks",   label:"Tanks",          icon:"building-warehouse" },
+    { id:"daily",   label:"Daily Inventory", icon:"clipboard-check" },
     { id:"billing", label:"Department Billing", icon:"file-invoice" },
   ];
 
@@ -58,6 +60,10 @@ export default function Fuel({ db, dispatch }) {
       {tab==="tanks"   && (
         <TanksTab tanks={tanks} tankTx={tankTx} dispensing={dispensing}
           vendors={vendors} fuelGLCode={db.countyInfo?.fuelGLCode || "302.09"} dispatch={dispatch} />
+      )}
+      {tab==="daily" && (
+        <DailyInventoryTab tanks={tanks} tankTx={tankTx} dispensing={dispensing}
+          records={db.dailyInventory || []} dispatch={dispatch} />
       )}
       {tab==="billing" && <FuelBilling dispensing={dispensing} dispatch={dispatch} />}
     </div>

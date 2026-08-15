@@ -813,6 +813,14 @@ export const createTank = (overrides = {}) => ({
   filledByContractor: false,
   // Portable tanks ride on a pickup and are named after it — 402F is on unit 402.
   carriedByUnit:   "",
+  // Underground tanks are regulated. Nebraska requires a DAILY inventory record
+  // for every UST — see createDailyInventory below. Above-ground tanks are not
+  // covered by that rule, so this flag decides whether the obligation applies.
+  isUnderground:   false,
+  // Registration details the Fire Marshal asks for at the annual inspection.
+  facilityId:      "",           // state facility / registration number
+  tankRegistrationId: "",
+  installedDate:   "",
   status:          "active",     // active | out_of_service
   notes:           "",
   createdAt:       now(),
@@ -823,8 +831,10 @@ export const createTank = (overrides = {}) => ({
 // Every tank is filled by a contractor's tank wagon except the two portables,
 // which are filled from the shop's own stock. Corrected 2026-08-15 — Greg.
 export const DEFAULT_TANKS = [
-  { name:"Main Shop Diesel",   location:"Main Shop", fuelType:"diesel",   capacityGallons:8000, hasMonitor:true, filledByContractor:true },
-  { name:"Main Shop Unleaded", location:"Main Shop", fuelType:"unleaded", capacityGallons:8000, hasMonitor:true, filledByContractor:true },
+  // The two shop tanks are the only USTs — they carry the daily inventory
+  // obligation. Everything else is above ground and does not.
+  { name:"Main Shop Diesel",   location:"Main Shop", fuelType:"diesel",   capacityGallons:8000, hasMonitor:true, filledByContractor:true, tankType:"underground", isUnderground:true },
+  { name:"Main Shop Unleaded", location:"Main Shop", fuelType:"unleaded", capacityGallons:8000, hasMonitor:true, filledByContractor:true, tankType:"underground", isUnderground:true },
   { name:"Kenesaw",            location:"Kenesaw",   fuelType:"diesel",   capacityGallons:1500, filledByContractor:true },
   { name:"Holstein",           location:"Holstein",  fuelType:"diesel",   capacityGallons:1000, filledByContractor:true },
   { name:"Roseland",           location:"Roseland",  fuelType:"diesel",   capacityGallons:1000, filledByContractor:true },
@@ -873,6 +883,103 @@ export const createTankTransaction = (overrides = {}) => ({
   createdAt:       now(),
   ...overrides,
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UNDERGROUND STORAGE TANKS — DAILY INVENTORY RECORD
+//
+// Nebraska requires owners of USTs to conduct and record DAILY product
+// inventory control under 40 CFR 280.43(a)(1)-(6), for existing tanks as well
+// as new ones. The State Fire Marshal publishes a Daily Inventory Record form
+// and inspects every tank at least once a year, with release detection records
+// the first thing looked at.
+//
+// What the rule asks for, and what each field here is:
+//
+//   · inputs, withdrawals and amount remaining, recorded every operating day
+//   · product level sticked to the nearest 1/8 inch
+//   · deliveries sticked BEFORE and AFTER the drop
+//   · dispensing metered
+//   · water level measured monthly, also to 1/8 inch
+//   · reconciled monthly — loss or gain must not exceed 1% of throughput
+//     plus 130 gallons
+//
+// The point of the record is the comparison: what the book says should be in
+// the tank versus what the stick says is actually in it. A tank that quietly
+// disagrees month after month is how a leak announces itself.
+export const createDailyInventory = (overrides = {}) => ({
+  id:              uid(),
+  tankId:          null,
+  tankName:        "",
+  date:            today(),
+  // Sticked, in gallons. Openings normally carry over from yesterday's close,
+  // but they are measured rather than assumed — that is the whole point.
+  openingStick:    0,
+  closingStick:    0,
+  // Deliveries in and product out. Filled from the tank transactions and the
+  // dispensing log so nobody keys the same gallons twice, but editable because
+  // the paper log is the record of authority if they disagree.
+  deliveries:      0,
+  dispensed:       0,
+  // Sticked before and after a delivery — the rule asks for both.
+  deliveryStickBefore: null,
+  deliveryStickAfter:  null,
+  // Monthly, to the nearest 1/8 inch. Water in the bottom of a tank is both a
+  // product-quality problem and a possible sign of a breach.
+  waterInches:     null,
+  recordedBy:      "",
+  notes:           "",
+  createdAt:       now(),
+  ...overrides,
+});
+
+// What the book says should be in the tank at close of day.
+export const bookClosing = (r) =>
+  (Number(r?.openingStick) || 0) + (Number(r?.deliveries) || 0) - (Number(r?.dispensed) || 0);
+
+// Stick minus book. Negative means less fuel than there should be.
+export const dailyVariance = (r) => (Number(r?.closingStick) || 0) - bookClosing(r);
+
+// The monthly reconciliation the rule actually turns on.
+//
+// Loss or gain across the month must not exceed 1.0% of throughput plus 130
+// gallons. Throughput is what went THROUGH the tank — the product dispensed —
+// not what was delivered into it.
+export const UST_VARIANCE_PERCENT = 0.01;
+export const UST_VARIANCE_CONSTANT = 130;
+
+export function ustMonthlyReconciliation(records = []) {
+  const rows = records.filter(Boolean);
+  if (!rows.length) return null;
+
+  const sorted     = [...rows].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const throughput = sorted.reduce((s, r) => s + (Number(r.dispensed) || 0), 0);
+  const delivered  = sorted.reduce((s, r) => s + (Number(r.deliveries) || 0), 0);
+
+  // Measured across the month end to end, not the sum of daily wobble — a stick
+  // read an eighth of an inch high one day and low the next is not a loss.
+  const opening = Number(sorted[0].openingStick) || 0;
+  const closing = Number(sorted[sorted.length - 1].closingStick) || 0;
+  const book    = opening + delivered - throughput;
+  const variance = closing - book;
+
+  const threshold = throughput * UST_VARIANCE_PERCENT + UST_VARIANCE_CONSTANT;
+  const water = sorted.map(r => r.waterInches).filter(v => v !== null && v !== undefined);
+
+  return {
+    days: sorted.length,
+    from: sorted[0].date,
+    to:   sorted[sorted.length - 1].date,
+    opening, closing, delivered, throughput,
+    book, variance,
+    threshold,
+    // Over the threshold is a reportable suspected release, not a rounding note.
+    pass: Math.abs(variance) <= threshold,
+    // The rule wants water measured at least monthly. No reading is itself a gap.
+    waterReadings: water.length,
+    maxWater: water.length ? Math.max(...water) : null,
+    waterMissing: water.length === 0,
+  };
+}
 
 // Does the invoice agree with what the bid says it should have cost?
 //

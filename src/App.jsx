@@ -56,6 +56,9 @@ const initialState = {
   // ── Fuel & Tanks ─────────────────────────────────────────────────────────
   tanks:              DEFAULT_TANKS,   // createTank[] — the 8 real tanks
   tankTransactions:   [],   // createTankTransaction[]
+  // Daily product inventory for underground tanks — required by Nebraska under
+  // 40 CFR 280.43(a). Every operating day, per tank.
+  dailyInventory:     [],   // createDailyInventory[]
   fuelDispensing:     [],   // createFuelDispensing[]
 
   // ── Infrastructure ───────────────────────────────────────────────────────
@@ -568,6 +571,14 @@ function reducer(state, action) {
 
       return { ...state, tankTransactions, expenditures };
     }
+
+    case "ADD_DAILY_INVENTORY":
+      return { ...state, dailyInventory: [...(state.dailyInventory||[]), action.payload] };
+    case "UPDATE_DAILY_INVENTORY":
+      return { ...state, dailyInventory: (state.dailyInventory||[]).map(r =>
+        r.id === action.payload.id ? action.payload : r) };
+    case "DELETE_DAILY_INVENTORY":
+      return { ...state, dailyInventory: (state.dailyInventory||[]).filter(r => r.id !== action.payload) };
 
     case "ADD_TANK_TRANSACTION": {
       const tx = action.payload;

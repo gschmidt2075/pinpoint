@@ -18,6 +18,25 @@ export function FuelLogTab({ dispensing, units, tanks, tankTx, departments, disp
   const [form, setForm] = useState(EMPTY);
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
+  // Every fuelling, as a spreadsheet. Wanted for tank monitoring, and for any
+  // department that queries what it has been billed.
+  const exportLog = () => {
+    const esc = v => { const t = v==null?"":String(v); return /[",\n]/.test(t) ? `"${t.replace(/"/g,'""')}"` : t; };
+    const rows = [
+      ["Date","Consumer","Unit / Vehicle","Department","Meter","Fuel","Gallons","Tank",
+       "Tax Class","$/gal","Total","Pumped By","Billed","Paid","Notes"],
+      ...[...dispensing].sort((a,b)=>String(a.date).localeCompare(String(b.date))).map(e=>[
+        e.date, e.consumer, e.unitNumber || e.outsideVehicle, e.departmentName,
+        e.meterReading || e.outsideOdometer, e.fuelType, e.gallons, e.sourceTankName,
+        e.taxClass, e.unitCost, e.totalCost, e.pumpedBy, e.billedDate, e.paidDate, e.notes,
+      ]),
+    ];
+    const blob = new Blob([rows.map(r=>r.map(esc).join(",")).join("\n")], { type:"text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob); const a = document.createElement("a");
+    a.href = url; a.download = "fuel-dispensing-log.csv";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  };
+
   const isOutside     = form.consumer === "other_department";
   const selectedUnit  = units.find(u=>u.id===form.equipmentId);
   const selectedTank  = tanks.find(t=>t.id===form.sourceTankId);
@@ -45,7 +64,7 @@ export function FuelLogTab({ dispensing, units, tanks, tankTx, departments, disp
       fuelType: form.fuelType,
       gallons,
       pumpedBy: form.pumpedBy,
-      taxClass: form.taxClass,
+      taxClass: isDiesel ? form.taxClass : "on_road",
       unitCost, totalCost,
       sourceTankId: form.sourceTankId||null,
       sourceTankName: selectedTank?.name||"",
@@ -60,6 +79,9 @@ export function FuelLogTab({ dispensing, units, tanks, tankTx, departments, disp
   const sorted = [...dispensing].sort((a,b)=>(b.date||"").localeCompare(a.date||""));
   const totalGallons = dispensing.reduce((s,f)=>s+(f.gallons||0),0);
   const outsideGallons = dispensing.filter(f=>f.consumer==="other_department").reduce((s,f)=>s+(f.gallons||0),0);
+  // Gasoline is always on-road; the exemption is a dyed-diesel matter.
+  const isDiesel = (tanks.find(t => t.id === form.sourceTankId)?.fuelType || form.fuelType) === "diesel";
+
   const offRoadGal = dispensing.filter(f=>f.taxClass==="off_road").reduce((s,f)=>s+(f.gallons||0),0);
   const onRoadGal  = dispensing.filter(f=>f.taxClass==="on_road").reduce((s,f)=>s+(f.gallons||0),0);
 
@@ -73,7 +95,10 @@ export function FuelLogTab({ dispensing, units, tanks, tankTx, departments, disp
             taken here is what every PM interval is measured against.
           </div>
         </div>
-        <button onClick={()=>setShowForm(s=>!s)} style={btn.primary}>{showForm?"Cancel":"+ Log Fuel"}</button>
+        <div style={{ display:"flex", gap:8 }}>
+          <button onClick={exportLog} style={btn.secondary}>Export CSV</button>
+          <button onClick={()=>setShowForm(s=>!s)} style={btn.primary}>{showForm?"Cancel":"+ Log Fuel"}</button>
+        </div>
       </div>
 
       {(
@@ -156,12 +181,20 @@ export function FuelLogTab({ dispensing, units, tanks, tankTx, departments, disp
                   </select>
                 </Field>
                 <Field label="Pumped By"><input type="text" value={form.pumpedBy} onChange={e=>set("pumpedBy",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
-                <Field label="Tax Class">
-                  <select value={form.taxClass} onChange={e=>set("taxClass",e.target.value)} style={{ ...inp, margin:0 }}>
-                    <option value="off_road">Off-Road (exempt)</option>
-                    <option value="on_road">On-Road (taxable)</option>
-                  </select>
-                </Field>
+                {/* Only diesel carries the dyed/clear distinction that road tax
+                    turns on. Asking it for gasoline is noise on every entry. */}
+                {isDiesel ? (
+                  <Field label="Tax Class">
+                    <select value={form.taxClass} onChange={e=>set("taxClass",e.target.value)} style={{ ...inp, margin:0 }}>
+                      <option value="off_road">Off-Road (exempt)</option>
+                      <option value="on_road">On-Road (taxable)</option>
+                    </select>
+                  </Field>
+                ) : (
+                  <Field label="Tax Class">
+                    <div style={{ ...inp, margin:0, background:"#f7f7f5", color:"#888" }}>On-road</div>
+                  </Field>
+                )}
                 <Field label="Cost">
                   <div style={{ ...inp, margin:0, background:"#fff", fontFamily:"monospace", fontWeight:700, color: totalCost ? "#1a3a5c" : "#bbb" }}>
                     {totalCost ? fmtSm(totalCost) : "—"}
