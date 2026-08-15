@@ -105,12 +105,26 @@ function DeliveryInvoices({ tankTx, dispatch }) {
 }
 
 export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode = "302.09", dispatch }) {
-  const [showNew, setShowNew] = useState(false);
   const [selectedTankId, setSelectedTankId] = useState(null);
   const [txForm, setTxForm] = useState({ type:"delivery", date: today(), tankId:"", sourceTankId:"",
     gallons:"", vendorId:"", vendorName:"", invoiceNumber:"", unitCost:"", dipReading:"", notes:"",
     deliveryTicket:"", bidReference:"", claimCycleId:"", glCode: fuelGLCode });
   const setTx = (k,v) => setTxForm(f=>({...f,[k]:v}));
+
+  // Open the form already set to the job being done, rather than opening a
+  // generic form and asking which of four things this is.
+  const openForm = (job) => {
+    const wanted = job === "delivery" ? "delivery"
+                 : job === "transfer" ? "portable_fill"
+                 : "reading";
+    const already = showTxForm &&
+      (wanted === "reading"
+        ? (txForm.type === "dip_reading" || txForm.type === "monitor_reading")
+        : txForm.type === wanted);
+    if (already) { setShowTxForm(false); return; }
+    setTxForm(f => ({ ...f, type: wanted === "reading" ? "monitor_reading" : wanted }));
+    setShowTxForm(true);
+  };
 
   // Everything in and out of every tank. Deliveries, transfers and readings —
   // the movement record behind the levels.
@@ -133,8 +147,6 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
 
   const [showTxForm, setShowTxForm] = useState(false);
 
-  const [newTank, setNewTank] = useState({ name:"", fuelType:"diesel", tankType:"underground", capacityGallons:"", location:"", notes:"" });
-  const setNT = (k,v) => setNewTank(f=>({...f,[k]:v}));
 
   const selectedTank = tanks.find(t=>t.id===selectedTankId);
 
@@ -151,17 +163,6 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
     return all.filter(t => t.tankId === selectedTankId || t.sourceTankId === selectedTankId);
   }, [tankTx, selectedTankId]);
 
-  const handleAddTank = () => {
-    if (!newTank.name) return;
-    dispatch({ type:"ADD_TANK", payload:{
-      id:`${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
-      ...newTank, capacityGallons:parseFloat(newTank.capacityGallons)||0, currentLevel:0, status:"active",
-      createdAt:new Date().toISOString(),
-    }});
-    setNewTank({ name:"", fuelType:"diesel", tankType:"underground", capacityGallons:"", location:"", notes:"" });
-    setShowNew(false);
-  };
-
   // Only cycles from here on — a delivery cannot go on a claim already past.
   const claimCycleOptions = useMemo(() => {
     const t = today();
@@ -169,7 +170,8 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
   }, []);
   const deliveryTotal = (parseFloat(txForm.gallons)||0) * (parseFloat(txForm.unitCost)||0);
 
-  const isFill  = txForm.type === "portable_fill";
+  const isFill    = txForm.type === "portable_fill";
+  const isReading = txForm.type === "dip_reading" || txForm.type === "monitor_reading";
   const srcTank = tanks.find(t=>t.id===txForm.sourceTankId);
   const fillCost = isFill ? tankUnitCost(txForm.sourceTankId, tankTx) : 0;
   const fillShort = isFill && srcTank && (parseFloat(txForm.gallons)||0) > (srcTank.currentLevel||0);
@@ -242,54 +244,55 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
 
   return (
     <div>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
-        <div style={{ fontSize:16, fontWeight:700 }}>Fuel Tanks</div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", marginBottom:16, flexWrap:"wrap", gap:10 }}>
+        <div>
+          <div style={{ fontSize:16, fontWeight:700 }}>Fuel Tanks</div>
+          <div style={{ fontSize:12, color:"#888", marginTop:2 }}>
+            What is in each tank and what has moved. Tanks themselves are set up in
+            <strong> Settings → Fuel Tanks</strong>.
+          </div>
+        </div>
         <div style={{ display:"flex", gap:8 }}>
           <button onClick={exportTankTx} style={{ ...btn.secondary, fontSize:12 }}>Export CSV</button>
-          <button onClick={()=>setShowTxForm(s=>!s)} style={{ ...btn.secondary, fontSize:12 }}>{showTxForm?"Cancel":"+ Delivery / Reading"}</button>
-          <button onClick={()=>setShowNew(s=>!s)} style={btn.primary}>{showNew?"Cancel":"+ Add Tank"}</button>
+          {/* A delivery and a reading are different jobs done by different people
+              at different times — one button asking "which?" made them feel like
+              variants of one thing. */}
+          <button onClick={()=>openForm("delivery")} style={{ ...btn.secondary, fontSize:12 }}>
+            {showTxForm && txForm.type === "delivery" ? "Cancel" : "+ Delivery"}
+          </button>
+          <button onClick={()=>openForm("transfer")} style={{ ...btn.secondary, fontSize:12 }}>
+            {showTxForm && txForm.type === "portable_fill" ? "Cancel" : "+ Fill Portable"}
+          </button>
+          <button onClick={()=>openForm("reading")} style={{ ...btn.primary, fontSize:12 }}>
+            {showTxForm && (txForm.type === "dip_reading" || txForm.type === "monitor_reading") ? "Cancel" : "+ Reading"}
+          </button>
         </div>
       </div>
 
       <DeliveryInvoices tankTx={tankTx} dispatch={dispatch} />
 
-      {showNew && (
-        <div style={{ background:"#f7f7f5", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:16 }}>
-          <div style={{ fontWeight:700, fontSize:13, marginBottom:12 }}>New Tank</div>
-          <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr", gap:12, marginBottom:12 }}>
-            <Field label="Tank Name"><input type="text" value={newTank.name} onChange={e=>setNT("name",e.target.value)} style={{ ...inp, margin:0 }} placeholder="Main Shop Diesel…" /></Field>
-            <Field label="Fuel Type">
-              <select value={newTank.fuelType} onChange={e=>setNT("fuelType",e.target.value)} style={{ ...inp, margin:0 }}>
-                <option value="diesel">Diesel</option>
-                <option value="unleaded">Unleaded</option>
-              </select>
-            </Field>
-            <Field label="Tank Type">
-              <select value={newTank.tankType} onChange={e=>setNT("tankType",e.target.value)} style={{ ...inp, margin:0 }}>
-                <option value="underground">Underground</option>
-                <option value="above_ground">Above Ground</option>
-                <option value="portable">Portable</option>
-              </select>
-            </Field>
-            <Field label="Capacity (gal)"><input type="number" min="0" step="100" value={newTank.capacityGallons} onChange={e=>setNT("capacityGallons",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
-            <Field label="Location"><input type="text" value={newTank.location} onChange={e=>setNT("location",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
-          </div>
-          <button onClick={handleAddTank} style={btn.primary}>Add Tank</button>
-        </div>
-      )}
-
       {showTxForm && (
         <div style={{ background:"#f7f7f5", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:16 }}>
           <div style={{ fontWeight:700, fontSize:13, marginBottom:12 }}>Tank Transaction</div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 2fr 1fr", gap:12, marginBottom:12 }}>
-            <Field label="Type">
-              <select value={txForm.type} onChange={e=>setTx("type",e.target.value)} style={{ ...inp, margin:0 }}>
-                <option value="delivery">Fuel Delivery</option>
-                <option value="monitor_reading">Monitor Balance (daily)</option>
-                <option value="dip_reading">Dip Reading (annual)</option>
-                <option value="portable_fill">Fill Portable Tank</option>
-              </select>
-            </Field>
+            {/* The button chose the job. For a reading there is still a real
+                question — monitor or stick — because they are different checks:
+                the monitor asks whether the tank is losing product, the stick
+                asks whether the monitor is telling the truth. */}
+            {isReading ? (
+              <Field label="Reading Type">
+                <select value={txForm.type} onChange={e=>setTx("type",e.target.value)} style={{ ...inp, margin:0 }}>
+                  <option value="monitor_reading">Monitor balance — daily</option>
+                  <option value="dip_reading">Stick / dip — annual gauge check</option>
+                </select>
+              </Field>
+            ) : (
+              <Field label="Type">
+                <div style={{ ...inp, margin:0, background:"#f7f7f5", color:"#555" }}>
+                  {txForm.type === "delivery" ? "Fuel delivery" : "Fill portable tank"}
+                </div>
+              </Field>
+            )}
             <Field label="Date"><DateField value={txForm.date} onChange={v => setTx("date", v)} /></Field>
             <Field label={isFill ? "Tank being filled" : "Tank"}>
               <select value={txForm.tankId} onChange={e=>setTx("tankId",e.target.value)} style={{ ...inp, margin:0 }}>

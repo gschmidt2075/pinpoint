@@ -1004,106 +1004,180 @@ function ListEditor({ title, subtitle, icon, items, placeholder, typeOptions, on
 }
 
 // ── Fuel tanks ────────────────────────────────────────────────────────────────
+// ── Fuel tanks ────────────────────────────────────────────────────────────────
+//
+// Tank setup lives here and only here. The Fuel module records what HAPPENS to
+// a tank — deliveries, transfers, readings, dispensing. What a tank IS gets
+// configured once, in settings, by someone who knows the site.
+//
+// The underground flag is the consequential one. Underground tanks are
+// regulated: Nebraska requires a daily product inventory record for each, and
+// the Fire Marshal inspects annually. Ticking this box is what puts a tank on
+// the Daily Inventory screen, so it should say what is true of the ground, not
+// what would be convenient.
 function TankSettings({ tanks, dispatch }) {
-  const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({
+  const BLANK = {
     name:"", location:"", fuelType:"diesel", tankType:"above_ground",
     capacityGallons:"", hasMonitor:false, filledByContractor:false, carriedByUnit:"",
-  });
+    isUnderground:false, facilityId:"", tankRegistrationId:"", installedDate:"",
+    status:"active", notes:"",
+  };
+  const [editing, setEditing] = useState(null);   // tank id, or "new", or null
+  const [form, setForm] = useState(BLANK);
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
-  const add = () => {
+  const startNew  = () => { setForm(BLANK); setEditing("new"); };
+  const startEdit = (t) => {
+    setForm({ ...BLANK, ...t, capacityGallons: String(t.capacityGallons ?? "") });
+    setEditing(t.id);
+  };
+  const cancel = () => { setEditing(null); setForm(BLANK); };
+
+  const save = () => {
     if (!form.name) return;
-    dispatch({ type:"ADD_TANK", payload: createTank({ ...form, capacityGallons: parseFloat(form.capacityGallons)||0 }) });
-    setForm({ name:"", location:"", fuelType:"diesel", tankType:"above_ground", capacityGallons:"", hasMonitor:false, filledByContractor:false, carriedByUnit:"" });
-    setShowForm(false);
+    const payload = {
+      ...form,
+      capacityGallons: parseFloat(form.capacityGallons) || 0,
+      // A tank cannot be underground and portable at once, and the type is what
+      // people actually read on screen — keep the two in step rather than
+      // letting them drift apart.
+      tankType: form.isUnderground ? "underground" : form.tankType,
+    };
+    if (editing === "new") dispatch({ type:"ADD_TANK", payload: createTank(payload) });
+    else                   dispatch({ type:"UPDATE_TANK", payload: { ...payload, id: editing } });
+    cancel();
   };
 
-  const toggle = (t,k) => dispatch({ type:"UPDATE_TANK", payload:{ ...t, [k]: !t[k] } });
+  const usts = tanks.filter(t => t.isUnderground);
+  const isNew = editing === "new";
 
   return (
     <SectionCard
       title="Fuel Tanks"
-      subtitle={`${tanks.length} tanks · monitored tanks reconcile daily, the rest are dipped annually`}
+      subtitle={`${tanks.length} tanks · ${usts.length} underground, carrying a daily inventory record`}
       icon="gas-station"
+      action={!editing && <button onClick={startNew} style={{ ...btn.primary, fontSize:12, padding:"7px 14px" }}>+ Add Tank</button>}
     >
-      <div style={{ padding:"14px 18px", borderBottom:"1px solid #eee" }}>
-        <button onClick={()=>setShowForm(s=>!s)} style={btn.primary}>{showForm?"Cancel":"+ Add Tank"}</button>
-      </div>
-
-      {showForm && (
+      {editing && (
         <div style={{ padding:18, background:"#f7f7f5", borderBottom:"1px solid #eee" }}>
+          <div style={{ fontWeight:700, fontSize:13, marginBottom:12 }}>
+            {isNew ? "New tank" : `Editing ${form.name}`}
+          </div>
+
           <div style={{ display:"grid", gridTemplateColumns:"2fr 1.5fr 1fr 1fr 1fr", gap:12, marginBottom:12 }}>
-            <Field label="Name" required><input type="text" value={form.name} onChange={e=>set("name",e.target.value)} style={{ ...inp, margin:0 }} placeholder="Main Shop Diesel" /></Field>
-            <Field label="Location"><input type="text" value={form.location} onChange={e=>set("location",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <Field label="Name" required>
+              <input type="text" value={form.name} onChange={e=>set("name",e.target.value)} style={{ ...inp, margin:0 }} placeholder="Main Shop Diesel" />
+            </Field>
+            <Field label="Location">
+              <input type="text" value={form.location} onChange={e=>set("location",e.target.value)} style={{ ...inp, margin:0 }} />
+            </Field>
             <Field label="Fuel">
               <select value={form.fuelType} onChange={e=>set("fuelType",e.target.value)} style={{ ...inp, margin:0 }}>
-                <option value="diesel">Diesel</option><option value="unleaded">Unleaded</option>
+                <option value="diesel">Diesel</option>
+                <option value="unleaded">Unleaded</option>
+                <option value="propane">Propane</option>
               </select>
             </Field>
             <Field label="Type">
-              <select value={form.tankType} onChange={e=>set("tankType",e.target.value)} style={{ ...inp, margin:0 }}>
+              <select value={form.tankType} onChange={e=>set("tankType",e.target.value)}
+                disabled={form.isUnderground} style={{ ...inp, margin:0, opacity: form.isUnderground?0.6:1 }}>
                 <option value="above_ground">Above ground</option>
                 <option value="underground">Underground</option>
                 <option value="portable">Portable</option>
               </select>
             </Field>
-            <Field label="Capacity (gal)"><input type="number" min="0" value={form.capacityGallons} onChange={e=>set("capacityGallons",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+            <Field label="Capacity (gal)">
+              <input type="number" min="0" value={form.capacityGallons} onChange={e=>set("capacityGallons",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} />
+            </Field>
           </div>
-          <div style={{ display:"flex", gap:20, alignItems:"center", flexWrap:"wrap" }}>
+
+          <div style={{ display:"flex", gap:22, alignItems:"center", flexWrap:"wrap", marginBottom:12 }}>
             <label style={{ display:"flex", alignItems:"center", gap:7, fontSize:12, cursor:"pointer" }}>
               <input type="checkbox" checked={form.hasMonitor} onChange={e=>set("hasMonitor",e.target.checked)} />
-              Has an electronic monitor <span style={{ color:"#888" }}>— reconciles daily</span>
+              Has an electronic monitor <span style={{ color:"#888" }}>— read daily</span>
             </label>
             <label style={{ display:"flex", alignItems:"center", gap:7, fontSize:12, cursor:"pointer" }}>
               <input type="checkbox" checked={form.filledByContractor} onChange={e=>set("filledByContractor",e.target.checked)} />
               Filled by contractor tank wagon
             </label>
+            <label style={{ display:"flex", alignItems:"center", gap:7, fontSize:12, cursor:"pointer", fontWeight:600, color:"#1a3a5c" }}>
+              <input type="checkbox" checked={form.isUnderground}
+                onChange={e=>{ set("isUnderground", e.target.checked); if (e.target.checked) set("tankType","underground"); }} />
+              Underground <span style={{ color:"#888", fontWeight:400 }}>— regulated, needs a daily record</span>
+            </label>
             {form.tankType === "portable" && (
-              <Field label="Carried by unit"><input type="text" value={form.carriedByUnit} onChange={e=>set("carriedByUnit",e.target.value)} style={{ ...inp, margin:0, width:90, fontFamily:"monospace" }} placeholder="402" /></Field>
+              <Field label="Carried by unit">
+                <input type="text" value={form.carriedByUnit} onChange={e=>set("carriedByUnit",e.target.value)} style={{ ...inp, margin:0, width:90, fontFamily:"monospace" }} placeholder="402" />
+              </Field>
             )}
-            <button onClick={add} disabled={!form.name} style={{ ...btn.primary, opacity:form.name?1:0.4, marginLeft:"auto" }}>Add Tank</button>
+          </div>
+
+          {form.isUnderground && (
+            <div style={{ background:"#fff", border:"1px solid #c8d8ec", borderRadius:6, padding:14, marginBottom:12 }}>
+              <div style={{ fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em", color:"#1a3a5c", marginBottom:4 }}>
+                Regulated Tank
+              </div>
+              <div style={{ fontSize:11, color:"#888", marginBottom:10, lineHeight:1.6 }}>
+                This tank will appear on the Daily Inventory screen and carry a monthly reconciliation.
+                The Fire Marshal asks for these at the annual inspection.
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12 }}>
+                <Field label="Facility ID">
+                  <input type="text" value={form.facilityId} onChange={e=>set("facilityId",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} />
+                </Field>
+                <Field label="Tank registration #">
+                  <input type="text" value={form.tankRegistrationId} onChange={e=>set("tankRegistrationId",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} />
+                </Field>
+                <Field label="Installed">
+                  <DateField value={form.installedDate} onChange={v=>set("installedDate",v)} />
+                </Field>
+              </div>
+            </div>
+          )}
+
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 3fr", gap:12, marginBottom:12 }}>
+            <Field label="Status">
+              <select value={form.status} onChange={e=>set("status",e.target.value)} style={{ ...inp, margin:0 }}>
+                <option value="active">Active</option>
+                <option value="out_of_service">Out of service</option>
+              </select>
+            </Field>
+            <Field label="Notes">
+              <input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={{ ...inp, margin:0 }} />
+            </Field>
+          </div>
+
+          <div style={{ display:"flex", gap:10 }}>
+            <button onClick={save} disabled={!form.name} style={{ ...btn.primary, opacity:form.name?1:0.4 }}>
+              {isNew ? "Add Tank" : "Save Changes"}
+            </button>
+            <button onClick={cancel} style={btn.ghost}>Cancel</button>
           </div>
         </div>
       )}
 
-      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
-        <thead>
-          <tr style={{ background:"#f7f7f5" }}>
-            {["Tank","Location","Fuel","Capacity","Monitor","Contractor Filled","Carried By",""].map(h=>(
-              <th key={h} style={{ padding:"9px 14px", textAlign:h==="Capacity"?"right":"left", fontWeight:600, fontSize:11, textTransform:"uppercase", letterSpacing:"0.05em", color:"#666", borderBottom:"1px solid #eee" }}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {tanks.length===0 && (
-            <tr><td colSpan={8} style={{ padding:28, textAlign:"center", color:"#aaa", fontSize:13 }}>No tanks configured</td></tr>
-          )}
-          {tanks.map((t,i)=>(
-            <tr key={t.id} style={{ borderTop:"1px solid #eee", background:i%2===0?"#fff":"#fafaf8" }}>
-              <td style={{ padding:"9px 14px", fontWeight:600 }}>{t.name}</td>
-              <td style={{ padding:"9px 14px", fontSize:12, color:"#666" }}>{t.location||"—"}</td>
-              <td style={{ padding:"9px 14px", fontSize:12, textTransform:"capitalize" }}>{t.fuelType}</td>
-              <td style={{ padding:"9px 14px", textAlign:"right", fontFamily:"monospace" }}>{t.capacityGallons?.toLocaleString()||"—"}</td>
-              <td style={{ padding:"9px 14px" }}>
-                <label style={{ cursor:"pointer", fontSize:12 }}>
-                  <input type="checkbox" checked={!!t.hasMonitor} onChange={()=>toggle(t,"hasMonitor")} /> {t.hasMonitor?"daily":"annual dip"}
-                </label>
-              </td>
-              <td style={{ padding:"9px 14px" }}>
-                <input type="checkbox" checked={!!t.filledByContractor} onChange={()=>toggle(t,"filledByContractor")} />
-              </td>
-              <td style={{ padding:"9px 14px", fontFamily:"monospace", fontSize:12, color:"#888" }}>{t.carriedByUnit||"—"}</td>
-              <td style={{ padding:"9px 14px", textAlign:"right" }}>
-                <button
-                  onClick={()=>{ if(window.confirm(`Remove ${t.name}?\n\nFuel already logged against it is kept.`)) dispatch({ type:"REMOVE_TANK", payload:t.id }); }}
-                  style={{ ...btn.small, background:"#c0392b", fontSize:10, padding:"3px 9px" }}
-                >Remove</button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <Table
+        headers={[{label:"Tank"},{label:"Location"},{label:"Fuel"},{label:"Type"},{label:"Capacity"},
+                  {label:"Monitor"},{label:"Filled By"},{label:"Status"},{label:""}]}
+        rows={tanks.map(t => [
+          <span style={{ fontWeight:600 }}>
+            {t.name}
+            {t.isUnderground && (
+              <span style={{ marginLeft:7, background:"#e8f0fb", color:"#1a4a8a", border:"1px solid #c8d8ec",
+                             borderRadius:99, padding:"1px 7px", fontSize:10, fontWeight:700 }}>UST</span>
+            )}
+          </span>,
+          t.location || "—",
+          titleCase(t.fuelType),
+          titleCase(t.tankType),
+          <span style={{ fontFamily:"monospace" }}>{t.capacityGallons ? `${t.capacityGallons.toLocaleString()} gal` : "—"}</span>,
+          <span style={{ fontSize:11, color: t.hasMonitor ? "#1a5a3a" : "#aaa" }}>{t.hasMonitor ? "Yes" : "No"}</span>,
+          <span style={{ fontSize:11, color:"#888" }}>{t.filledByContractor ? "Contractor" : t.tankType === "portable" ? `Unit ${t.carriedByUnit || "?"}` : "Own stock"}</span>,
+          <span style={{ fontSize:11, color: t.status === "active" ? "#1a5a3a" : "#c0392b" }}>{titleCase(t.status)}</span>,
+          <button onClick={()=>startEdit(t)} style={{ ...btn.ghost, fontSize:11, padding:"4px 10px" }}>Edit</button>,
+        ])}
+        emptyMessage="No tanks configured yet"
+      />
     </SectionCard>
   );
 }
