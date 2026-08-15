@@ -199,7 +199,13 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
       invoiceNumber:txForm.invoiceNumber,
       deliveryTicket: txForm.deliveryTicket, bidReference: txForm.bidReference,
       expenditureId: expenditure?.id || null,
-      invoiceStatus: isDelivery ? "expected" : "",
+      // An invoice number typed at delivery means the paper came with the
+      // truck — there is nothing left to chase. Only a blank one is expected.
+      invoiceStatus: isDelivery
+        ? (txForm.invoiceNumber.trim() ? "reconciled" : "expected")
+        : "",
+      invoicedAmount: (isDelivery && txForm.invoiceNumber.trim()) ? deliveryCost : 0,
+      reconciledDate: (isDelivery && txForm.invoiceNumber.trim()) ? txForm.date : "",
       expenditure,
       deliveryCost, unitCost:perGal,
       sourceTankId: isFill ? txForm.sourceTankId : null,
@@ -368,10 +374,15 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
                 </Field>
               </div>
 
-              <Field label="Invoice # (if it came with the load)">
+              <Field label="Invoice #">
                 <input type="text" value={txForm.invoiceNumber} onChange={e=>setTx("invoiceNumber",e.target.value)}
-                  placeholder="Leave blank — you can reconcile it when the invoice arrives"
+                  placeholder="Leave blank if the invoice hasn't come yet"
                   style={{ ...inp, margin:0, fontFamily:"monospace" }} />
+                <div style={{ fontSize:11, color:"#888", marginTop:4 }}>
+                  {txForm.invoiceNumber.trim()
+                    ? "Invoice in hand — this delivery is done, nothing to reconcile later."
+                    : "Blank means it will show under deliveries awaiting an invoice."}
+                </div>
               </Field>
 
               {deliveryTotal > 0 && txForm.claimCycleId ? (

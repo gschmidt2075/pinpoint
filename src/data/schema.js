@@ -820,9 +820,11 @@ export const createTank = (overrides = {}) => ({
 });
 
 // The eight real tanks, confirmed 2026-07-27.
+// Every tank is filled by a contractor's tank wagon except the two portables,
+// which are filled from the shop's own stock. Corrected 2026-08-15 — Greg.
 export const DEFAULT_TANKS = [
-  { name:"Main Shop Diesel",   location:"Main Shop", fuelType:"diesel",   capacityGallons:8000, hasMonitor:true },
-  { name:"Main Shop Unleaded", location:"Main Shop", fuelType:"unleaded", capacityGallons:8000, hasMonitor:true },
+  { name:"Main Shop Diesel",   location:"Main Shop", fuelType:"diesel",   capacityGallons:8000, hasMonitor:true, filledByContractor:true },
+  { name:"Main Shop Unleaded", location:"Main Shop", fuelType:"unleaded", capacityGallons:8000, hasMonitor:true, filledByContractor:true },
   { name:"Kenesaw",            location:"Kenesaw",   fuelType:"diesel",   capacityGallons:1500, filledByContractor:true },
   { name:"Holstein",           location:"Holstein",  fuelType:"diesel",   capacityGallons:1000, filledByContractor:true },
   { name:"Roseland",           location:"Roseland",  fuelType:"diesel",   capacityGallons:1000, filledByContractor:true },
