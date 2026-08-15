@@ -911,8 +911,13 @@ export const createDailyInventory = (overrides = {}) => ({
   tankId:          null,
   tankName:        "",
   date:            today(),
-  // Sticked, in gallons. Openings normally carry over from yesterday's close,
-  // but they are measured rather than assumed — that is the whole point.
+  // HOW the level was measured. Adams County reads the electronic monitor daily
+  // and sticks once a year — the stick is there to check the monitor, not to
+  // replace it. Both are legitimate; the record has to say which was used, or
+  // the annual gauge check has nothing to compare against.
+  measuredBy:      "monitor",    // monitor | stick
+  // Gallons. Openings normally carry over from yesterday's close, but they are
+  // measured rather than assumed — that is the whole point.
   openingStick:    0,
   closingStick:    0,
   // Deliveries in and product out. Filled from the tank transactions and the
@@ -923,6 +928,11 @@ export const createDailyInventory = (overrides = {}) => ({
   // Sticked before and after a delivery — the rule asks for both.
   deliveryStickBefore: null,
   deliveryStickAfter:  null,
+  // The annual check: stick the tank and compare it against what the monitor
+  // says on the same day. This verifies the GAUGE, which is a different
+  // question from whether the tank is losing product.
+  gaugeCheckStick:   null,       // what the stick read
+  gaugeCheckMonitor: null,       // what the monitor read at the same moment
   // Monthly, to the nearest 1/8 inch. Water in the bottom of a tank is both a
   // product-quality problem and a possible sign of a breach.
   waterInches:     null,
@@ -979,6 +989,32 @@ export function ustMonthlyReconciliation(records = []) {
     maxWater: water.length ? Math.max(...water) : null,
     waterMissing: water.length === 0,
   };
+}
+
+// The annual gauge verification — stick against monitor on the same day.
+//
+// This answers "is the monitor telling the truth", not "is the tank leaking".
+// A monitor reading two hundred gallons high will pass every daily
+// reconciliation while hiding a real loss, because everything is measured
+// against the same wrong number.
+export function gaugeCheck(r) {
+  const stick   = r?.gaugeCheckStick;
+  const monitor = r?.gaugeCheckMonitor;
+  if (stick == null || monitor == null) return null;
+  const difference = Number(stick) - Number(monitor);
+  return {
+    stick: Number(stick), monitor: Number(monitor), difference,
+    // Manufacturers generally hold ATG to well inside this; a tank disagreeing
+    // with its own gauge by more than a stick's read error wants looking at.
+    agrees: Math.abs(difference) <= 25,
+  };
+}
+
+// When was the gauge last verified against a stick?
+export function lastGaugeCheck(records = [], tankId) {
+  return records
+    .filter(r => r.tankId === tankId && r.gaugeCheckStick != null && r.gaugeCheckMonitor != null)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)))[0] || null;
 }
 
 // Does the invoice agree with what the bid says it should have cost?

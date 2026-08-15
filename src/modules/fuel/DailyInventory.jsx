@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { Field, SectionCard, Table, KPICard, inp, btn, fmt, DateField } from "../../components/shared.jsx";
 import { createDailyInventory, bookClosing, dailyVariance, ustMonthlyReconciliation,
+         gaugeCheck, lastGaugeCheck,
          UST_VARIANCE_PERCENT, UST_VARIANCE_CONSTANT } from "../../data/schema.js";
 import { today, fmtDate } from "./shared.js";
 
@@ -18,6 +19,21 @@ import { today, fmtDate } from "./shared.js";
 //
 // Only tanks flagged underground appear here. Above-ground tanks are not
 // covered by the rule and putting them on this screen would imply otherwise.
+//
+// HOW ADAMS COUNTY ACTUALLY DOES IT — Equipment questionnaire Q29:
+//
+//   "Main shop fuel logs are collected and reconciled against the tank monitor
+//    daily. Once per year, tanks are dipped and reconciled with tank monitor."
+//
+// Two different checks, and it is worth being precise about which is which:
+//
+//   DAILY   the paper logs against the monitor — is the tank losing product?
+//   ANNUAL  a stick against the monitor        — is the monitor telling the truth?
+//
+// The second is not a lesser version of the first. A gauge reading two hundred
+// gallons high passes every daily reconciliation while hiding a real loss,
+// because everything is being measured against the same wrong number. That is
+// why the annual stick exists, and why it is recorded separately here.
 
 const gal = (n) => `${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits:1 })}`;
 
@@ -89,11 +105,13 @@ export function DailyInventoryTab({ tanks, tankTx, dispensing, records, dispatch
       [`Facility ID`, tank?.facilityId || ""],
       [`Tank registration`, tank?.tankRegistrationId || ""],
       [],
-      ["Date","Opening Stick","Deliveries In","Dispensed Out","Book Closing","Closing Stick","Variance","Water (in)","Recorded By","Notes"],
+      ["Date","Read From","Opening","Deliveries In","Dispensed Out","Book Closing","Measured Closing",
+       "Variance","Water (in)","Gauge Check Stick","Gauge Check Monitor","Recorded By","Notes"],
       ...forMonth.map(r => [
-        r.date, r.openingStick, r.deliveries, r.dispensed,
+        r.date, r.measuredBy || "monitor", r.openingStick, r.deliveries, r.dispensed,
         bookClosing(r), r.closingStick, dailyVariance(r).toFixed(1),
-        r.waterInches ?? "", r.recordedBy || "", r.notes || "",
+        r.waterInches ?? "", r.gaugeCheckStick ?? "", r.gaugeCheckMonitor ?? "",
+        r.recordedBy || "", r.notes || "",
       ]),
       [],
       ...(rec ? [
@@ -147,6 +165,33 @@ export function DailyInventoryTab({ tanks, tankTx, dispensing, records, dispatch
         />
       )}
 
+      {(() => {
+        const g = lastGaugeCheck(forTank, tankId);
+        const check = g ? gaugeCheck(g) : null;
+        const daysSince = g ? Math.floor((Date.now() - new Date(g.date)) / 864e5) : null;
+        const overdue = !g || daysSince > 365;
+        return (
+          <div style={{
+            background: overdue ? "#fef8e8" : check?.agrees ? "#f0f8f4" : "#fdecea",
+            border: `1px solid ${overdue ? "#f0d080" : check?.agrees ? "#a8d5b5" : "#f5c6c6"}`,
+            borderRadius:8, padding:"11px 14px", marginBottom:16, fontSize:12, lineHeight:1.6,
+            color: overdue ? "#7a4f00" : check?.agrees ? "#1a5a3a" : "#8c1b18",
+          }}>
+            <strong>Annual gauge check — </strong>
+            {!g ? (
+              <>never done. The tank is dipped once a year to confirm the monitor is telling the truth.
+                 Until then, every daily figure rests on a gauge nobody has verified.</>
+            ) : (
+              <>last done {fmtDate(g.date)} ({daysSince} days ago). Stick {gal(check.stick)} gal
+                 against monitor {gal(check.monitor)} gal — {check.difference >= 0 ? "+" : ""}
+                 {check.difference.toFixed(1)} gal.
+                 {check.agrees ? " The monitor agrees." : " The monitor is off; daily figures inherit that error."}
+                 {daysSince > 365 && " Overdue for this year's stick."}</>
+            )}
+          </div>
+        );
+      })()}
+
       {rec && (
         <>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:16 }}>
@@ -193,12 +238,16 @@ export function DailyInventoryTab({ tanks, tankTx, dispensing, records, dispatch
       <SectionCard title={`${tank?.name || "Tank"} — ${monthLabel(month)}`}
         subtitle={forMonth.length ? `${forMonth.length} days recorded` : "Nothing recorded this month"}>
         <Table
-          headers={[{label:"Date"},{label:"Opening"},{label:"In"},{label:"Out"},
-                    {label:"Book"},{label:"Stick"},{label:"Variance"},{label:"Water"},{label:"By"}]}
+          headers={[{label:"Date"},{label:"Read"},{label:"Opening"},{label:"In"},{label:"Out"},
+                    {label:"Book"},{label:"Measured"},{label:"Variance"},{label:"Water"},{label:"By"}]}
           rows={forMonth.map(r => {
             const v = dailyVariance(r);
             return [
               <span style={{ fontFamily:"monospace", fontSize:12 }}>{fmtDate(r.date)}</span>,
+              <span style={{ fontSize:10, fontWeight:700, color: r.measuredBy === "stick" ? "#5a1a8a" : "#888" }}>
+                {r.measuredBy === "stick" ? "STICK" : "MONITOR"}
+                {r.gaugeCheckStick != null && <span style={{ color:"#1a3a5c" }}> · GAUGE</span>}
+              </span>,
               <span style={{ fontFamily:"monospace" }}>{gal(r.openingStick)}</span>,
               <span style={{ fontFamily:"monospace", color: r.deliveries ? "#1a5a3a" : "#ccc" }}>{r.deliveries ? `+${gal(r.deliveries)}` : "—"}</span>,
               <span style={{ fontFamily:"monospace", color:"#c0392b" }}>−{gal(r.dispensed)}</span>,
@@ -229,6 +278,7 @@ function DayForm({ tank, records, tankTx, dispensing, onSave, onCancel }) {
   const last = records[0];
   const [form, setForm] = useState({
     date: today(),
+    measuredBy: tank?.hasMonitor ? "monitor" : "stick",
     openingStick: last?.closingStick ?? "",
     closingStick: "",
     waterInches: "",
@@ -237,6 +287,10 @@ function DayForm({ tank, records, tankTx, dispensing, onSave, onCancel }) {
     overrideTotals: false,
     deliveries: "",
     dispensed: "",
+    // The annual check — only filled in on the day the tank is sticked.
+    gaugeCheck: false,
+    gaugeCheckStick: "",
+    gaugeCheckMonitor: "",
   });
   const set = (k,v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -262,6 +316,11 @@ function DayForm({ tank, records, tankTx, dispensing, onSave, onCancel }) {
   const book       = opening + deliveries - dispensed;
   const variance   = form.closingStick === "" ? null : closing - book;
 
+  const gaugeNow = gaugeCheck({
+    gaugeCheckStick:   form.gaugeCheckStick   === "" ? null : parseFloat(form.gaugeCheckStick),
+    gaugeCheckMonitor: form.gaugeCheckMonitor === "" ? null : parseFloat(form.gaugeCheckMonitor),
+  });
+
   const canSave = form.date && form.openingStick !== "" && form.closingStick !== "";
 
   return (
@@ -270,9 +329,15 @@ function DayForm({ tank, records, tankTx, dispensing, onSave, onCancel }) {
         {tank?.name} — one day's reading
       </div>
 
-      <div style={{ display:"grid", gridTemplateColumns:"1.2fr 1fr 1fr 1fr 1fr", gap:12, marginBottom:12 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"1.1fr 0.9fr 1fr 1fr 1fr 1fr", gap:12, marginBottom:12 }}>
         <Field label="Date" required><DateField value={form.date} onChange={v=>set("date",v)} /></Field>
-        <Field label="Opening stick (gal)" required>
+        <Field label="Read from">
+          <select value={form.measuredBy} onChange={e=>set("measuredBy",e.target.value)} style={{ ...inp, margin:0 }}>
+            <option value="monitor">Tank monitor</option>
+            <option value="stick">Stick</option>
+          </select>
+        </Field>
+        <Field label={`Opening ${form.measuredBy === "stick" ? "stick" : "reading"} (gal)`} required>
           <input type="number" step="any" value={form.openingStick} onChange={e=>set("openingStick",e.target.value)}
             style={{ ...inp, margin:0, fontFamily:"monospace" }} />
         </Field>
@@ -286,7 +351,7 @@ function DayForm({ tank, records, tankTx, dispensing, onSave, onCancel }) {
             {dispensed ? `−${gal(dispensed)}` : "—"}
           </div>
         </Field>
-        <Field label="Closing stick (gal)" required>
+        <Field label={`Closing ${form.measuredBy === "stick" ? "stick" : "reading"} (gal)`} required>
           <input type="number" step="any" value={form.closingStick} onChange={e=>set("closingStick",e.target.value)}
             style={{ ...inp, margin:0, fontFamily:"monospace", fontWeight:700 }} />
         </Field>
@@ -316,6 +381,47 @@ function DayForm({ tank, records, tankTx, dispensing, onSave, onCancel }) {
         </div>
       )}
 
+      {/* The once-a-year stick, compared against the monitor on the same day. */}
+      {tank?.hasMonitor && (
+        <div style={{ background:"#fff", border:"1px solid #e4e4e0", borderRadius:6, padding:12, marginBottom:12 }}>
+          <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, fontWeight:600, color:"#1a3a5c" }}>
+            <input type="checkbox" checked={form.gaugeCheck} onChange={e=>set("gaugeCheck", e.target.checked)} />
+            This is the annual stick — check the monitor against it
+          </label>
+          {form.gaugeCheck && (
+            <>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1.6fr", gap:12, marginTop:10 }}>
+                <Field label="Stick reads (gal)">
+                  <input type="number" step="any" value={form.gaugeCheckStick}
+                    onChange={e=>set("gaugeCheckStick",e.target.value)}
+                    style={{ ...inp, margin:0, fontFamily:"monospace" }} />
+                </Field>
+                <Field label="Monitor reads (gal)">
+                  <input type="number" step="any" value={form.gaugeCheckMonitor}
+                    onChange={e=>set("gaugeCheckMonitor",e.target.value)}
+                    style={{ ...inp, margin:0, fontFamily:"monospace" }} />
+                </Field>
+                <Field label="Gauge agreement">
+                  <div style={{ ...inp, margin:0, background:"#f7f7f5", fontFamily:"monospace",
+                                color: gaugeNow ? (gaugeNow.agrees ? "#1a5a3a" : "#c0392b") : "#bbb" }}>
+                    {gaugeNow
+                      ? `${gaugeNow.difference >= 0 ? "+" : ""}${gaugeNow.difference.toFixed(1)} gal ${gaugeNow.agrees ? "— agrees" : "— monitor is off"}`
+                      : "—"}
+                  </div>
+                </Field>
+              </div>
+              {gaugeNow && !gaugeNow.agrees && (
+                <div style={{ marginTop:8, background:"#fdecea", border:"1px solid #f5c6c6", borderRadius:6, padding:"9px 12px", fontSize:12, color:"#8c1b18", lineHeight:1.6 }}>
+                  The monitor disagrees with the stick by {Math.abs(gaugeNow.difference).toFixed(0)} gallons.
+                  Every daily reconciliation this year was measured against that monitor, so they were all
+                  measured against the same wrong number. Worth a service call before trusting them.
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
       <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:11, color:"#888", marginBottom:12 }}>
         <input type="checkbox" checked={form.overrideTotals}
           onChange={e=>{ set("overrideTotals", e.target.checked);
@@ -342,7 +448,10 @@ function DayForm({ tank, records, tankTx, dispensing, onSave, onCancel }) {
             tankId: tank.id, tankName: tank.name, date: form.date,
             openingStick: opening, closingStick: closing,
             deliveries, dispensed,
+            measuredBy: form.measuredBy,
             waterInches: form.waterInches === "" ? null : parseFloat(form.waterInches),
+            gaugeCheckStick:   form.gaugeCheck && form.gaugeCheckStick   !== "" ? parseFloat(form.gaugeCheckStick)   : null,
+            gaugeCheckMonitor: form.gaugeCheck && form.gaugeCheckMonitor !== "" ? parseFloat(form.gaugeCheckMonitor) : null,
             recordedBy: form.recordedBy, notes: form.notes,
           }))}
           disabled={!canSave}
