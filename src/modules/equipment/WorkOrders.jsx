@@ -58,7 +58,7 @@ export function UnitWorkOrders({ unit, workOrders, dispatch, onOpen }) {
 // ── Work Order Form ───────────────────────────────────────────────────────────
 
 function WOForm({ unit, onSave, onCancel }) {
-  const today = new Date().toISOString().split("T")[0];
+  const todayStr = new Date().toISOString().split("T")[0];
   const [form, setForm] = useState({
     ...createWorkOrder({
       unitId:          unit?.id||null,

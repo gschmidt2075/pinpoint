@@ -177,8 +177,8 @@ function FADashboard({ db, setView }) {
     return map;
   }, [db.revenue]);
 
-  const today    = toDateStr(new Date());
-  const nextCycle = CLAIM_CYCLES.find(c => c.date >= today);
+  const todayStr    = toDateStr(new Date());
+  const nextCycle = CLAIM_CYCLES.find(c => c.date >= todayStr);
 
   const categories  = ["personnel","contracts","materials","capital","equipment","other"];
   const catColors   = { personnel:"#1a3a5c", contracts:"#6b3a1a", materials:"#1a5a3a", capital:"#5a1a6b", equipment:"#1a5a6b", other:"#6b6b1a" };
@@ -403,16 +403,30 @@ function ExpenditureForm({ db, dispatch, onDone, initialData = null }) {
 
   const categories    = [...new Set(EXPENDITURE_CODES.map(c => c.category))];
   const filteredCodes = EXPENDITURE_CODES.filter(c => catFilter==="all" || c.category===catFilter);
-  const today         = toDateStr(new Date());
-  const openCycles    = CLAIM_CYCLES.filter(c => c.date >= today).slice(0, 8);
+  const todayStr         = toDateStr(new Date());
+  const openCycles    = CLAIM_CYCLES.filter(c => c.date >= todayStr).slice(0, 8);
 
   // A line flagged for inventory receipt must name a real catalog item and a quantity.
   // Standing rule (confirmed with staff): nothing is received that isn't already in the catalog.
   const badInvLines = lines.filter(l => l.invReceive && (!l.invItemId || !l.invQty || parseFloat(l.invQty) <= 0));
 
+  // What is missing, named rather than left for someone to hunt for. A save
+  // that silently does nothing is the worst possible feedback — it looks like
+  // the software is broken when the form is simply incomplete.
+  const missing = [];
+  if (!header.date)         missing.push({ field:"date",         label:"Date" });
+  if (!header.vendorName)   missing.push({ field:"vendorName",   label:"Vendor" });
+  if (!header.claimCycleId) missing.push({ field:"claimCycleId", label:"Claim cycle" });
+  lines.forEach((l, i) => {
+    if (!l.code)   missing.push({ field:`line${i}code`,   label:`Line ${i+1} — account code` });
+    if (!l.amount) missing.push({ field:`line${i}amount`, label:`Line ${i+1} — amount` });
+  });
+  const missingFields = new Set(missing.map(m => m.field));
+  const [showMissing, setShowMissing] = useState(false);
+  const bad = (name) => showMissing && missingFields.has(name);
+
   const handleSubmit = () => {
-    if (!header.date || !header.vendorName || !header.claimCycleId || lines.some(l => !l.code || !l.amount)) return;
-    if (badInvLines.length) return;
+    if (missing.length || badInvLines.length) { setShowMissing(true); return; }
     const cycle = CLAIM_CYCLES.find(c => c.id === header.claimCycleId);
     const payload = {
       id:              initialData?.id || Date.now(),
@@ -528,7 +542,8 @@ function ExpenditureForm({ db, dispatch, onDone, initialData = null }) {
         <div style={{ fontWeight:700, fontSize:13, marginBottom:14 }}>Transaction Header</div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginBottom:16 }}>
           <Field label="Date" required>
-            <DateField value={header.date} onChange={v => set("date", v)} />
+            <DateField value={header.date} onChange={v => set("date", v)}
+              style={bad("date") ? { borderColor:"#c0392b", background:"#fdecea" } : undefined} />
           </Field>
           <Field label="Transaction Type">
             <select value={header.type} onChange={e=>set("type",e.target.value)} style={inp}>
@@ -541,15 +556,18 @@ function ExpenditureForm({ db, dispatch, onDone, initialData = null }) {
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
           <Field label="Vendor / Payee" required>
+            <div style={bad("vendorName") ? { border:"1px solid #c0392b", borderRadius:6, background:"#fdecea" } : undefined}>
             <VendorInput
               value={header.vendorName}
               onChange={v => set("vendorName",v)}
               onSelect={v => set("vendorId", v.id)}
               vendors={db.vendors||[]}
             />
+            </div>
           </Field>
           <Field label="Claim Cycle" required>
-            <select value={header.claimCycleId} onChange={e=>set("claimCycleId",e.target.value)} style={inp}>
+            <select value={header.claimCycleId} onChange={e=>set("claimCycleId",e.target.value)}
+              style={bad("claimCycleId") ? { ...inp, borderColor:"#c0392b", background:"#fdecea" } : inp}>
               <option value="">Assign to claim cycle…</option>
               {openCycles.map(c=><option key={c.id} value={c.id}>{c.label}</option>)}
             </select>
@@ -631,13 +649,22 @@ function ExpenditureForm({ db, dispatch, onDone, initialData = null }) {
                     value={line.description} onChange={e=>setL(line.id,"description",e.target.value)} style={inp} />
                 </Field>
                 <Field label="Assign To">
-                  <select value={line.assignType} onChange={e=>setL(line.id,"assignType",e.target.value)} style={inp}>
+                  <select value={line.assignType}
+                    onChange={e=>{
+                      const v = e.target.value;
+                      setL(line.id,"assignType",v);
+                      // Nothing bought is uncosted. If it is not going to a job,
+                      // a machine or an asset, it went on the shelf — so the
+                      // line receives into inventory instead.
+                      if (!v && !line.isCredit) setL(line.id,"invReceive", true);
+                    }}
+                    style={inp}>
                     {[
-                      { value:"",        label:"None" },
+                      { value:"",        label:"Stock — receive into inventory" },
                       { value:"project", label:"Project" },
                       { value:"machine", label:"Machine" },
                       { value:"asset",   label:"Asset" },
-                    ].map(t=><option key={t.value} value={t.value}>{titleCase(t.label)}</option>)}
+                    ].map(t=><option key={t.value} value={t.value}>{t.label}</option>)}
                   </select>
                 </Field>
                 {line.assignType && (
@@ -745,6 +772,13 @@ function ExpenditureForm({ db, dispatch, onDone, initialData = null }) {
         </div>
       </div>
 
+      {showMissing && missing.length > 0 && (
+        <div style={{ background:"#fdecea", border:"1px solid #f5c6c6", borderRadius:6, padding:"11px 15px", marginBottom:12, fontSize:12, color:"#8c1b18" }}>
+          <strong>Not saved — {missing.length} thing{missing.length!==1?"s are":" is"} missing:</strong>
+          <span style={{ marginLeft:6 }}>{missing.map(m=>m.label).join(" · ")}</span>
+        </div>
+      )}
+
       {badInvLines.length > 0 && (
         <div style={{ background:"#fdecea", border:"1px solid #f5c6c6", borderRadius:6, padding:"11px 15px", marginBottom:12, fontSize:12, color:"#8c1b18", fontWeight:600 }}>
           {badInvLines.length} line{badInvLines.length!==1?"s are":" is"} marked for inventory receipt but {badInvLines.length!==1?"are":"is"} missing a catalog item or quantity. Fix {badInvLines.length!==1?"them":"it"} — or switch off "Receive into Inventory" — before saving.
@@ -772,7 +806,7 @@ function ClaimCycles({ db, dispatch }) {
   const [selectedCycle, setSelectedCycle] = useState(null);
   const [editingExp, setEditingExp]       = useState(null);
   const [viewingExp, setViewingExp]       = useState(null);
-  const today = toDateStr(new Date());
+  const todayStr = toDateStr(new Date());
 
   const expByCycle = useMemo(() => {
     const map = {};
@@ -1055,8 +1089,8 @@ function ClaimCycles({ db, dispatch }) {
           const entered   = items.filter(e=>e.status==="entered").length;
           const submitted = items.filter(e=>e.status==="submitted").length;
           const approved  = items.filter(e=>e.status==="approved").length;
-          const isPast    = cycle.date < today;
-          const isToday   = cycle.date === today;
+          const isPast    = cycle.date < todayStr;
+          const isToday   = cycle.date === todayStr;
           return (
             <button key={cycle.id} onClick={()=>setSelectedCycle(cycle)} style={{
               background:"#fff", border:`1px solid ${isToday?"#1a6b35":"#ddd"}`,
@@ -1110,7 +1144,7 @@ function RevenueForm({ db, dispatch, onDone, initialData = null }) {
   const totalAmount = lines.reduce((s,l)=>s+(parseFloat(l.amount)||0),0);
   const revTypes    = [...new Set(REVENUE_CODES.map(r=>r.type))];
   const filteredCodes = REVENUE_CODES.filter(r=>typeFilter==="all"||r.type===typeFilter);
-  const today = toDateStr(new Date());
+  const todayStr = toDateStr(new Date());
 
   const handleSubmit = () => {
     if (!header.date||!header.sourceName||lines.some(l=>!l.code||!l.amount)) return;
@@ -1334,8 +1368,8 @@ function JournalEntries({ db, dispatch }) {
     ...EXPENDITURE_CODES.map(c=>({ value:c.code, label:`${c.code} — ${c.description}` })),
     ...REVENUE_CODES.map(c=>({ value:c.code, label:`${c.code} — ${c.description}` })),
   ];
-  const today      = toDateStr(new Date());
-  const openCycles = CLAIM_CYCLES.filter(c=>c.date>=today).slice(0,6);
+  const todayStr      = toDateStr(new Date());
+  const openCycles = CLAIM_CYCLES.filter(c=>c.date>=todayStr).slice(0,6);
 
   const handleSubmit = () => {
     if (!form.date||!form.description||!form.debitCode||!form.amount) return;
@@ -1594,7 +1628,7 @@ function RevenueList({ db, dispatch, onNew }) {
   const [returnReason, setReturnReason] = useState("");
 
   const revenue = db.revenue || [];
-  const today   = toDateStr(new Date());
+  const todayStr   = toDateStr(new Date());
 
   if (editing) {
     const rec = revenue.find(r => r.id === editing);
@@ -1609,14 +1643,14 @@ function RevenueList({ db, dispatch, onNew }) {
   const total    = (s) => revenue.filter(r => !s || r.status === s).reduce((t,r)=>t+(r.totalAmount||r.amount||0),0);
 
   const submit = (r) =>
-    dispatch({ type:"SUBMIT_REVENUE", payload:{ id:r.id, date:today } });
+    dispatch({ type:"SUBMIT_REVENUE", payload:{ id:r.id, date:todayStr } });
 
   const doReceipt = () => {
     if (!receipting || !receiptForm.receiptNumber) return;
     dispatch({ type:"RECEIPT_REVENUE", payload:{
       id: receipting.id,
       receiptNumber: receiptForm.receiptNumber,
-      receiptDate: receiptForm.receiptDate || today,
+      receiptDate: receiptForm.receiptDate || todayStr,
     }});
     setReceipting(null); setReceiptForm({ receiptNumber:"", receiptDate:"" });
   };
@@ -1747,7 +1781,7 @@ function RevenueList({ db, dispatch, onNew }) {
                       )}
                       {r.status==="submitted" && (
                         <>
-                          <button onClick={()=>{setReceipting(r); setReceiptForm({receiptNumber:"",receiptDate:today});}} style={{ ...btn.small, background:"#1a6b35", fontSize:10, padding:"4px 10px" }}>Receipt</button>
+                          <button onClick={()=>{setReceipting(r); setReceiptForm({receiptNumber:"",receiptDate:todayStr});}} style={{ ...btn.small, background:"#1a6b35", fontSize:10, padding:"4px 10px" }}>Receipt</button>
                           <button onClick={()=>{setReturning(r); setReturnReason("");}} style={{ ...btn.small, background:"#c0392b", fontSize:10, padding:"4px 10px" }}>Returned</button>
                         </>
                       )}

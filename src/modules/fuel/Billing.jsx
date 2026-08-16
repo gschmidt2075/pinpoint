@@ -30,14 +30,14 @@ export function FuelBilling({ dispensing, dispatch }) {
   const grandCost = rows.reduce((s,[,d])=>s+d.cost,0);
 
   const markBilled = (dept) => {
-    const today = new Date().toISOString().split("T")[0];
+    const todayStr = new Date().toISOString().split("T")[0];
     byDept[dept].entries.filter(e=>!e.billedDate).forEach(e =>
-      dispatch({ type:"UPDATE_FUEL_DISPENSING", payload:{ ...e, billedDate: today } }));
+      dispatch({ type:"UPDATE_FUEL_DISPENSING", payload:{ ...e, billedDate: todayStr } }));
   };
   const markPaid = (dept) => {
-    const today = new Date().toISOString().split("T")[0];
+    const todayStr = new Date().toISOString().split("T")[0];
     byDept[dept].entries.filter(e=>!e.paidDate).forEach(e =>
-      dispatch({ type:"UPDATE_FUEL_DISPENSING", payload:{ ...e, paidDate: today } }));
+      dispatch({ type:"UPDATE_FUEL_DISPENSING", payload:{ ...e, paidDate: todayStr } }));
   };
 
   const fmtPeriod = (p) => {

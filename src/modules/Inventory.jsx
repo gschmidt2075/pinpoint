@@ -865,7 +865,7 @@ function ItemForm({ item, locations, groupList, equipment, onSave, onCancel }) {
 function ReceiveForm({ db, dispatch, onDone }) {
   const items     = (db.inventoryItems || []).filter(i => i.active !== false && i.receivingMode === "standard");
   const locations = (db.storageLocations || []).filter(l => l.type === "shed");
-  const today     = new Date().toISOString().split("T")[0];
+  const todayStr  = new Date().toISOString().split("T")[0];
 
   const [form, setForm] = useState({
     date: today(), itemId:"", vendorName:"", invoiceNumber:"",
@@ -1151,7 +1151,7 @@ function ScaleTicket({ db, dispatch, onDone }) {
 
   const handleReconcile = () => {
     if (!reconBatchIds.length || !reconInvoice) return;
-    const today = new Date().toISOString().split("T")[0];
+    const todayStr = new Date().toISOString().split("T")[0];
     reconBatchIds.forEach(batchId => {
       const batch = pendingBatches.find(b => b.id === batchId);
       if (!batch) return;
@@ -1160,7 +1160,7 @@ function ScaleTicket({ db, dispatch, onDone }) {
         payload: {
           id:         `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
           type:       "reconcile",
-          date:       reconDate || today,
+          date:       reconDate || todayStr,
           itemId:     batch.itemId,
           itemName:   batch.itemName,
           batchId,
@@ -1171,7 +1171,7 @@ function ScaleTicket({ db, dispatch, onDone }) {
         },
       });
     });
-    setReconBatchIds([]); setReconInvoice(""); setReconDate(today);
+    setReconBatchIds([]); setReconInvoice(""); setReconDate(todayStr);
   };
 
   return (
