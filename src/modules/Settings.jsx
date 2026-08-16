@@ -1202,6 +1202,9 @@ function RolesAndPermissions({ db, dispatch }) {
   const roles = db.roles?.length ? db.roles : DEFAULT_ROLES;
   const [showNew, setShowNew] = useState(false);
   const [newRole, setNewRole] = useState({ label:"", description:"" });
+  const [editingId, setEditingId] = useState(null);
+  const [draft, setDraft] = useState({ label:"", description:"" });
+  const [showLocked, setShowLocked] = useState(false);
 
   const LEVEL_STYLE = {
     none: { bg:"#f7f7f5", color:"#bbb",    border:"#e8e8e5" },
@@ -1285,26 +1288,36 @@ function RolesAndPermissions({ db, dispatch }) {
         </div>
       </SectionCard>
 
-      <SectionCard title="Fixed in Code" subtitle="Not in the grid, and not delegable" icon="shield-lock">
-        <div style={{ padding:"12px 16px", fontSize:12, color:"#888", lineHeight:1.65, borderBottom:"1px solid #f0f0ee" }}>
-          These five stay where they are no matter what the grid says. Each one costs real money or real
-          history if it goes to the wrong person, so none of them can be opened by ticking a box.
-        </div>
-        <Table
-          headers={[{label:"Capability"},{label:"Who holds it"},{label:"Why"}]}
-          rows={LOCKED_CAPABILITIES.map(c => [
-            <span style={{ fontWeight:600 }}>{c.label}</span>,
-            <span style={{ fontSize:12 }}>
-              {c.roles.map(rid => roles.find(r=>r.id===rid)?.label || rid).join(", ")}
-            </span>,
-            <span style={{ fontSize:12, color:"#888" }}>{c.why}</span>,
-          ])}
-        />
-      </SectionCard>
+      {/* Reference, not work. Collapsed by default — someone configuring roles
+          needs to know these exist, but not to read them every time. */}
+      <div style={{ marginBottom:18 }}>
+        <button onClick={()=>setShowLocked(v=>!v)}
+          style={{ background:"none", border:"none", padding:0, cursor:"pointer",
+                   fontSize:12, color:"#1a3a5c", textDecoration:"underline" }}>
+          {showLocked ? "Hide" : "Show"} the {LOCKED_CAPABILITIES.length} things that are fixed in code
+        </button>
+        {showLocked && (
+          <div style={{ marginTop:10, background:"#fff", border:"1px solid #e8e8e5", borderRadius:8, padding:14 }}>
+            <div style={{ fontSize:12, color:"#888", lineHeight:1.65, marginBottom:10 }}>
+              These stay where they are whatever the grid says. Each costs real money or real history
+              if it lands on the wrong person, so none can be opened by ticking a box.
+            </div>
+            {LOCKED_CAPABILITIES.map(c => (
+              <div key={c.id} style={{ display:"flex", gap:12, padding:"7px 0", borderTop:"1px solid #f4f4f2", fontSize:12 }}>
+                <span style={{ fontWeight:600, minWidth:230 }}>{c.label}</span>
+                <span style={{ minWidth:210, color:"#1a3a5c" }}>
+                  {c.roles.map(rid => roles.find(r=>r.id===rid)?.label || rid).join(", ")}
+                </span>
+                <span style={{ color:"#999" }}>{c.why}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       <SectionCard
         title="Roles"
-        subtitle="The five that came with the system cannot be deleted — something has to hold the locked capabilities"
+        subtitle="Superintendent and Office Manager are permanent — they hold the locked capabilities. The rest are a starting point and can be renamed or removed."
         icon="users"
         action={<button onClick={()=>setShowNew(s=>!s)} style={{ ...btn.ghost, fontSize:11, padding:"5px 12px" }}>{showNew?"Cancel":"+ Add Role"}</button>}
       >
@@ -1337,17 +1350,43 @@ function RolesAndPermissions({ db, dispatch }) {
           headers={[{label:"Role"},{label:"What it is for"},{label:"Modules open"},{label:""}]}
           rows={roles.map(r => {
             const open = MODULES.filter(m => (r.permissions?.[m.id]||"none") !== "none").length;
+            const isEditing = editingId === r.id;
             return [
-              <span style={{ fontWeight:600 }}>
-                {r.label}
-                {r.system && <span style={{ marginLeft:7, fontSize:10, color:"#888" }}>system</span>}
-              </span>,
-              <span style={{ fontSize:12, color:"#666" }}>{r.description || "—"}</span>,
+              isEditing
+                ? <input type="text" value={draft.label} onChange={e=>setDraft(d=>({...d,label:e.target.value}))}
+                    style={{ ...inp, margin:0, fontSize:12 }} />
+                : <span style={{ fontWeight:600 }}>
+                    {r.label}
+                    {r.system && <span style={{ marginLeft:7, fontSize:10, color:"#888" }}>permanent</span>}
+                  </span>,
+              isEditing
+                ? <input type="text" value={draft.description} onChange={e=>setDraft(d=>({...d,description:e.target.value}))}
+                    style={{ ...inp, margin:0, fontSize:12 }} />
+                : <span style={{ fontSize:12, color:"#666" }}>{r.description || "—"}</span>,
               <span style={{ fontFamily:"monospace", color: open ? "#1a5a3a" : "#bbb" }}>{open} of {MODULES.length}</span>,
-              r.system
-                ? <span style={{ fontSize:11, color:"#ccc" }}>cannot delete</span>
-                : <button onClick={()=>dispatch({ type:"DELETE_ROLE", payload:r.id })}
-                    style={{ ...btn.ghost, fontSize:11, padding:"4px 10px", color:"#c0392b", borderColor:"#f0d0d0" }}>Delete</button>,
+              isEditing
+                ? <div style={{ display:"flex", gap:6 }}>
+                    <button onClick={()=>{
+                        dispatch({ type:"UPDATE_ROLE", payload:{ ...r, label:draft.label.trim()||r.label, description:draft.description } });
+                        setEditingId(null);
+                      }} style={{ ...btn.small, fontSize:11 }}>Save</button>
+                    <button onClick={()=>setEditingId(null)} style={{ ...btn.ghost, fontSize:11, padding:"4px 10px" }}>Cancel</button>
+                  </div>
+                : <div style={{ display:"flex", gap:6 }}>
+                    {/* Renaming is allowed on every role, permanent or not — a
+                        county may call the Office Manager something else. What
+                        cannot change is which role holds the locked
+                        capabilities, and that follows the role, not its name. */}
+                    <button onClick={()=>{ setEditingId(r.id); setDraft({ label:r.label, description:r.description||"" }); }}
+                      style={{ ...btn.ghost, fontSize:11, padding:"4px 10px" }}>Rename</button>
+                    {r.system
+                      ? <span style={{ fontSize:11, color:"#ccc", alignSelf:"center" }}>permanent</span>
+                      : <button onClick={()=>{
+                            if (window.confirm(`Delete the ${r.label} role?\n\nAnyone holding it loses that access.`))
+                              dispatch({ type:"DELETE_ROLE", payload:r.id });
+                          }}
+                          style={{ ...btn.ghost, fontSize:11, padding:"4px 10px", color:"#c0392b", borderColor:"#f0d0d0" }}>Delete</button>}
+                  </div>,
             ];
           })}
         />

@@ -1669,9 +1669,13 @@ export const createRole = (overrides = {}) => ({
   id:          uid(),
   label:       "",
   description: "",
-  // System roles cannot be deleted — something has to hold the locked
-  // capabilities, and a department that deletes its own Superintendent role
-  // locks itself out.
+  // Only two roles are permanent: Superintendent and Office Manager. They hold
+  // the locked capabilities, and a department that deletes them locks itself
+  // out of its own software.
+  //
+  // Everything else is a SUGGESTION. Not every county has a Parts Manager or a
+  // Project Accountant — some have a Shop Foreman, or one person doing all of
+  // it. Those roles ship as a starting point and can be renamed or deleted.
   system:      false,
   permissions: Object.fromEntries(MODULES.map(m => [m.id, "none"])),
   ...overrides,
@@ -1682,7 +1686,13 @@ const perms = (map) => ({
   ...map,
 });
 
-// Agreed with Greg 2026-08-15, module by module.
+// The two permanent roles, plus a starter set.
+//
+// Superintendent and Office Manager are fixed because the locked capabilities
+// name them. The rest reflect how Adams County is organised and are offered as
+// a starting point — another county renames or deletes them.
+//
+// Module access agreed with Greg 2026-08-15, module by module.
 export const DEFAULT_ROLES = [
   createRole({
     id:"superintendent", label:"Superintendent", system:true,
@@ -1699,8 +1709,8 @@ export const DEFAULT_ROLES = [
     }),
   }),
   createRole({
-    id:"project_accountant", label:"Project Accountant", system:true,
-    description:"Costs work to projects. Reads claims rather than entering them.",
+    id:"project_accountant", label:"Project Accountant",
+    description:"Costs work to projects. Reads claims rather than entering them. Adams County has this role; another county may not.",
     permissions: perms({
       fund:"view", cost:"edit", projects:"edit", inventory:"view", equipment:"view",
       fuel:"view", infrastructure:"edit", vendors:"edit",
@@ -1708,16 +1718,16 @@ export const DEFAULT_ROLES = [
     }),
   }),
   createRole({
-    id:"parts_manager", label:"Parts Manager", system:true,
-    description:"The parts room, fuel, work orders from the shop's paper, and the claims that follow.",
+    id:"parts_manager", label:"Parts Manager",
+    description:"The parts room, fuel, work orders from the shop's paper, and the claims that follow. Adams County has this role; another county may not.",
     permissions: perms({
       fund:"edit", inventory:"edit", equipment:"edit", fuel:"edit",
       infrastructure:"edit", vendors:"edit", reporting:"edit", settings:"edit",
     }),
   }),
   createRole({
-    id:"staff", label:"Staff", system:true,
-    description:"Placeholder. Nobody holds this yet — anyone added starts closed rather than open.",
+    id:"staff", label:"Staff",
+    description:"Placeholder. Nobody holds it — anyone added starts closed rather than open.",
     permissions: perms({}),
   }),
 ];
