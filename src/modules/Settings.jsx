@@ -3,7 +3,8 @@ import { Field, SectionCard, Table, Icon, AlertBar, inp, btn, fmt, fmtSm, DateFi
 import { EXPENDITURE_CODES, REVENUE_CODES, FISCAL_YEAR } from "../data/accountCodes.js";
 import { LOOKUP_DEFS, createTownship, createStorageLocation, createTank,
          DEFAULT_INVOICES_PER_CLAIM, MODULES, ACCESS_LEVELS, LOCKED_CAPABILITIES,
-         DEFAULT_ROLES, createRole, ROOT_ROLE_ID, hasCapability, isGrantable } from "../data/schema.js";
+         DEFAULT_ROLES, createRole, ROOT_ROLE_ID, hasCapability, isGrantable,
+         createUser, AUDIT_ACTIONS } from "../data/schema.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const DEFAULT_TOWNSHIPS = [
@@ -34,6 +35,8 @@ export default function Settings({ db, dispatch, access }) {
     // Only the two roles that hold the capability see this at all — it is not a
     // grid setting, so it cannot be ticked open.
     ...(access?.has?.("editPermissions") ? [{ id:"roles", label:"Roles & Permissions", icon:"lock" }] : []),
+    ...(access?.has?.("editPermissions") ? [{ id:"users", label:"Users", icon:"users" }] : []),
+    ...(access?.has?.("viewAuditTrail")  ? [{ id:"audit", label:"Audit Trail", icon:"history" }] : []),
   ];
 
   return (
@@ -78,8 +81,10 @@ export default function Settings({ db, dispatch, access }) {
           {view==="county"   && <CountyInfo    db={db} dispatch={dispatch} />}
           {view==="fiscal"   && <FiscalYearWizard db={db} dispatch={dispatch} />}
           {view==="accounts" && <AccountCodes  db={db} dispatch={dispatch} />}
-          {view==="system"   && <SystemSettings db={db} dispatch={dispatch} />}
+          {view==="system"   && <SystemSettings db={db} dispatch={dispatch} access={access} />}
           {view==="roles"    && <RolesAndPermissions db={db} dispatch={dispatch} />}
+          {view==="users"    && <UsersScreen db={db} dispatch={dispatch} />}
+          {view==="audit"    && <AuditTrail db={db} />}
         </div>
       </div>
     </div>
@@ -633,7 +638,7 @@ function AccountCodes({ db, dispatch }) {
 }
 
 // ── System Settings ───────────────────────────────────────────────────────────
-function SystemSettings({ db, dispatch }) {
+function SystemSettings({ db, dispatch, access }) {
   const [activeSection, setActiveSection] = useState("lists");
   const [newTownship, setNewTownship]     = useState("");
   const [newFund, setNewFund]             = useState("");
@@ -651,6 +656,7 @@ function SystemSettings({ db, dispatch }) {
     { id:"tanks",     label:"Fuel Tanks",        icon:"gas-station" },
     { id:"funds",     label:"Custom Funds",     icon:"coin" },
     { id:"fema",      label:"FEMA Rates",       icon:"alert-octagon" },
+    ...(access?.has?.("deleteRecords") ? [{ id:"danger", label:"Testing Tools", icon:"alert-triangle" }] : []),
   ];
 
   return (
@@ -708,6 +714,8 @@ function SystemSettings({ db, dispatch }) {
           onRemove={item => dispatch({ type:"REMOVE_STORAGE_LOCATION", payload:item.id })}
         />
       )}
+
+      {activeSection==="danger" && <DangerZone access={access} />}
 
       {activeSection==="tanks" && (
         <TankSettings tanks={tanks} dispatch={dispatch} />
@@ -1431,6 +1439,326 @@ function RolesAndPermissions({ db, dispatch }) {
             ];
           })}
         />
+      </SectionCard>
+    </div>
+  );
+}
+
+
+// ── Users ─────────────────────────────────────────────────────────────────────
+//
+// Deliberately separate from employees. "Someone we pay" and "someone who logs
+// in" are different sets that drift apart in both directions — a seasonal
+// laborer never opens the system, county IT might need to, and a leaver's login
+// should die while their employee record lives on carrying years of costing.
+//
+// This is also the piece Azure AD plugs into. The name picker in the header is
+// scaffolding that answers "which user am I?"; sign-in will answer the same
+// question and nothing under it changes.
+function UsersScreen({ db, dispatch }) {
+  const users = db.users || [];
+  const roles = db.roles?.length ? db.roles : DEFAULT_ROLES;
+  const employees = db.employees || [];
+  const [editing, setEditing] = useState(null);
+  const BLANK = { name:"", employeeId:"", roleIds:[], email:"", active:true, notes:"" };
+  const [form, setForm] = useState(BLANK);
+  const set = (k,v) => setForm(f=>({...f,[k]:v}));
+
+  const save = () => {
+    if (!form.name.trim()) return;
+    const payload = { ...form, name:form.name.trim(), employeeId: form.employeeId || null };
+    if (editing === "new") dispatch({ type:"ADD_USER", payload: createUser(payload) });
+    else                   dispatch({ type:"UPDATE_USER", payload: { ...payload, id: editing } });
+    setEditing(null); setForm(BLANK);
+  };
+
+  const toggleRole = (rid) => set("roleIds",
+    form.roleIds.includes(rid) ? form.roleIds.filter(r=>r!==rid) : [...form.roleIds, rid]);
+
+  return (
+    <div>
+      <div style={{ marginBottom:20 }}>
+        <div style={{ fontSize:16, fontWeight:700, display:"flex", alignItems:"center", gap:8 }}>
+          <Icon name="users" size={18} color="#1a3a5c" /> Users
+        </div>
+        <div style={{ fontSize:13, color:"#888", marginTop:3 }}>
+          Who uses Pinpoint, and what they are allowed to do. Separate from employee records on purpose.
+        </div>
+      </div>
+
+      <div style={{ background:"#eef2f8", border:"1px solid #c8d8ec", borderRadius:8, padding:"11px 15px", marginBottom:18, fontSize:12, color:"#1a3a5c", lineHeight:1.65 }}>
+        Adding someone here lets them be picked in the header, and puts their name on everything they
+        enter. When the county server arrives their Azure AD account attaches to this record — the
+        audit trail written before then still points at the right person.
+      </div>
+
+      <SectionCard
+        title="People" subtitle={`${users.filter(u=>u.active!==false).length} active`}
+        icon="user"
+        action={!editing && <button onClick={()=>{ setForm(BLANK); setEditing("new"); }}
+          style={{ ...btn.primary, fontSize:12, padding:"7px 14px" }}>+ Add User</button>}
+      >
+        {editing && (
+          <div style={{ padding:18, background:"#f7f7f5", borderBottom:"1px solid #eee" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"1.4fr 1.4fr 1.4fr", gap:12, marginBottom:12 }}>
+              <Field label="Name" required>
+                <input type="text" value={form.name} onChange={e=>set("name",e.target.value)} style={{ ...inp, margin:0 }} />
+              </Field>
+              <Field label="Employee record">
+                <select value={form.employeeId||""} onChange={e=>set("employeeId",e.target.value)} style={{ ...inp, margin:0 }}>
+                  <option value="">Not an employee</option>
+                  {employees.map(e=>(
+                    <option key={e.id} value={e.id}>
+                      {e.name || [e.firstName,e.lastName].filter(Boolean).join(" ")}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Email — for Azure AD later">
+                <input type="text" value={form.email} onChange={e=>set("email",e.target.value)}
+                  placeholder="optional" style={{ ...inp, margin:0 }} />
+              </Field>
+            </div>
+
+            <Field label="Roles — several are allowed; access is the sum">
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:4 }}>
+                {roles.map(r => {
+                  const on = form.roleIds.includes(r.id);
+                  return (
+                    <button key={r.id} type="button" onClick={()=>toggleRole(r.id)} title={r.description}
+                      style={{ padding:"6px 12px", fontSize:12, fontWeight:600, borderRadius:6, cursor:"pointer",
+                               background:on?"#1a3a5c":"#fff", color:on?"#fff":"#555",
+                               border:`1px solid ${on?"#1a3a5c":"#ccc"}` }}>
+                      {r.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+
+            <div style={{ display:"flex", gap:10, marginTop:14, alignItems:"center" }}>
+              <button onClick={save} disabled={!form.name.trim()}
+                style={{ ...btn.primary, opacity:form.name.trim()?1:0.45 }}>
+                {editing==="new" ? "Add User" : "Save Changes"}
+              </button>
+              <button onClick={()=>{ setEditing(null); setForm(BLANK); }} style={btn.ghost}>Cancel</button>
+              <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, marginLeft:"auto" }}>
+                <input type="checkbox" checked={form.active} onChange={e=>set("active",e.target.checked)} />
+                Active
+              </label>
+            </div>
+          </div>
+        )}
+
+        <Table
+          headers={[{label:"Name"},{label:"Roles"},{label:"Employee"},{label:"Status"},{label:""}]}
+          rows={users.map(u => [
+            <span style={{ fontWeight:600 }}>{u.name}</span>,
+            <span style={{ fontSize:12 }}>
+              {u.roleIds?.length
+                ? u.roleIds.map(rid => roles.find(r=>r.id===rid)?.label || rid).join(", ")
+                : <span style={{ color:"#c0392b" }}>no role — cannot see anything</span>}
+            </span>,
+            <span style={{ fontSize:12, color:"#888" }}>
+              {u.employeeId
+                ? (employees.find(e=>e.id===u.employeeId)?.name || "linked")
+                : "—"}
+            </span>,
+            <span style={{ fontSize:11, color: u.active!==false ? "#1a5a3a" : "#c0392b" }}>
+              {u.active!==false ? "Active" : "Inactive"}
+            </span>,
+            <button onClick={()=>{ setForm({ ...BLANK, ...u, employeeId:u.employeeId||"" }); setEditing(u.id); }}
+              style={{ ...btn.ghost, fontSize:11, padding:"4px 10px" }}>Edit</button>,
+          ])}
+          emptyMessage="Nobody added yet — add yourself first so your name appears on what you enter"
+        />
+      </SectionCard>
+    </div>
+  );
+}
+
+// ── Audit trail ───────────────────────────────────────────────────────────────
+//
+// What changed, who changed it, and what it was before. Money and consequential
+// things only — fuel dispensed and parts issued already leave their own record,
+// and logging them twice would make this unsearchable when it matters.
+function AuditTrail({ db }) {
+  const entries = [...(db.auditTrail || [])].reverse();   // newest first
+  const users = db.users || [];
+  const roles = db.roles?.length ? db.roles : DEFAULT_ROLES;
+  const [q, setQ] = useState("");
+  const [who, setWho] = useState("");
+  const [mod, setMod] = useState("");
+  const [limit, setLimit] = useState(50);
+
+  const nameOf = (id) => users.find(u=>u.id===id)?.name || "";
+  const roleNames = (ids) => (ids||[]).map(r => roles.find(x=>x.id===r)?.label || r).join(", ");
+
+  const shown = entries.filter(e => {
+    if (who && e.userId !== who) return false;
+    if (mod && e.module !== mod) return false;
+    if (q) {
+      const hay = `${e.label} ${e.entity} ${e.action} ${nameOf(e.userId)} ${e.reason} ${e.changes.map(c=>c.field).join(" ")}`.toLowerCase();
+      if (!hay.includes(q.toLowerCase())) return false;
+    }
+    return true;
+  });
+
+  const val = (v) => v === null || v === undefined || v === ""
+    ? "—"
+    : typeof v === "object" ? JSON.stringify(v).slice(0, 60) : String(v);
+
+  return (
+    <div>
+      <div style={{ marginBottom:20 }}>
+        <div style={{ fontSize:16, fontWeight:700, display:"flex", alignItems:"center", gap:8 }}>
+          <Icon name="history" size={18} color="#1a3a5c" /> Audit Trail
+        </div>
+        <div style={{ fontSize:13, color:"#888", marginTop:3 }}>
+          Money and consequential changes. Fuel dispensed, parts issued and work orders keep their own
+          records and are not repeated here.
+        </div>
+      </div>
+
+      <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap", alignItems:"flex-end" }}>
+        <Field label="Search">
+          <input type="text" value={q} onChange={e=>setQ(e.target.value)}
+            placeholder="Claim number, field, reason…" style={{ ...inp, margin:0, width:230 }} />
+        </Field>
+        <Field label="Who">
+          <select value={who} onChange={e=>setWho(e.target.value)} style={{ ...inp, margin:0, width:170 }}>
+            <option value="">Anyone</option>
+            {users.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
+          </select>
+        </Field>
+        <Field label="Module">
+          <select value={mod} onChange={e=>setMod(e.target.value)} style={{ ...inp, margin:0, width:160 }}>
+            <option value="">All</option>
+            {MODULES.map(m=><option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+        </Field>
+        <div style={{ fontSize:12, color:"#888", paddingBottom:9 }}>
+          {shown.length} of {entries.length} entries
+        </div>
+      </div>
+
+      <SectionCard title="Changes" subtitle="Newest first">
+        {shown.length === 0 ? (
+          <div style={{ padding:36, textAlign:"center", color:"#aaa", fontSize:13 }}>
+            {entries.length === 0
+              ? "Nothing recorded yet. Entries appear as claims, revenue and costs are entered or changed."
+              : "Nothing matches those filters."}
+          </div>
+        ) : shown.slice(0, limit).map(e => {
+          const meta = AUDIT_ACTIONS[e.action] || { label:e.action, color:"#555" };
+          return (
+            <div key={e.id} style={{ padding:"12px 16px", borderTop:"1px solid #f0f0ee" }}>
+              <div style={{ display:"flex", gap:10, alignItems:"baseline", flexWrap:"wrap" }}>
+                <span style={{ fontFamily:"monospace", fontSize:11, color:"#999", minWidth:132 }}>
+                  {new Date(e.at).toLocaleString("en-US", { month:"short", day:"numeric", year:"numeric", hour:"numeric", minute:"2-digit" })}
+                </span>
+                <span style={{ background:`${meta.color}14`, color:meta.color, border:`1px solid ${meta.color}33`,
+                               borderRadius:4, padding:"1px 8px", fontSize:11, fontWeight:700 }}>
+                  {meta.label}
+                </span>
+                <span style={{ fontSize:13 }}>
+                  {e.entity}{e.label ? <strong> {e.label}</strong> : null}
+                </span>
+                <span style={{ fontSize:12, color:"#888", marginLeft:"auto" }}>
+                  {nameOf(e.userId) || <em style={{ color:"#bbb" }}>nobody signed in</em>}
+                  {e.roleIds?.length ? <span style={{ color:"#aaa" }}> · {roleNames(e.roleIds)}</span> : null}
+                </span>
+              </div>
+
+              {e.changes?.length > 0 && (
+                <div style={{ marginTop:7, marginLeft:142, fontSize:12 }}>
+                  {e.changes.slice(0,6).map((c,i) => (
+                    <div key={i} style={{ display:"flex", gap:8, padding:"2px 0", fontFamily:"monospace", color:"#666" }}>
+                      <span style={{ minWidth:150, color:"#888" }}>{c.field}</span>
+                      <span style={{ color:"#c0392b" }}>{val(c.from)}</span>
+                      <span style={{ color:"#bbb" }}>→</span>
+                      <span style={{ color:"#1a5a3a" }}>{val(c.to)}</span>
+                    </div>
+                  ))}
+                  {e.changes.length > 6 && (
+                    <div style={{ color:"#aaa", fontSize:11, paddingTop:2 }}>
+                      and {e.changes.length - 6} more fields
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {e.reason && (
+                <div style={{ marginTop:6, marginLeft:142, fontSize:12, color:"#7a4f00",
+                              background:"#fef8e8", border:"1px solid #f0d080", borderRadius:5, padding:"6px 10px" }}>
+                  {e.reason}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {shown.length > limit && (
+          <div style={{ padding:"12px", textAlign:"center", borderTop:"1px solid #f0f0ee" }}>
+            <button onClick={()=>setLimit(l=>l+100)} style={{ ...btn.ghost, fontSize:12 }}>
+              Show more — {shown.length - limit} older
+            </button>
+          </div>
+        )}
+      </SectionCard>
+    </div>
+  );
+}
+
+
+// ── Testing tools ─────────────────────────────────────────────────────────────
+//
+// This exists for the preview and MUST NOT SHIP. It was a button in the header,
+// one confirm away from erasing everything — fine while nothing real is stored,
+// wrong the moment it is.
+//
+// It is here, behind a typed confirmation, because a reset should take a
+// deliberate act rather than a stray click. Before go-live it comes out
+// altogether; the notes say so.
+function DangerZone() {
+  const [typed, setTyped] = useState("");
+  const armed = typed.trim().toUpperCase() === "RESET";
+
+  return (
+    <div>
+      <div style={{ marginBottom:20 }}>
+        <div style={{ fontSize:16, fontWeight:700, display:"flex", alignItems:"center", gap:8, color:"#8c1b18" }}>
+          <Icon name="alert-triangle" size={18} color="#c0392b" /> Testing Tools
+        </div>
+        <div style={{ fontSize:13, color:"#888", marginTop:3 }}>
+          For the preview only. These are removed before the system is used for real work.
+        </div>
+      </div>
+
+      <SectionCard title="Reset All Data" subtitle="Returns everything to the starting inventory" icon="trash">
+        <div style={{ padding:18 }}>
+          <div style={{ background:"#fdecea", border:"1px solid #f5c6c6", borderRadius:8, padding:"13px 16px", marginBottom:16, fontSize:13, color:"#8c1b18", lineHeight:1.7 }}>
+            <strong>This erases everything entered since the crosswalk</strong> — claims, revenue,
+            projects, work orders, fuel records, roles, users and the audit trail. The catalog returns
+            to its 2,375 opening items. It cannot be undone.
+          </div>
+
+          <Field label={'Type RESET to confirm'}>
+            <input type="text" value={typed} onChange={e=>setTyped(e.target.value)}
+              placeholder="RESET" style={{ ...inp, margin:0, width:220, fontFamily:"monospace" }} />
+          </Field>
+
+          <button
+            disabled={!armed}
+            onClick={()=>{
+              if (!armed) return;
+              try { localStorage.removeItem("pinpoint.db.v1"); localStorage.removeItem("pinpoint.currentUser"); } catch {}
+              window.location.reload();
+            }}
+            style={{ ...btn.danger, marginTop:14, opacity: armed ? 1 : 0.4,
+                     cursor: armed ? "pointer" : "not-allowed" }}>
+            Erase everything and reload
+          </button>
+        </div>
       </SectionCard>
     </div>
   );

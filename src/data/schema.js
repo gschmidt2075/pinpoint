@@ -1679,6 +1679,9 @@ export const LOCKED_CAPABILITIES = [
   { id:"editPermissions", label:"Change what everyone is allowed to do",
     why:"Never grantable — otherwise a role could widen itself",
     grantable:false },
+  { id:"viewAuditTrail", label:"Read the audit trail",
+    why:"Who changed what, and when. An auditor can be given a role that reads this and nothing else",
+    grantable:true },
 ];
 
 // The one role that always exists and always holds everything.
@@ -1736,10 +1739,138 @@ export const createUser = (overrides = {}) => ({
   employeeId:  null,      // optional link to the employee record
   roleIds:     [],        // people wear several hats; permissions are the sum
   active:      true,
+  // Where Azure AD attaches when the county server arrives. Empty until then —
+  // it exists now so that sign-in is a mapping rather than a schema change, and
+  // so every audit entry written before go-live still points at the right
+  // person afterwards.
+  azureObjectId: "",
+  email:       "",
   notes:       "",
   createdAt:   now(),
   ...overrides,
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUDIT TRAIL
+//
+// Three jobs, in Greg's order: answering an auditor, tracing what went wrong,
+// and getting something back that should not have gone.
+//
+// WHAT IS RECORDED. Money and consequential changes — claims, revenue, project
+// costs, inventory adjustments, fuel deliveries, disposals, pay scales, account
+// codes, and every change to roles, capabilities and users.
+//
+// WHAT IS NOT. Fuel dispensed, parts issued, stock received, transfers, work
+// orders, tank readings. Those already leave a permanent record as transactions
+// with their own date, quantity and cost. Logging them twice doubles the
+// storage and makes the trail unsearchable when it is actually needed.
+//
+// KEYED TO userId, NEVER TO A NAME. A name in the log goes stale — people
+// marry, a second Carlia gets hired, Azure AD hands back a different display
+// name. An id does not. The name is resolved for display, so history stays
+// correct however the person's record changes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const createAuditEntry = (overrides = {}) => ({
+  id:          uid(),
+  at:          now(),      // when it happened, to the second
+  userId:      null,       // who — resolved to a name for display
+  roleIds:     [],         // what they were acting as at the time
+  action:      "",         // created | edited | deleted | approved | …
+  entity:      "",         // expenditure | revenue | project | role | …
+  entityId:    null,
+  label:       "",         // human handle: "CL-0231", "M-2026-04"
+  module:      "",         // where it happened, for filtering
+  // What actually changed. One row per field so a claim that moved by twenty
+  // dollars reads as twenty dollars, not as two versions of a whole record.
+  changes:     [],         // [{ field, from, to }]
+  // Required once a record is official — after a claim is approved or revenue
+  // is receipted. Free editing before that point does not ask.
+  reason:      "",
+  ...overrides,
+});
+
+export const AUDIT_ACTIONS = {
+  created:  { label:"Created",  color:"#1a5a3a" },
+  edited:   { label:"Edited",   color:"#1a3a5c" },
+  deleted:  { label:"Deleted",  color:"#c0392b" },
+  approved: { label:"Approved", color:"#5a1a8a" },
+  submitted:{ label:"Submitted",color:"#d97706" },
+  receipted:{ label:"Receipted",color:"#1a5a3a" },
+  returned: { label:"Returned", color:"#c0392b" },
+  granted:  { label:"Granted",  color:"#5a1a8a" },
+  revoked:  { label:"Revoked",  color:"#c0392b" },
+  reset:    { label:"Reset",    color:"#c0392b" },
+};
+
+// The actions worth logging, by reducer action type. Anything not named here
+// passes through unlogged — that is the line, held in one place rather than
+// scattered through the reducer.
+export const AUDITED = {
+  ADD_EXPENDITURE:        { action:"created",  entity:"expenditure", module:"fund" },
+  UPDATE_EXPENDITURE:     { action:"edited",   entity:"expenditure", module:"fund" },
+  DELETE_EXPENDITURE:     { action:"deleted",  entity:"expenditure", module:"fund" },
+  UPDATE_EXP_STATUS:      { action:"edited",   entity:"expenditure", module:"fund" },
+  APPROVE_CLAIM_CYCLE:    { action:"approved", entity:"claim cycle", module:"fund" },
+  ADD_REVENUE:            { action:"created",  entity:"revenue",     module:"fund" },
+  UPDATE_REVENUE:         { action:"edited",   entity:"revenue",     module:"fund" },
+  DELETE_REVENUE:         { action:"deleted",  entity:"revenue",     module:"fund" },
+  SUBMIT_REVENUE:         { action:"submitted",entity:"revenue",     module:"fund" },
+  RECEIPT_REVENUE:        { action:"receipted",entity:"revenue",     module:"fund" },
+  RETURN_REVENUE:         { action:"returned", entity:"revenue",     module:"fund" },
+  ADJUST_REVENUE:         { action:"edited",   entity:"revenue",     module:"fund" },
+  ADD_PROJECT_ENTRY:      { action:"created",  entity:"project cost",module:"cost" },
+  UPDATE_PROJECT_ENTRY:   { action:"edited",   entity:"project cost",module:"cost" },
+  DELETE_PROJECT_ENTRY:   { action:"deleted",  entity:"project cost",module:"cost" },
+  ADD_PROJECT:            { action:"created",  entity:"project",     module:"projects" },
+  UPDATE_PROJECT:         { action:"edited",   entity:"project",     module:"projects" },
+  DELETE_PROJECT:         { action:"deleted",  entity:"project",     module:"projects" },
+  RECONCILE_FUEL_DELIVERY:{ action:"edited",   entity:"fuel delivery", module:"fuel" },
+  UPDATE_EQUIPMENT:       { action:"edited",   entity:"equipment",   module:"equipment" },
+  DELETE_EQUIPMENT:       { action:"deleted",  entity:"equipment",   module:"equipment" },
+  ADD_PAY_SCALE:          { action:"created",  entity:"pay scale",   module:"payroll" },
+  UPDATE_PAY_SCALE:       { action:"edited",   entity:"pay scale",   module:"payroll" },
+  UPDATE_ROLE_PERMISSION: { action:"edited",   entity:"role",        module:"settings" },
+  SET_ROLE_CAPABILITY:    { action:"granted",  entity:"capability",  module:"settings" },
+  ADD_ROLE:               { action:"created",  entity:"role",        module:"settings" },
+  UPDATE_ROLE:            { action:"edited",   entity:"role",        module:"settings" },
+  DELETE_ROLE:            { action:"deleted",  entity:"role",        module:"settings" },
+  ADD_USER:               { action:"created",  entity:"user",        module:"settings" },
+  UPDATE_USER:            { action:"edited",   entity:"user",        module:"settings" },
+  DELETE_USER:            { action:"deleted",  entity:"user",        module:"settings" },
+  UPDATE_COUNTY_INFO:     { action:"edited",   entity:"county settings", module:"settings" },
+};
+
+// Field-by-field difference between two versions of a record.
+//
+// Only the fields that actually moved, and never the noisy ones — a changed
+// `updatedAt` is not something anybody audits.
+const IGNORED_FIELDS = new Set(["createdAt","updatedAt","id"]);
+
+export function diffRecords(before, after) {
+  if (!before || !after) return [];
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  const out = [];
+  for (const k of keys) {
+    if (IGNORED_FIELDS.has(k)) continue;
+    const a = before[k], b = after[k];
+    // Arrays and objects compare by shape rather than identity, so a re-saved
+    // record with the same content does not read as a change.
+    const same = (typeof a === "object" || typeof b === "object")
+      ? JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
+      : a === b;
+    if (!same) out.push({ field: k, from: a ?? null, to: b ?? null });
+  }
+  return out;
+}
+
+// Once a record is official, changing it needs a reason. Before that, editing
+// is just correcting your own typing.
+export const needsReason = (entity, record) => {
+  if (entity === "expenditure") return record?.status === "approved";
+  if (entity === "revenue")     return record?.status === "receipted";
+  return false;
+};
 
 const RANK = { none:0, view:1, edit:2 };
 

@@ -396,6 +396,44 @@ static analysis.
 
 ---
 
+## Roles, users and the audit trail
+
+**One role ships: Superintendent.** It always holds every locked capability and
+cannot be reduced — that is the floor that stops a county locking itself out.
+Everything else, including Office Manager, is created by the county, because no
+two departments are organised the same way.
+
+**Module access is a grid** — none, view or edit, per module per role. Blunt on
+purpose: it is the granularity a four-person department can keep correct.
+
+**Six capabilities sit outside the grid** and cannot be reached by widening a
+role: pay rates, approving a claim cycle, deleting records, account codes and
+fiscal year, changing permissions, reading the audit trail. WHO holds them is a
+setting rather than code — hardcoding `office_manager` would bake one county's
+org chart into every county's software.
+
+**`editPermissions` can never be granted.** Whoever received it could grant
+themselves the rest. That is the one rule that makes the others hold.
+
+**Users are separate from employees.** "Someone we pay" and "someone who logs
+in" drift apart in both directions. The user record is also where Azure AD
+attaches — `azureObjectId` exists and is empty, so sign-in becomes a mapping
+rather than a schema change.
+
+**The audit trail is written by wrapping the reducer**, not by log calls
+scattered through it, so an entry cannot drift out of step with what happened.
+Entries key to `userId`, never to a name — names go stale, ids do not.
+
+Money and consequential changes are logged. Fuel dispensed, parts issued, stock
+received, transfers, work orders and tank readings are NOT: they already leave
+their own permanent record, and logging them twice would make the trail
+unsearchable when it is actually needed.
+
+A reason is required only once a record is official — after a claim is approved
+or revenue receipted. Before that, editing is correcting your own typing.
+
+---
+
 ## Known problems
 
 - **OneDrive vs git.** The repo lives in OneDrive, which holds `.git` files open
@@ -417,6 +455,13 @@ static analysis.
   large. Goes away with a real database.
 - **The preview URL is public.** No real data should be entered until there's
   authentication.
+- **`Settings → Testing Tools` MUST BE REMOVED BEFORE GO-LIVE.** It erases every
+  record and the audit trail. It sits behind a typed confirmation and the
+  delete capability, but it should not exist at all once the system holds real
+  work. Greg raised this; he is right.
+- **Permissions are advisory until Azure AD.** Anyone can pick any role from the
+  switcher, and anyone can pick any name. The screens say so plainly rather than
+  implying protection that is not there.
 
 ---
 

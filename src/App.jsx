@@ -15,7 +15,8 @@ import { DEFAULT_TOWNSHIPS, DEFAULT_LOOKUPS, DEFAULT_TANKS, nextWorkOrderNumber,
          createTank, createStorageLocation, createInventoryItem, createEquipmentUnit,
          createWorkOrder, createVendor, createEmployee,
          DEFAULT_ROLES, createRole, createUser, MODULES, ROOT_ROLE_ID,
-         accessTo, canView, canEdit, hasCapability } from "./data/schema.js";
+         accessTo, canView, canEdit, hasCapability,
+         createAuditEntry, AUDITED, diffRecords } from "./data/schema.js";
 import { INITIAL_INVENTORY_ITEMS, INITIAL_INVENTORY_BATCHES, INITIAL_INVENTORY_TRANSACTIONS,
          INITIAL_STORAGE_LOCATIONS } from "./data/inventoryData.js";
 import { Icon } from "./components/shared.jsx";
@@ -94,6 +95,7 @@ const initialState = {
   // Roles are editable; the locked capabilities in schema.js are not.
   roles:              DEFAULT_ROLES,
   users:              [],   // createUser[] — separate from employees, on purpose
+  auditTrail:         [],   // createAuditEntry[] — newest last
   customFunds:        [],
   customAccountCodes: {},
   femaRates:          [],
@@ -795,10 +797,72 @@ function ComingSoon({ tab }) {
   );
 }
 
+// ── Audit ─────────────────────────────────────────────────────────────────────
+//
+// The trail is written by WRAPPING the reducer, not by scattering log calls
+// through it. Every state change passes through one place, so an entry cannot
+// drift out of step with what actually happened — and adding a new action later
+// cannot quietly go unrecorded, because the decision to log lives in one table.
+//
+// What is captured is the difference between the state before and the state
+// after, which is why edits read as "amount 1,240 → 1,420" rather than as two
+// copies of a claim.
+
+// Pull a human handle out of a record, so the log says CL-0231 rather than an id.
+const labelOf = (rec) =>
+  rec?.claimNumber || rec?.projectNumber || rec?.workOrderNumber || rec?.receiptNumber ||
+  rec?.reference || rec?.label || rec?.name || rec?.vendor || rec?.itemName || "";
+
+// Find the record an action touched, before and after, so we can diff it.
+function findPair(rule, action, before, after) {
+  const list = {
+    expenditure:"expenditures", revenue:"revenue", project:"projects",
+    equipment:"equipment", role:"roles", user:"users", "pay scale":"payScales",
+  }[rule.entity];
+  if (!list) return [null, null];
+  const id = action.payload?.id || action.payload?.roleId || action.payload || null;
+  const pick = (state) => (state[list] || []).find(r => r?.id === id) || null;
+  return [pick(before), pick(after)];
+}
+
+function withAudit(baseReducer) {
+  return (state, action) => {
+    const after = baseReducer(state, action);
+    const rule  = AUDITED[action.type];
+    if (!rule || after === state) return after;
+
+    const [was, now_] = findPair(rule, action, state, after);
+    const record = now_ || was;
+
+    // A "deleted" entry keeps enough of the record to say what was lost —
+    // otherwise the trail records that something vanished without saying what.
+    const changes = rule.action === "deleted"
+      ? Object.entries(was || {})
+          .filter(([k,v]) => v !== null && v !== "" && typeof v !== "object")
+          .slice(0, 8)
+          .map(([field, from]) => ({ field, from, to: null }))
+      : diffRecords(was, now_);
+
+    const entry = createAuditEntry({
+      userId:   action.meta?.userId ?? null,
+      roleIds:  action.meta?.roleIds ?? [],
+      action:   rule.action,
+      entity:   rule.entity,
+      entityId: record?.id ?? null,
+      label:    labelOf(record) || action.payload?.label || "",
+      module:   rule.module,
+      changes,
+      reason:   action.meta?.reason || "",
+    });
+    return { ...after, auditTrail: [...(after.auditTrail || []), entry] };
+  };
+}
+
 // ── Persistence ───────────────────────────────────────────────────────────────
 // Saves state to the browser so work survives a refresh. This is a stopgap for
 // testing — replaced by a real database later.
 const STORAGE_KEY = "pinpoint.db.v1";
+const USER_KEY    = "pinpoint.currentUser";
 
 const isPlainObject = (v) =>
   v !== null && typeof v === "object" && !Array.isArray(v);
@@ -857,6 +921,8 @@ function rehydrate(state) {
   return out;
 }
 
+const auditedReducer = withAudit(reducer);
+
 function loadPersisted() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -872,7 +938,26 @@ function loadPersisted() {
 export default function App() {
   const [activeTab, setActiveTab] = useState("fund");
   const [role, setRole] = useState("superintendent"); // superintendent | staff
-  const [db, dispatch]  = useReducer(reducer, undefined, loadPersisted);
+  const [db, rawDispatch] = useReducer(auditedReducer, undefined, loadPersisted);
+
+  // Who is at the keyboard. Remembered per computer, so the parts room machine
+  // stays set to whoever normally uses it. Azure AD replaces how this is
+  // ANSWERED, not what it is — the user record underneath is unchanged.
+  const [currentUserId, setCurrentUserId] = useState(
+    () => { try { return localStorage.getItem(USER_KEY) || ""; } catch { return ""; } });
+  useEffect(() => {
+    try { currentUserId ? localStorage.setItem(USER_KEY, currentUserId) : localStorage.removeItem(USER_KEY); }
+    catch {}
+  }, [currentUserId]);
+
+  const currentUser = (db.users || []).find(u => u.id === currentUserId) || null;
+
+  // Every dispatch carries who did it, so the reducer wrapper never has to
+  // reach outside itself to find out.
+  const dispatch = (action) => rawDispatch({
+    ...action,
+    meta: { userId: currentUserId || null, roleIds: asRoles(role), ...(action.meta || {}) },
+  });
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   // Persist on every change (debounced so large states don't thrash)
@@ -932,22 +1017,27 @@ export default function App() {
               ))}
             </div>
           </div>
-          {access.has("deleteRecords") && (
-            <button
-              onClick={() => {
-                if (window.confirm("Reset all data back to the starting inventory?\n\nThis erases everything entered since — work orders, projects, receipts, all of it. Cannot be undone.")) {
-                  localStorage.removeItem(STORAGE_KEY);
-                  window.location.reload();
-                }
-              }}
-              title="Clear test data and reload the starting inventory"
-              style={{ background:"rgba(255,255,255,0.12)", border:"1px solid rgba(255,255,255,0.2)", color:"rgba(255,255,255,0.75)", borderRadius:5, padding:"5px 11px", fontSize:11, cursor:"pointer" }}
-            >
-              Reset Data
-            </button>
-          )}
-          <div style={{ width:30, height:30, background:"rgba(255,255,255,0.15)", borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center" }}>
-            <i className="ti ti-user" style={{ fontSize:15, color:"#fff" }} />
+          {/* Who is at the keyboard. Remembered per computer, so the parts
+              room machine stays set to whoever normally uses it. Azure AD
+              replaces how this is answered, not what sits underneath it. */}
+          <div style={{ display:"flex", alignItems:"center", gap:7 }}>
+            <i className="ti ti-user" style={{ fontSize:14, color:"rgba(255,255,255,0.5)" }} />
+            {(db.users || []).filter(u => u.active !== false).length > 0 ? (
+              <select
+                value={currentUserId}
+                onChange={e => setCurrentUserId(e.target.value)}
+                title="Who is using this computer — your name goes on what you enter"
+                style={{ background:"rgba(255,255,255,0.12)", color:"#fff", border:"1px solid rgba(255,255,255,0.2)",
+                         borderRadius:5, padding:"4px 8px", fontSize:11, cursor:"pointer", maxWidth:150 }}>
+                <option value="" style={{ color:"#333" }}>Not signed in</option>
+                {(db.users || []).filter(u => u.active !== false).map(u => (
+                  <option key={u.id} value={u.id} style={{ color:"#333" }}>{u.name}</option>
+                ))}
+              </select>
+            ) : (
+              <span title="Add people under Settings → Users so their name appears on what they enter"
+                style={{ fontSize:11, color:"rgba(255,255,255,0.45)" }}>No users yet</span>
+            )}
           </div>
         </div>
       </div>
