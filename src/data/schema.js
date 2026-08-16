@@ -1646,24 +1646,43 @@ export const ACCESS_LEVELS = [
   { id:"edit", label:"Edit", description:"Can add and change" },
 ];
 
-// The capabilities that stay in code. `roles` lists who holds each.
+// The capabilities that are NOT in the module grid.
+//
+// Each costs real money or real history if it lands on the wrong person, so
+// none can be reached by widening a role's module access. They are held
+// separately and granted deliberately.
+//
+// WHO holds them is a setting, not code. Hardcoding "Superintendent and Office
+// Manager" would bake one county's org chart into every county's software —
+// some have a Clerk's Deputy, some have one person doing all of it.
+//
+// Two rules keep that safe:
+//
+//   · the Superintendent role permanently holds all of them and cannot be
+//     reduced, so there is always somebody who can approve a claim
+//   · `editPermissions` can NEVER be granted away. If it could, whoever
+//     received it could grant themselves the rest — handing over the key
+//     cabinet rather than a key.
 export const LOCKED_CAPABILITIES = [
   { id:"seeRates",     label:"See pay rates",
-    why:"Payroll Q33 — rates are visible to the Superintendent and Office Manager only",
-    roles:["superintendent","office_manager"] },
+    why:"Rates are visible to the Superintendent and whoever costs payroll",
+    grantable:true },
   { id:"approveClaims", label:"Approve a claim cycle",
     why:"The moment money is authorised",
-    roles:["superintendent","office_manager"] },
+    grantable:true },
   { id:"deleteRecords", label:"Delete records",
     why:"Deactivating keeps history; deleting destroys it",
-    roles:["superintendent"] },
+    grantable:true },
   { id:"editChartOfAccounts", label:"Edit account codes and fiscal year",
     why:"Changing these mid-year moves every report",
-    roles:["superintendent","office_manager"] },
+    grantable:true },
   { id:"editPermissions", label:"Change what everyone is allowed to do",
-    why:"Otherwise a role could quietly widen itself",
-    roles:["superintendent","office_manager"] },
+    why:"Never grantable — otherwise a role could widen itself",
+    grantable:false },
 ];
+
+// The one role that always exists and always holds everything.
+export const ROOT_ROLE_ID = "superintendent";
 
 export const createRole = (overrides = {}) => ({
   id:          uid(),
@@ -1678,6 +1697,9 @@ export const createRole = (overrides = {}) => ({
   // it. Those roles ship as a starting point and can be renamed or deleted.
   system:      false,
   permissions: Object.fromEntries(MODULES.map(m => [m.id, "none"])),
+  // Locked capabilities held by this role, granted deliberately by the
+  // Superintendent. Never reachable through the module grid.
+  capabilities: [],
   ...overrides,
 });
 
@@ -1686,49 +1708,19 @@ const perms = (map) => ({
   ...map,
 });
 
-// The two permanent roles, plus a starter set.
+// One role ships: the Superintendent.
 //
-// Superintendent and Office Manager are fixed because the locked capabilities
-// name them. The rest reflect how Adams County is organised and are offered as
-// a starting point — another county renames or deletes them.
-//
-// Module access agreed with Greg 2026-08-15, module by module.
+// Everything else — Office Manager, Parts Manager, whatever a county calls the
+// person who does the claims — is created by the county, because no two are
+// organised the same way. The Superintendent is the floor: it always exists,
+// always holds every capability, and cannot be reduced, so a department can
+// never lock itself out of its own software.
 export const DEFAULT_ROLES = [
   createRole({
-    id:"superintendent", label:"Superintendent", system:true,
-    description:"Runs the department. Everything, including who is allowed what.",
+    id: ROOT_ROLE_ID, label:"Superintendent", system:true,
+    description:"Runs the department. Holds everything, and grants the rest.",
     permissions: Object.fromEntries(MODULES.map(m => [m.id, "edit"])),
-  }),
-  createRole({
-    id:"office_manager", label:"Office Manager", system:true,
-    description:"Claims, payroll costing, vendors, reports. Sees pay rates.",
-    permissions: perms({
-      fund:"edit", cost:"edit", projects:"edit", inventory:"view", equipment:"edit",
-      fuel:"edit", infrastructure:"edit", vendors:"edit", payroll:"edit",
-      reporting:"edit", settings:"edit",
-    }),
-  }),
-  createRole({
-    id:"project_accountant", label:"Project Accountant",
-    description:"Costs work to projects. Reads claims rather than entering them. Adams County has this role; another county may not.",
-    permissions: perms({
-      fund:"view", cost:"edit", projects:"edit", inventory:"view", equipment:"view",
-      fuel:"view", infrastructure:"edit", vendors:"edit",
-      reporting:"edit", settings:"edit",
-    }),
-  }),
-  createRole({
-    id:"parts_manager", label:"Parts Manager",
-    description:"The parts room, fuel, work orders from the shop's paper, and the claims that follow. Adams County has this role; another county may not.",
-    permissions: perms({
-      fund:"edit", inventory:"edit", equipment:"edit", fuel:"edit",
-      infrastructure:"edit", vendors:"edit", reporting:"edit", settings:"edit",
-    }),
-  }),
-  createRole({
-    id:"staff", label:"Staff",
-    description:"Placeholder. Nobody holds it — anyone added starts closed rather than open.",
-    permissions: perms({}),
+    capabilities: LOCKED_CAPABILITIES.map(c => c.id),
   }),
 ];
 
@@ -1766,17 +1758,25 @@ export function accessTo(moduleId, roleIds = [], roles = DEFAULT_ROLES) {
 export const canView = (moduleId, roleIds, roles) => RANK[accessTo(moduleId, roleIds, roles)] >= 1;
 export const canEdit = (moduleId, roleIds, roles) => accessTo(moduleId, roleIds, roles) === "edit";
 
-// The locked capabilities. Checked against role IDs directly and never against
-// the grid, so no amount of ticking can open them.
-export function hasCapability(capabilityId, roleIds = []) {
-  const cap = LOCKED_CAPABILITIES.find(c => c.id === capabilityId);
-  if (!cap) return false;
-  return roleIds.some(r => cap.roles.includes(r));
+// Does this set of roles hold a locked capability?
+//
+// Read from the roles themselves, never from the module grid — so no amount of
+// ticking module access can reach one. The Superintendent holds all of them
+// unconditionally, which is what guarantees somebody always can.
+export function hasCapability(capabilityId, roleIds = [], roles = DEFAULT_ROLES) {
+  if (!LOCKED_CAPABILITIES.some(c => c.id === capabilityId)) return false;
+  if (roleIds.includes(ROOT_ROLE_ID)) return true;
+  return roleIds.some(rid =>
+    (roles.find(r => r.id === rid)?.capabilities || []).includes(capabilityId));
 }
 
+// Can this capability be given to another role at all?
+export const isGrantable = (capabilityId) =>
+  LOCKED_CAPABILITIES.find(c => c.id === capabilityId)?.grantable === true;
+
 // Legacy single-role helper, kept so existing calls keep working.
-export const canSeeRates = (roleOrRoles) =>
-  hasCapability("seeRates", Array.isArray(roleOrRoles) ? roleOrRoles : [roleOrRoles]);
+export const canSeeRates = (roleOrRoles, roles) =>
+  hasCapability("seeRates", Array.isArray(roleOrRoles) ? roleOrRoles : [roleOrRoles], roles);
 
 // User role
 export const createUserRole = (overrides = {}) => ({

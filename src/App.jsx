@@ -14,7 +14,7 @@ import { FISCAL_YEAR } from "./data/accountCodes.js";
 import { DEFAULT_TOWNSHIPS, DEFAULT_LOOKUPS, DEFAULT_TANKS, nextWorkOrderNumber,
          createTank, createStorageLocation, createInventoryItem, createEquipmentUnit,
          createWorkOrder, createVendor, createEmployee,
-         DEFAULT_ROLES, createRole, createUser, MODULES,
+         DEFAULT_ROLES, createRole, createUser, MODULES, ROOT_ROLE_ID,
          accessTo, canView, canEdit, hasCapability } from "./data/schema.js";
 import { INITIAL_INVENTORY_ITEMS, INITIAL_INVENTORY_BATCHES, INITIAL_INVENTORY_TRANSACTIONS,
          INITIAL_STORAGE_LOCATIONS } from "./data/inventoryData.js";
@@ -580,7 +580,23 @@ function reducer(state, action) {
     }
 
     // ── Roles & users ──────────────────────────────────────────────────────
+    // Granting a locked capability. The root role always holds everything and
+    // cannot be reduced; editPermissions can never be handed to anyone else,
+    // because whoever received it could then grant themselves the rest.
+    case "SET_ROLE_CAPABILITY": {
+      const { roleId, capabilityId, granted } = action.payload;
+      if (roleId === ROOT_ROLE_ID) return state;
+      if (capabilityId === "editPermissions") return state;
+      return { ...state, roles: state.roles.map(r => {
+        if (r.id !== roleId) return r;
+        const held = new Set(r.capabilities || []);
+        granted ? held.add(capabilityId) : held.delete(capabilityId);
+        return { ...r, capabilities: [...held] };
+      }) };
+    }
+
     case "UPDATE_ROLE_PERMISSION":
+      if (action.payload.roleId === ROOT_ROLE_ID) return state;
       return { ...state, roles: state.roles.map(r =>
         r.id !== action.payload.roleId ? r
           : { ...r, permissions: { ...r.permissions, [action.payload.moduleId]: action.payload.level } }) };
@@ -883,7 +899,7 @@ export default function App() {
     can:     (m) => accessTo(m, myRoles, db.roles),
     canView: (m) => canView(m, myRoles, db.roles),
     canEdit: (m) => canEdit(m, myRoles, db.roles),
-    has:     (cap) => hasCapability(cap, myRoles),
+    has:     (cap) => hasCapability(cap, myRoles, db.roles),
   };
 
   // Landing on a tab you cannot see — after a permission change, or a stale

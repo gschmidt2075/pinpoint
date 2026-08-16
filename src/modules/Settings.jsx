@@ -3,7 +3,7 @@ import { Field, SectionCard, Table, Icon, AlertBar, inp, btn, fmt, fmtSm, DateFi
 import { EXPENDITURE_CODES, REVENUE_CODES, FISCAL_YEAR } from "../data/accountCodes.js";
 import { LOOKUP_DEFS, createTownship, createStorageLocation, createTank,
          DEFAULT_INVOICES_PER_CLAIM, MODULES, ACCESS_LEVELS, LOCKED_CAPABILITIES,
-         DEFAULT_ROLES, createRole } from "../data/schema.js";
+         DEFAULT_ROLES, createRole, ROOT_ROLE_ID, hasCapability, isGrantable } from "../data/schema.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const DEFAULT_TOWNSHIPS = [
@@ -1288,36 +1288,77 @@ function RolesAndPermissions({ db, dispatch }) {
         </div>
       </SectionCard>
 
-      {/* Reference, not work. Collapsed by default — someone configuring roles
-          needs to know these exist, but not to read them every time. */}
-      <div style={{ marginBottom:18 }}>
-        <button onClick={()=>setShowLocked(v=>!v)}
-          style={{ background:"none", border:"none", padding:0, cursor:"pointer",
-                   fontSize:12, color:"#1a3a5c", textDecoration:"underline" }}>
-          {showLocked ? "Hide" : "Show"} the {LOCKED_CAPABILITIES.length} things that are fixed in code
-        </button>
-        {showLocked && (
-          <div style={{ marginTop:10, background:"#fff", border:"1px solid #e8e8e5", borderRadius:8, padding:14 }}>
-            <div style={{ fontSize:12, color:"#888", lineHeight:1.65, marginBottom:10 }}>
-              These stay where they are whatever the grid says. Each costs real money or real history
-              if it lands on the wrong person, so none can be opened by ticking a box.
-            </div>
-            {LOCKED_CAPABILITIES.map(c => (
-              <div key={c.id} style={{ display:"flex", gap:12, padding:"7px 0", borderTop:"1px solid #f4f4f2", fontSize:12 }}>
-                <span style={{ fontWeight:600, minWidth:230 }}>{c.label}</span>
-                <span style={{ minWidth:210, color:"#1a3a5c" }}>
-                  {c.roles.map(rid => roles.find(r=>r.id===rid)?.label || rid).join(", ")}
-                </span>
-                <span style={{ color:"#999" }}>{c.why}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      {/* Who holds the locked capabilities. Deliberately a separate grid from
+          module access — these are not reachable by widening a role, and each
+          is granted on purpose rather than ticked among fifty other boxes. */}
+      <SectionCard
+        title="Locked Capabilities"
+        subtitle="Not reachable through module access. Granted here, one at a time."
+        icon="shield-lock"
+      >
+        <div style={{ padding:"12px 16px", fontSize:12, color:"#888", lineHeight:1.65, borderBottom:"1px solid #f0f0ee" }}>
+          The Superintendent holds all of these permanently and cannot be reduced — that is what
+          guarantees somebody can always approve a claim. Grant them to other roles only where the job
+          genuinely needs it.
+        </div>
+        <div style={{ overflowX:"auto" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+            <thead>
+              <tr style={{ background:"#f7f7f5" }}>
+                <th style={{ padding:"9px 14px", textAlign:"left", fontWeight:700, fontSize:10, textTransform:"uppercase", letterSpacing:"0.05em", color:"#666", borderBottom:"1px solid #eee" }}>Capability</th>
+                {roles.map(r => (
+                  <th key={r.id} style={{ padding:"9px 10px", textAlign:"center", fontWeight:700, fontSize:10, textTransform:"uppercase", letterSpacing:"0.04em", color:"#666", borderBottom:"1px solid #eee", minWidth:96 }}>{r.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {LOCKED_CAPABILITIES.map((c,i) => (
+                <tr key={c.id} style={{ borderTop:"1px solid #f0f0ee", background:i%2===0?"#fff":"#fafaf8" }}>
+                  <td style={{ padding:"9px 14px" }}>
+                    <div style={{ fontWeight:600 }}>{c.label}</div>
+                    <div style={{ fontSize:11, color:"#999", marginTop:2 }}>{c.why}</div>
+                  </td>
+                  {roles.map(r => {
+                    const isRoot = r.id === ROOT_ROLE_ID;
+                    const held   = isRoot || (r.capabilities || []).includes(c.id);
+                    const fixed  = isRoot || !c.grantable;
+                    return (
+                      <td key={r.id} style={{ padding:"6px 8px", textAlign:"center" }}>
+                        <button
+                          disabled={fixed}
+                          title={isRoot ? "The Superintendent always holds this"
+                                : !c.grantable ? "This one can never be granted — whoever held it could widen themselves"
+                                : held ? `Remove from ${r.label}` : `Grant to ${r.label}`}
+                          onClick={()=>{
+                            if (fixed) return;
+                            if (!held && !window.confirm(
+                              `Grant "${c.label}" to ${r.label}?\n\n${c.why}.`)) return;
+                            dispatch({ type:"SET_ROLE_CAPABILITY",
+                                       payload:{ roleId:r.id, capabilityId:c.id, granted:!held } });
+                          }}
+                          style={{
+                            width:"100%", padding:"5px 0", borderRadius:5,
+                            cursor: fixed ? "default" : "pointer",
+                            background: held ? "#e6f4ec" : "#f7f7f5",
+                            color:      held ? "#1a5a3a" : "#bbb",
+                            border:`1px solid ${held ? "#a8d5b5" : "#e8e8e5"}`,
+                            fontSize:11, fontWeight:700, opacity: fixed && !held ? 0.4 : 1,
+                          }}>
+                          {held ? (isRoot ? "Always" : "Yes") : (c.grantable ? "—" : "Never")}
+                        </button>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
 
       <SectionCard
         title="Roles"
-        subtitle="Superintendent and Office Manager are permanent — they hold the locked capabilities. The rest are a starting point and can be renamed or removed."
+        subtitle="Only the Superintendent is permanent. Create whatever else the county needs — every department is organised differently."
         icon="users"
         action={<button onClick={()=>setShowNew(s=>!s)} style={{ ...btn.ghost, fontSize:11, padding:"5px 12px" }}>{showNew?"Cancel":"+ Add Role"}</button>}
       >
@@ -1342,7 +1383,7 @@ function RolesAndPermissions({ db, dispatch }) {
                 style={{ ...btn.primary, opacity:newRole.label.trim()?1:0.45 }}>Add</button>
             </div>
             <div style={{ fontSize:11, color:"#888", marginTop:8 }}>
-              A new role starts with no access to anything. Open what it needs in the grid above.
+              A new role starts closed — no modules, no capabilities. Open what it needs above.
             </div>
           </div>
         )}
