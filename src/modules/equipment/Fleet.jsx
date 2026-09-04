@@ -1,6 +1,9 @@
 import { useState } from "react";
-import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm, DateField, titleCase } from "../../components/shared.jsx";
-import { createEquipmentUnit, createEquipmentPart, createEquipmentFluid, createEquipmentTire, EQUIPMENT_PART_KINDS, EQUIPMENT_FLUID_KINDS, TIRE_POSITIONS, FUEL_TYPES } from "../../data/schema.js";
+import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm, DateField, titleCase, MoneyField } from "../../components/shared.jsx";
+import { useUnsavedForm, useNavigationGuard } from "../../components/unsaved.jsx";
+import { createEquipmentUnit, createEquipmentPart, createEquipmentFluid, createEquipmentTire,
+         EQUIPMENT_PART_KINDS, EQUIPMENT_FLUID_KINDS, TIRE_POSITIONS, FUEL_TYPES,
+         categoryName } from "../../data/schema.js";
 import { today, fmtDate, StatusChip, lifetimeMeter, operatingCost, EQUIPMENT_TYPES } from "./shared.jsx";
 import { FEMA_EQUIPMENT_RATES } from "../../data/femaRates.js";
 import { PMScheduleEditor, PMBadge, pmStatus, pmDueList, UnitPM } from "./PM.jsx";
@@ -152,7 +155,9 @@ export function FleetTab({ units, workOrders, dispensing, dispatch, onSelect }) 
 
 // ── Unit Detail ───────────────────────────────────────────────────────────────
 
-export function UnitDetail({ unit, workOrders, pmLogs, dispensing, invItems, invBatches, dispatch, onBack, onOpenWO }) {
+export function UnitDetail({ unit, workOrders, pmLogs, dispensing, invItems, invBatches,
+                            invGroups = [], dispatch, onBack, onOpenWO }) {
+  const go = useNavigationGuard();
   const [tab, setTab]     = useState("overview");
   const [editing, setEditing] = useState(false);
 
@@ -213,7 +218,7 @@ export function UnitDetail({ unit, workOrders, pmLogs, dispensing, invItems, inv
 
       <div style={{ display:"flex", borderBottom:"1px solid #ddd", marginBottom:24 }}>
         {TABS.map(t=>(
-          <button key={t.id} onClick={()=>setTab(t.id)} style={{
+          <button key={t.id} onClick={() => go(() => setTab(t.id))} style={{
             background:"transparent", border:"none", padding:"8px 14px 10px",
             fontWeight:tab===t.id?700:400, fontSize:13, cursor:"pointer",
             color:tab===t.id?"#1a5a3a":"#666",
@@ -229,7 +234,7 @@ export function UnitDetail({ unit, workOrders, pmLogs, dispensing, invItems, inv
       {tab==="overview"   && <UnitOverview unit={unit} workOrders={workOrders} dispensing={dispensing} />}
       {tab==="workorders" && <UnitWorkOrders unit={unit} workOrders={workOrders} dispatch={dispatch} onOpen={onOpenWO} />}
       {tab==="pm"         && <UnitPM unit={unit} pmLogs={pmLogs} dispatch={dispatch} />}
-      {tab==="parts"      && <UnitParts parts={fitParts} batches={invBatches} />}
+      {tab==="parts"      && <UnitParts parts={fitParts} batches={invBatches} groups={invGroups} />}
       {tab==="fuel"       && <UnitFuelLog dispensing={dispensing} />}
     </div>
   );
@@ -237,7 +242,7 @@ export function UnitDetail({ unit, workOrders, pmLogs, dispensing, invItems, inv
 
 // ── Parts that fit this unit ──────────────────────────────────────────────────
 
-function UnitParts({ parts, batches }) {
+function UnitParts({ parts, batches, groups = [] }) {
   const onHandFor = (itemId) => (batches||[])
     .filter(b => b.itemId === itemId && b.status === "open")
     .reduce((s,b) => s + (b.quantityRemaining||0), 0);
@@ -272,7 +277,7 @@ function UnitParts({ parts, batches }) {
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
           <thead>
             <tr style={{ background:"#f7f7f5" }}>
-              {["Part #","Item","Group","Unit","On Hand","Value"].map(h=>(
+              {["Part #","Item","Category","Unit","On Hand","Value"].map(h=>(
                 <th key={h} style={{ padding:"8px 14px", textAlign:["On Hand","Value"].includes(h)?"right":"left", fontWeight:600, fontSize:11, textTransform:"uppercase", letterSpacing:"0.05em", color:"#666", borderBottom:"1px solid #eee" }}>{h}</th>
               ))}
             </tr>
@@ -290,7 +295,7 @@ function UnitParts({ parts, batches }) {
                   </td>
                   <td style={{ padding:"9px 14px", fontWeight:600 }}>{p.name}</td>
                   <td style={{ padding:"9px 14px", fontSize:12, color:"#555" }}>
-                    {p.commodityGroupCode ? `${p.commodityGroupCode} — ${p.commodityGroup}` : (p.commodityGroup||"—")}
+                    {categoryName(p, groups)}
                   </td>
                   <td style={{ padding:"9px 14px", fontFamily:"monospace", fontSize:12 }}>{p.unitOfMeasure||"—"}</td>
                   <td style={{ padding:"9px 14px", textAlign:"right", fontFamily:"monospace", fontWeight:700, color:oh===0?"#c0392b":low?"#d97706":"#1a6b35" }}>
@@ -427,6 +432,7 @@ function UnitForm({ unit, onSave, onCancel }) {
   const [form, setForm] = useState(unit ? { ...unit } : {
     ...createEquipmentUnit(),
   });
+  useUnsavedForm(form, "this equipment unit");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
   return (
@@ -475,11 +481,23 @@ function UnitForm({ unit, onSave, onCancel }) {
           </Field>
           <Field label="Date Acquired"><DateField value={form.dateAcquired} onChange={v => set("dateAcquired", v)} /></Field>
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:14, marginTop:14 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr", gap:14, marginTop:14 }}>
           <Field label="Fuel Type">
             <select value={form.fuelType||"diesel"} onChange={e=>set("fuelType",e.target.value)} style={inp}>
               {FUEL_TYPES.map(f=><option key={f.value} value={f.value}>{titleCase(f.label)}</option>)}
             </select>
+          </Field>
+          {/* Set once here rather than chosen at every fuelling. The county's
+              diesel is dyed and untaxed; the tax is owed on what goes into
+              something that drives on a road, and remitted quarterly. */}
+          <Field label="Road Use">
+            <select value={form.taxClass||"off_road"} onChange={e=>set("taxClass",e.target.value)} style={inp}>
+              <option value="off_road">Off-road — no fuel tax</option>
+              <option value="on_road">On-road — fuel tax owed</option>
+            </select>
+            <div style={{ fontSize:11, color:"#888", marginTop:4 }}>
+              Fills in by itself at the pump. Graders and loaders are off-road; anything licensed for the highway is on-road.
+            </div>
           </Field>
           <Field label={`Starting Meter (${form.meterType==="miles"?"miles":"hours"})`}>
             <input type="number" min="0" step="any" value={form.startingMeter||0}
@@ -498,7 +516,7 @@ function UnitForm({ unit, onSave, onCancel }) {
         <div style={{ fontWeight:700, fontSize:11, textTransform:"uppercase", letterSpacing:"0.06em", color:"#888", marginBottom:14 }}>Cost Accounting</div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
           <Field label="Hourly Rate ($/hr)">
-            <input type="number" min="0" step="0.01" value={form.femaRate} onChange={e=>set("femaRate",parseFloat(e.target.value)||0)} style={{ ...inp, fontFamily:"monospace" }} />
+            <MoneyField value={form.femaRate} onChange={v=>set("femaRate",v||0)} style={{ ...inp, fontFamily:"monospace" }} />
             <div style={{ fontSize:11, color:"#888", marginTop:4 }}>
               The published FEMA rate, used for internal costing too — they were always the same number.
             </div>

@@ -1,13 +1,21 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Icon, Field, inp, btn, fmtSm } from "../../components/shared.jsx";
 import { fmtDate } from "./shared.js";
+import { costFuel, departmentFuelBill } from "../../data/schema.js";
+import { InvoicePanel, periodLabel } from "./Invoice.jsx";
 
 // Five other county departments fuel at the shop and are billed monthly at
 // cost. Reconciled weekly, billed on the 1st. Revenue is recognised when the
 // check arrives, not when the bill goes out.
 
-export function FuelBilling({ dispensing, dispatch }) {
+export function FuelBilling({ dispensing, tankTx = [], countyInfo = {}, dispatch }) {
   const outside = dispensing.filter(f => f.consumer === "other_department");
+
+  // FIFO, from the tank history. The stored figures on each record are kept in
+  // step by the reducer, but the bill is built from the costing so that a month
+  // total is the sum of the layers rather than the sum of eight rounded rows.
+  const costing = useMemo(() => costFuel(tankTx, dispensing), [tankTx, dispensing]);
+  const [invoice, setInvoice] = useState(null);
 
   const periods = [...new Set(outside.map(f => f.billingPeriod || (f.date||"").slice(0,7)).filter(Boolean))]
     .sort().reverse();
@@ -25,6 +33,44 @@ export function FuelBilling({ dispensing, dispatch }) {
     if (f.billedDate) byDept[d].billed++;
     byDept[d].entries.push(f);
   });
+
+  // The invoice lines: one per fuel type, because a county that bills a
+  // department for both would otherwise get two prices averaged into one that
+  // is neither. Adams County's outside departments use unleaded only, so in
+  // practice this is one line — but "in practice" is not a thing to build on.
+  const invoiceLines = (dept) => {
+    const entries = byDept[dept]?.entries || [];
+    const fuels = [...new Set(entries.map(e => e.fuelType || "fuel"))];
+    return fuels.map(fuel => {
+      const bill  = departmentFuelBill(costing, entries.filter(e => (e.fuelType || "fuel") === fuel));
+      const label = fuel === "unleaded" ? "Unleaded gasoline"
+                  : fuel === "diesel"   ? "Diesel fuel"
+                  : fuel.charAt(0).toUpperCase() + fuel.slice(1);
+      return {
+        fuel, label,
+        description: `${label} — ${periodLabel(period)}`,
+        gallons: bill.gallons, unitCost: bill.unitCost,
+        amount: bill.billedCost, trueCost: bill.cost, estimated: bill.estimated,
+      };
+    }).filter(l => l.gallons > 0);
+  };
+
+  // The month's detail, for anyone who wants it in a spreadsheet rather than on
+  // an invoice — a department querying its bill, most likely.
+  const exportPeriod = () => {
+    const q = v => { const t = v==null?"":String(v); return /[",\n]/.test(t) ? `"${t.replace(/"/g,'""')}"` : t; };
+    const rows = [
+      ["Department","Date","Vehicle","Mileage","Fuel","Gallons","$/gal","Amount","Pumped By","Billed","Paid"],
+      ...[...inPeriod].sort((a,b) => (a.departmentName||"").localeCompare(b.departmentName||"") ||
+                                     (a.date||"").localeCompare(b.date||""))
+        .map(e => [e.departmentName, e.date, e.outsideVehicle, e.outsideOdometer, e.fuelType,
+                   e.gallons, e.unitCost, e.totalCost, e.pumpedBy, e.billedDate, e.paidDate]),
+    ];
+    const blob = new Blob([rows.map(r => r.map(q).join(",")).join("\n")], { type:"text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob); const a = document.createElement("a");
+    a.href = url; a.download = `department-fuel-${period}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  };
   const rows = Object.entries(byDept).sort((a,b)=>b[1].cost-a[1].cost);
   const grandGal  = rows.reduce((s,[,d])=>s+d.gallons,0);
   const grandCost = rows.reduce((s,[,d])=>s+d.cost,0);
@@ -64,11 +110,14 @@ export function FuelBilling({ dispensing, dispatch }) {
           <div style={{ fontSize:15, fontWeight:700 }}>Department Fuel Billing</div>
           <div style={{ fontSize:12, color:"#888", marginTop:2 }}>Billed at cost on the 1st. Click a department to see the vehicle detail.</div>
         </div>
-        <Field label="Billing Period">
-          <select value={period} onChange={e=>{setPeriod(e.target.value); setExpanded(null);}} style={{ ...inp, margin:0, minWidth:180 }}>
-            {periods.map(p=><option key={p} value={p}>{fmtPeriod(p)}</option>)}
-          </select>
-        </Field>
+        <div style={{ display:"flex", gap:10, alignItems:"flex-end" }}>
+          <Field label="Billing Period">
+            <select value={period} onChange={e=>{setPeriod(e.target.value); setExpanded(null);}} style={{ ...inp, margin:0, minWidth:180 }}>
+              {periods.map(p=><option key={p} value={p}>{fmtPeriod(p)}</option>)}
+            </select>
+          </Field>
+          <button onClick={exportPeriod} style={{ ...btn.ghost, marginBottom:1 }}>Export the month</button>
+        </div>
       </div>
 
       <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, overflow:"hidden" }}>
@@ -103,6 +152,7 @@ export function FuelBilling({ dispensing, dispatch }) {
                         : <span style={{ background:"#f4f4f2", color:"#888", border:"1px solid #ddd", borderRadius:99, padding:"2px 9px", fontSize:11, fontWeight:700 }}>Unbilled</span>}
                     </td>
                     <td style={{ padding:"10px 14px", textAlign:"right" }} onClick={e=>e.stopPropagation()}>
+                      <button onClick={()=>setInvoice(dept)} style={{ ...btn.small, background:"#1a3a5c", fontSize:10, padding:"4px 10px", marginRight:6 }}>Invoice</button>
                       {!allBilled && <button onClick={()=>markBilled(dept)} style={{ ...btn.small, fontSize:10, padding:"4px 10px" }}>Mark Billed</button>}
                       {allBilled && !allPaid && <button onClick={()=>markPaid(dept)} style={{ ...btn.small, background:"#1a6b35", fontSize:10, padding:"4px 10px" }}>Mark Paid</button>}
                     </td>
@@ -158,6 +208,16 @@ export function FuelBilling({ dispensing, dispatch }) {
         Marking a department <strong>Paid</strong> is when the money is actually earned — revenue is
         recognised on receipt of the check, not when the bill goes out.
       </div>
+
+      {invoice && (
+        <InvoicePanel
+          info={countyInfo}
+          department={invoice}
+          period={period}
+          lines={invoiceLines(invoice)}
+          onClose={() => setInvoice(null)}
+        />
+      )}
     </div>
   );
 }

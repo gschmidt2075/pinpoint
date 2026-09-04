@@ -1,30 +1,22 @@
 import { useState, useMemo } from "react";
 import { Field, SectionCard, Table, Icon, AlertBar, inp, btn, fmt, fmtSm, DateField, titleCase } from "../components/shared.jsx";
+import { useUnsavedForm, useNavigationGuard } from "../components/unsaved.jsx";
 import { EXPENDITURE_CODES, REVENUE_CODES, FISCAL_YEAR } from "../data/accountCodes.js";
-import { LOOKUP_DEFS, createTownship, createStorageLocation, createTank,
+import { parseCSV, crosswalkInventory } from "../data/crosswalk.js";
+import { LOOKUP_DEFS, createTownship, createInventoryGroup, groupLabel,
+         INVENTORY_GROUP_TYPES, groupTypeLabel, createTank,
          DEFAULT_INVOICES_PER_CLAIM, MODULES, ACCESS_LEVELS, LOCKED_CAPABILITIES,
          DEFAULT_ROLES, createRole, ROOT_ROLE_ID, hasCapability, isGrantable,
          createUser, AUDIT_ACTIONS } from "../data/schema.js";
 
-// ── Constants ─────────────────────────────────────────────────────────────────
-const DEFAULT_TOWNSHIPS = [
-  "West Blue","Highland","Verona","Kenesaw","Wanda","Juniata",
-  "Denver","Blaine","Hanover","Ayr","Roseland","Cottonwood",
-  "Logan","Silverlake","Zero","Little Blue",
-];
-
-const DEFAULT_LOCATIONS = [
-  { id:"main",     name:"Main Shop",     shelves:["A1","A2","A3","B1","B2","B3","C1","C2","C3","D1","D2","E1","E2"] },
-  { id:"pauline",  name:"Pauline Shed",  shelves:["A1","A2","B1","B2","C1"] },
-  { id:"kenesaw",  name:"Kenesaw Shed",  shelves:["A1","A2","B1","B2","C1"] },
-  { id:"roseland", name:"Roseland Shed", shelves:["A1","A2","B1","B2","C1"] },
-  { id:"holstein", name:"Holstein Shed", shelves:["A1","A2","B1","B2","C1"] },
-  { id:"juniata",  name:"Juniata Shed",  shelves:["A1","A2","B1","B2"] },
-  { id:"shed2",    name:"#2 Shed",       shelves:["A1","A2","B1","B2"] },
-];
+// Townships and storage locations are COUNTY data, not program data. They used
+// to be hardcoded here as Adams County's list, which meant every county that
+// installed this got somebody else's yard. Both now come from state — townships
+// from Settings, locations from the inventory crosswalk on first run.
 
 // ── Settings Module ───────────────────────────────────────────────────────────
 export default function Settings({ db, dispatch, access }) {
+  const go = useNavigationGuard();
   const [view, setView] = useState("county");
 
   const tabs = [
@@ -57,7 +49,7 @@ export default function Settings({ db, dispatch, access }) {
         <div style={{ width:200, flexShrink:0 }}>
           <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, overflow:"hidden" }}>
             {tabs.map(t=>(
-              <button key={t.id} onClick={()=>setView(t.id)} style={{
+              <button key={t.id} onClick={() => go(() => setView(t.id))} style={{
                 display:"flex", alignItems:"center", gap:10, width:"100%",
                 padding:"12px 16px", background: view===t.id?"#1a1a1a":"transparent",
                 border:"none", cursor:"pointer", textAlign:"left",
@@ -113,6 +105,7 @@ function CountyInfo({ db, dispatch }) {
     // vendor. Counties differ, so it's a setting rather than a constant.
     invoicesPerClaim: info.invoicesPerClaim ?? DEFAULT_INVOICES_PER_CLAIM,
   });
+  useUnsavedForm(form, "what you have entered");
   const [saved, setSaved] = useState(false);
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
@@ -528,6 +521,7 @@ function FiscalYearWizard({ db, dispatch }) {
 
 // ── Account Codes ─────────────────────────────────────────────────────────────
 function AccountCodes({ db, dispatch }) {
+  const go = useNavigationGuard();
   const [tab,    setTab]    = useState("expenditure");
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState(null);
@@ -571,7 +565,7 @@ function AccountCodes({ db, dispatch }) {
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16, flexWrap:"wrap", gap:10 }}>
         <div style={{ display:"flex", border:"1px solid #ccc", borderRadius:6, overflow:"hidden" }}>
           {["expenditure","revenue"].map(t=>(
-            <button key={t} onClick={()=>setTab(t)} style={{ padding:"8px 18px", fontSize:12, fontWeight:600, border:"none", cursor:"pointer", background:tab===t?"#1a3a5c":"#fff", color:tab===t?"#fff":"#555", textTransform:"capitalize" }}>
+            <button key={t} onClick={() => go(() => setTab(t))} style={{ padding:"8px 18px", fontSize:12, fontWeight:600, border:"none", cursor:"pointer", background:tab===t?"#1a3a5c":"#fff", color:tab===t?"#fff":"#555", textTransform:"capitalize" }}>
               {t} Codes ({t==="expenditure"?expCodes.length:revCodes.length})
             </button>
           ))}
@@ -639,20 +633,23 @@ function AccountCodes({ db, dispatch }) {
 
 // ── System Settings ───────────────────────────────────────────────────────────
 function SystemSettings({ db, dispatch, access }) {
+  const go = useNavigationGuard();
   const [activeSection, setActiveSection] = useState("lists");
   const [newTownship, setNewTownship]     = useState("");
   const [newFund, setNewFund]             = useState("");
   const [newLocation, setNewLocation]     = useState("");
 
-  const townships    = db.townships    || DEFAULT_TOWNSHIPS;
+  const townships    = db.townships    || [];
   const customFunds  = db.customFunds  || [];
-  const locations    = db.storageLocations || [];
   const tanks        = db.tanks || [];
 
   const sections = [
     { id:"lists",     label:"Dropdown Lists",   icon:"list" },
     { id:"townships", label:"Townships",        icon:"map-pin" },
-    { id:"locations", label:"Storage Locations", icon:"building-warehouse" },
+    { id:"groups",    label:"Commodity Groups", icon:"category" },
+    // Replacing the whole catalog is destructive, so it sits behind the same
+    // capability as deleting records rather than behind mere Settings access.
+    ...(access?.has?.("deleteRecords") ? [{ id:"import", label:"Import Inventory", icon:"file-upload" }] : []),
     { id:"tanks",     label:"Fuel Tanks",        icon:"gas-station" },
     { id:"funds",     label:"Custom Funds",     icon:"coin" },
     { id:"fema",      label:"FEMA Rates",       icon:"alert-octagon" },
@@ -672,7 +669,7 @@ function SystemSettings({ db, dispatch, access }) {
       {/* Section selector */}
       <div style={{ display:"flex", gap:8, marginBottom:20, flexWrap:"wrap" }}>
         {sections.map(s=>(
-          <button key={s.id} onClick={()=>setActiveSection(s.id)} style={{ padding:"8px 14px", fontSize:12, fontWeight:600, border:"1px solid", borderRadius:6, cursor:"pointer", display:"inline-flex", alignItems:"center", gap:6,
+          <button key={s.id} onClick={() => go(() => setActiveSection(s.id))} style={{ padding:"8px 14px", fontSize:12, fontWeight:600, border:"1px solid", borderRadius:6, cursor:"pointer", display:"inline-flex", alignItems:"center", gap:6,
             background: activeSection===s.id?"#1a3a5c":"#fff",
             color:      activeSection===s.id?"#fff":"#444",
             borderColor:activeSection===s.id?"#1a3a5c":"#ccc",
@@ -700,20 +697,9 @@ function SystemSettings({ db, dispatch, access }) {
       )}
 
 
-      {activeSection==="locations" && (
-        <ListEditor
-          title="Storage Locations"
-          subtitle="Sheds hold stock. Stockpiles fill from scale tickets; portable tanks from the tank workflow."
-          icon="building-warehouse"
-          items={locations}
-          placeholder="Add location name…"
-          typeOptions={[["shed","Shed"],["stockpile","Stockpile"],["portable_tank","Portable Tank"]]}
-          onAdd={(name,type) => dispatch({ type:"ADD_STORAGE_LOCATION", payload: createStorageLocation({ name, type: type||"shed" }) })}
-          onRename={(item,name) => dispatch({ type:"UPDATE_STORAGE_LOCATION", payload:{ ...item, name } })}
-          onRetype={(item,type) => dispatch({ type:"UPDATE_STORAGE_LOCATION", payload:{ ...item, type } })}
-          onRemove={item => dispatch({ type:"REMOVE_STORAGE_LOCATION", payload:item.id })}
-        />
-      )}
+      {activeSection==="groups" && <GroupSettings db={db} dispatch={dispatch} />}
+
+      {activeSection==="import" && <InventoryImport db={db} dispatch={dispatch} />}
 
       {activeSection==="danger" && <DangerZone access={access} />}
 
@@ -833,7 +819,7 @@ function LookupLists({ db, dispatch }) {
 
   return (
     <div>
-      <AlertBar tone="info">
+      <AlertBar type="info">
         These lists feed the dropdowns throughout the app. Changing one here changes it
         everywhere — no code change needed. Records already saved keep the old wording
         until they're edited.
@@ -925,6 +911,367 @@ function LookupLists({ db, dispatch }) {
     </div>
   );
 }
+
+// ── Loading a county's own inventory ─────────────────────────────────────────
+//
+// The crosswalk used to be a Python script somebody with a checkout had to run,
+// and the result was compiled into the build. That meant a county could not load
+// its own inventory, could not redo it when the first count came back wrong, and
+// every install shipped with Adams County's catalog in it.
+//
+// The rules live in src/data/crosswalk.js and run right here in the browser —
+// the same module `scripts/gen_inventory.mjs` uses, so a file imported from this
+// screen and a file crosswalked from the command line give identical results.
+//
+// Nothing is written until the preview has been read and the confirmation typed.
+function InventoryImport({ db, dispatch }) {
+  const [file, setFile]       = useState(null);
+  const [result, setResult]   = useState(null);
+  const [error, setError]     = useState("");
+  const [busy, setBusy]       = useState(false);
+  const [confirm, setConfirm] = useState("");
+  const [done, setDone]       = useState(null);
+
+  const current = {
+    items:      (db.inventoryItems   || []).length,
+    groups:     (db.inventoryGroups  || []).length,
+    batches:    (db.inventoryBatches || []).filter(b => b.status === "open").length,
+    value:      (db.inventoryBatches || [])
+                  .filter(b => b.status === "open")
+                  .reduce((t, b) => t + (b.quantityRemaining || 0) * (b.unitCost || 0), 0),
+  };
+
+  // Movements recorded since the last import. These are what an import throws
+  // away, and the number people most need to see before confirming.
+  const movements = (db.inventoryTransactions || []).filter(t => t.type !== "crosswalk").length;
+
+  const pick = async (f) => {
+    setFile(f); setResult(null); setError(""); setConfirm(""); setDone(null);
+    if (!f) return;
+    setBusy(true);
+    try {
+      const { records } = parseCSV(await f.text());
+      if (!records.length) { setError("That file has no rows in it."); return; }
+      const out = crosswalkInventory(records);
+      if (!out.ok) { setError(out.error); return; }
+      setResult(out);
+    } catch (e) {
+      setError(`Could not read that file — ${e.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const run = () => {
+    dispatch({ type:"IMPORT_INVENTORY", payload: {
+      items: result.items, batches: result.batches, transactions: result.transactions,
+      groups: result.groups, exceptions: result.exceptions,
+    }});
+    setDone(result.summary); setResult(null); setFile(null); setConfirm("");
+  };
+
+  const READY = "REPLACE";
+  const canRun = result && confirm.trim().toUpperCase() === READY;
+
+  return (
+    <SectionCard title="Import Inventory" subtitle="Load a county's own R&B export" icon="file-upload">
+      {done && (
+        <div style={{ padding:"14px 18px", borderBottom:"1px solid #eee" }}>
+          <AlertBar type="success" message={
+            `Imported ${done.items.toLocaleString()} items and ${done.batches.toLocaleString()} opening batches, ` +
+            `${fmt(done.openingValue)} on hand. ${done.exceptions} rows flagged — see the Inventory dashboard.`} />
+        </div>
+      )}
+
+      <div style={{ padding:"16px 18px", borderBottom:"1px solid #eee", fontSize:13, color:"#555", lineHeight:1.7 }}>
+        Pick the inventory export from R&amp;B. Nothing is written until you have read what it
+        will do and typed the confirmation.
+        <div style={{ marginTop:10, fontSize:12, color:"#888" }}>
+          The file needs these columns: <code>Inventory #</code>, <code>Commodity Group</code>,{" "}
+          <code>Comm Grp Alpha</code>, <code>Inventory Description</code>, <code>Quan On Hand</code>,{" "}
+          <code>Cost On Hand</code>, <code>Unit Of Measure</code>, <code>GL A/C #</code>, <code>Vendor</code>.
+          Extra columns are ignored, and <code>Inventory Usual Location</code> is deliberately not used.
+        </div>
+      </div>
+
+      <div style={{ padding:"16px 18px", borderBottom:"1px solid #eee" }}>
+        <input type="file" accept=".csv,text/csv" onChange={e=>pick(e.target.files?.[0] || null)}
+               style={{ fontSize:13 }} />
+        {busy && <span style={{ marginLeft:12, fontSize:12, color:"#888" }}>Reading…</span>}
+        {file && !busy && <span style={{ marginLeft:12, fontSize:12, color:"#888" }}>{file.name}</span>}
+      </div>
+
+      {error && (
+        <div style={{ padding:"14px 18px", borderBottom:"1px solid #eee" }}>
+          <AlertBar type="danger" message={error} />
+        </div>
+      )}
+
+      {result && (
+        <>
+          <div style={{ padding:"16px 18px", borderBottom:"1px solid #eee" }}>
+            <div style={{ fontSize:13, fontWeight:700, marginBottom:10 }}>What this file would replace</div>
+            <Table
+              headers={[{label:""},{label:"Now",right:true},{label:"After importing",right:true}]}
+              rows={[
+                ["Items in the catalog", current.items.toLocaleString(), result.summary.items.toLocaleString()],
+                ["Commodity groups",     current.groups.toLocaleString(), result.summary.groups.toLocaleString()],
+                ["Open batches",         current.batches.toLocaleString(), result.summary.batches.toLocaleString()],
+                ["Value on hand",        fmt(current.value), fmt(result.summary.openingValue)],
+              ].map(([a,b,c]) => [
+                <span style={{ fontWeight:600 }}>{a}</span>,
+                <span style={{ fontFamily:"ui-monospace, monospace", color:"#888" }}>{b}</span>,
+                <span style={{ fontFamily:"ui-monospace, monospace", fontWeight:700 }}>{c}</span>,
+              ])}
+            />
+            <div style={{ fontSize:12, color:"#888", marginTop:10 }}>
+              {result.summary.rows.toLocaleString()} rows read
+              {result.summary.merged > 0 &&
+                ` · ${result.summary.merged.toLocaleString()} merged, where one part number appeared in several groups`}
+              {" · "}
+              {Object.entries(result.summary.typeCounts)
+                     .sort((a,b)=>b[1]-a[1]).map(([k,v])=>`${v} ${k}`).join(" · ")}
+            </div>
+          </div>
+
+          {result.summary.exceptions > 0 && (
+            <div style={{ padding:"16px 18px", borderBottom:"1px solid #eee" }}>
+              <div style={{ fontSize:13, fontWeight:700, marginBottom:8 }}>
+                {result.summary.exceptions} rows will be flagged rather than guessed at
+              </div>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+                {Object.entries(result.summary.exceptionKinds).map(([kind,n])=>(
+                  <span key={kind} style={{ background:"#fff4e0", border:"1px solid #f0d080", borderRadius:14,
+                                            padding:"4px 12px", fontSize:12, color:"#7a4f00" }}>
+                    {kind} <strong>{n}</strong>
+                  </span>
+                ))}
+              </div>
+              <div style={{ fontSize:12, color:"#888", marginTop:8 }}>
+                None of these block the import. They appear on the Inventory dashboard with their row number.
+              </div>
+            </div>
+          )}
+
+          <div style={{ padding:"16px 18px", borderBottom:"1px solid #eee" }}>
+            <AlertBar type="warning" message={
+              movements > 0
+                ? `This replaces the catalog, the groups and every opening balance — and discards ${movements.toLocaleString()} recorded movement${movements===1?"":"s"} (receipts, issues, transfers, counts). Claims, work orders, fuel and revenue are not touched.`
+                : "This replaces the catalog, the groups and every opening balance. Claims, work orders, fuel and revenue are not touched."} />
+            <div style={{ display:"flex", gap:10, alignItems:"flex-end", marginTop:6 }}>
+              <Field label={`Type ${READY} to confirm`}>
+                <input value={confirm} onChange={e=>setConfirm(e.target.value)}
+                       style={{ ...inp, width:180, fontFamily:"ui-monospace, monospace", textTransform:"uppercase" }}
+                       placeholder={READY} />
+              </Field>
+              <button onClick={run} disabled={!canRun}
+                      style={{ ...btn.primary, marginBottom:2, opacity: canRun ? 1 : 0.4,
+                               cursor: canRun ? "pointer" : "not-allowed" }}>
+                Import {result.summary.items.toLocaleString()} items
+              </button>
+              <button onClick={()=>{setResult(null);setFile(null);setConfirm("");}}
+                      style={{ ...btn.ghost, marginBottom:2 }}>Cancel</button>
+            </div>
+          </div>
+        </>
+      )}
+    </SectionCard>
+  );
+}
+
+// ── Storage locations ─────────────────────────────────────────────────────────
+// Locations arrive from the inventory crosswalk carrying the numeric code the
+// old system used. The code is the authoritative answer to WHERE — it is what
+// every batch points at — so it is shown but never edited. The NAME is what the
+// crew calls the place, and most were inferred from whatever was stored there.
+//
+// An inferred name is a guess, so it is marked as one until somebody confirms
+// it. "Location 47 holds 52 things and we think it is the Kenesaw Shed" is a
+// useful thing to be able to say; silently asserting it is not.
+function GroupSettings({ db, dispatch }) {
+  const groups    = db.inventoryGroups  || [];
+  const items     = db.inventoryItems   || [];
+  const batches   = db.inventoryBatches || [];
+  const equipment = db.equipment        || [];
+  const [filter, setFilter]   = useState("all");
+  const [search, setSearch]   = useState("");
+  const [editing, setEditing] = useState(null);
+  const [draft, setDraft]     = useState(null);
+  const [error, setError]     = useState("");
+
+  // What each group is actually carrying, live from the data — because both
+  // questions matter before letting anyone delete or renumber one.
+  const usage = useMemo(() => {
+    const m = new Map();
+    const get = (k) => { if (!m.has(k)) m.set(k, { held: 0, value: 0, cats: 0 }); return m.get(k); };
+    for (const b of batches) {
+      if (b.status !== "open" || !((b.quantityRemaining || 0) > 0)) continue;
+      const u = get(String(b.location));
+      u.held  += 1;
+      u.value += (b.quantityRemaining || 0) * (Number(b.unitCost) || 0);
+    }
+    const byId = new Map(groups.map(g => [g.id, String(g.code)]));
+    for (const i of items) {
+      const code = byId.get(i.categoryId);
+      if (code) get(code).cats += 1;
+    }
+    return m;
+  }, [batches, items, groups]);
+
+  const stat = (g) => usage.get(String(g.code)) || { held: 0, value: 0, cats: 0 };
+
+  const shown = groups
+    .filter(g => filter === "all" || g.type === filter)
+    .filter(g => !search || `${g.code} ${g.name}`.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => (Number(a.code) || 0) - (Number(b.code) || 0));
+
+  const startEdit = (g) => { setEditing(g.id); setDraft({ ...g }); setError(""); };
+
+  // Adding starts a DRAFT row rather than writing a half-made group into state.
+  // The code is left blank on purpose: it is the county's numbering, not ours,
+  // and there is no reason a new group should have to follow the last one. Any
+  // number will do so long as nothing else already answers to it.
+  const startAdd = () => {
+    setEditing("new");
+    setDraft(createInventoryGroup({ code: "", name: "", type: "area" }));
+    setError("");
+  };
+
+  const cancel = () => { setEditing(null); setDraft(null); setError(""); };
+
+  const save = () => {
+    const code = String(draft.code || "").trim();
+    if (!code)                            return setError("A group needs a code.");
+    if (!String(draft.name || "").trim()) return setError("A group needs a name.");
+    // Uniqueness is the only constraint. Codes need not be sequential or
+    // numeric — R&B's own run to 430 with gaps all the way down.
+    if (groups.some(g => g.id !== draft.id && String(g.code) === code))
+      return setError(`Code ${code} is already taken by ${groupLabel(groups.find(g => String(g.code) === code))}.`);
+    dispatch({ type: editing === "new" ? "ADD_INVENTORY_GROUP" : "UPDATE_INVENTORY_GROUP",
+               payload: { ...draft, code } });
+    cancel();
+  };
+
+  const remove = (g) => {
+    const u = stat(g);
+    // Deleting a group that still holds stock would strand every batch at a
+    // code nothing answers to — present in the county total, absent from every
+    // count sheet. Deleting one still used as a category leaves items with no
+    // category at all. Both are blocked here rather than warned about.
+    if (u.held) return setError(`${groupLabel(g)} still holds stock. Transfer it somewhere else first.`);
+    if (u.cats) return setError(`${u.cats} item${u.cats === 1 ? " uses" : "s use"} ${groupLabel(g)} as their category. Recategorise them first.`);
+    dispatch({ type: "REMOVE_INVENTORY_GROUP", payload: g.id });
+    setError("");
+  };
+
+  const counts = groups.reduce((a, g) => ({ ...a, [g.type]: (a[g.type] || 0) + 1 }), {});
+  const tabs = [["all", `All (${groups.length})`],
+                ...INVENTORY_GROUP_TYPES.map(([v, l]) => [v, `${l} (${counts[v] || 0})`])];
+
+  return (
+    <SectionCard
+      title="Commodity Groups"
+      subtitle={`${groups.length} groups · a group is both what a thing IS and where it is kept`}
+      icon="category">
+
+      <div style={{ padding:"14px 18px", borderBottom:"1px solid #eee", fontSize:13, color:"#555", lineHeight:1.6 }}>
+        These are the same group numbers R&amp;B uses. An item&apos;s <strong>category</strong> is a group,
+        and a batch&apos;s <strong>location</strong> is a group code — so on day one they match, and they
+        only differ once something has been transferred.
+        <div style={{ fontSize:12, color:"#888", marginTop:6 }}>
+          Changing a code moves its stock with it. A group holding stock, or in use as a category, cannot be deleted.
+        </div>
+      </div>
+
+      {error && (
+        <div style={{ padding:"10px 18px", borderBottom:"1px solid #eee" }}>
+          <AlertBar type="danger" message={error} />
+        </div>
+      )}
+
+      <div style={{ display:"flex", gap:6, padding:"12px 18px", borderBottom:"1px solid #eee", flexWrap:"wrap", alignItems:"center" }}>
+        <button style={{ ...btn.primarySm, marginRight:6 }} onClick={startAdd}>
+          <Icon name="plus" size={12} /> Add a group
+        </button>
+        {tabs.map(([v,l])=>(
+          <button key={v} onClick={()=>setFilter(v)} style={{ padding:"5px 11px", fontSize:12, fontWeight:600,
+            border:"1px solid", borderRadius:5, cursor:"pointer",
+            background: filter===v?"#1a3a5c":"#fff", color: filter===v?"#fff":"#555",
+            borderColor: filter===v?"#1a3a5c":"#ccc" }}>{l}</button>
+        ))}
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Find a group…"
+               style={{ ...inp, margin:0, width:180, marginLeft:"auto" }} />
+      </div>
+
+      <Table
+        headers={[{label:"Code"},{label:"Name"},{label:"Type"},{label:"Items Here",right:true},
+                 {label:"Value Here",right:true},{label:"Used as Category",right:true},{label:""},{label:""}]}
+        rows={[
+          ...(editing === "new" ? [[
+            <input style={{ ...inp, width:70, fontFamily:"ui-monospace, monospace", fontWeight:700 }}
+                   value={draft.code} autoFocus placeholder="e.g. 42"
+                   onChange={e=>setDraft({ ...draft, code:e.target.value })}
+                   onKeyDown={e=>{ if(e.key==="Enter") save(); if(e.key==="Escape") cancel(); }} />,
+            <input style={inp} value={draft.name} placeholder="What is this group called?"
+                   onChange={e=>setDraft({ ...draft, name:e.target.value })}
+                   onKeyDown={e=>{ if(e.key==="Enter") save(); if(e.key==="Escape") cancel(); }} />,
+            <select style={inp} value={draft.type} onChange={e=>setDraft({ ...draft, type:e.target.value })}>
+              {INVENTORY_GROUP_TYPES.map(([v,lab])=><option key={v} value={v}>{lab}</option>)}
+            </select>,
+            <span style={{ color:"#aaa" }}>—</span>,
+            <span style={{ color:"#aaa" }}>—</span>,
+            <span style={{ color:"#aaa" }}>—</span>,
+            <button style={btn.primarySm} onClick={save}>Save</button>,
+            <button style={btn.ghostSm} onClick={cancel}>Cancel</button>,
+          ]] : []),
+          ...shown.map(g => {
+          const u = stat(g);
+          if (editing === g.id) return [
+            <input style={{ ...inp, width:70, fontFamily:"ui-monospace, monospace", fontWeight:700 }}
+                   value={draft.code} onChange={e=>setDraft({ ...draft, code:e.target.value })} />,
+            <input style={inp} value={draft.name} autoFocus
+                   onChange={e=>setDraft({ ...draft, name:e.target.value })}
+                   onKeyDown={e=>{ if(e.key==="Enter") save(); if(e.key==="Escape") setEditing(null); }} />,
+            <select style={inp} value={draft.type} onChange={e=>setDraft({ ...draft, type:e.target.value })}>
+              {INVENTORY_GROUP_TYPES.map(([v,lab])=><option key={v} value={v}>{lab}</option>)}
+            </select>,
+            draft.type === "machine"
+              ? <select style={inp} value={draft.equipmentId || ""}
+                        onChange={e=>setDraft({ ...draft, equipmentId:e.target.value || null,
+                          unitNumber:(equipment.find(x=>x.id===e.target.value)||{}).unitNumber || draft.unitNumber })}>
+                  <option value="">Link to a unit…</option>
+                  {equipment.map(x=><option key={x.id} value={x.id}>{x.unitNumber} — {x.description||x.make}</option>)}
+                </select>
+              : <span>{u.held}</span>,
+            fmtSm(u.value),
+            u.cats,
+            <button style={btn.primarySm} onClick={save}>Save</button>,
+            <button style={btn.ghostSm} onClick={cancel}>Cancel</button>,
+          ];
+          return [
+            <span style={{ fontWeight:700, fontFamily:"ui-monospace, monospace" }}>{g.code}</span>,
+            <span>{g.name}
+              {g.type==="machine" && !g.equipmentId &&
+                <span style={{ marginLeft:8, fontSize:11, color:"#a06000", background:"#fff4e0", padding:"1px 6px", borderRadius:4 }}>
+                  not linked to a unit
+                </span>}
+            </span>,
+            groupTypeLabel(g.type),
+            u.held,
+            fmtSm(u.value),
+            u.cats,
+            <button style={btn.ghostSm} onClick={()=>startEdit(g)}>Edit</button>,
+            (u.held || u.cats)
+              ? <span style={{ fontSize:11, color:"#999" }}>{u.held ? "holds stock" : "in use"}</span>
+              : <button style={btn.ghostSm} onClick={()=>remove(g)}>Remove</button>,
+          ];
+        })]}
+        emptyMessage="No groups match."
+      />
+    </SectionCard>
+  );
+}
+
 
 // ── Generic list editor ───────────────────────────────────────────────────────
 // Townships and storage locations are lists of objects, not strings. Editing one
@@ -1037,6 +1384,7 @@ function TankSettings({ tanks, dispatch }) {
   };
   const [editing, setEditing] = useState(null);   // tank id, or "new", or null
   const [form, setForm] = useState(BLANK);
+  useUnsavedForm(form, "this tank");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
   const startNew  = () => { setForm(BLANK); setEditing("new"); };
@@ -1462,6 +1810,7 @@ function UsersScreen({ db, dispatch }) {
   const [editing, setEditing] = useState(null);
   const BLANK = { name:"", employeeId:"", roleIds:[], email:"", active:true, notes:"" };
   const [form, setForm] = useState(BLANK);
+  useUnsavedForm(form, "what you have entered");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
   const save = () => {

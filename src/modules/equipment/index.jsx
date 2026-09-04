@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Icon, inp, btn } from "../../components/shared.jsx";
+import { useNavigationGuard } from "../../components/unsaved.jsx";
 import { FleetTab } from "./Fleet.jsx";
 import { WorkOrdersTab, WorkOrderDetail } from "./WorkOrders.jsx";
 import { PMDueTab } from "./PM.jsx";
@@ -24,6 +25,7 @@ import { UnitDetail } from "./Fleet.jsx";
 // billing to find it.
 
 export default function Equipment({ db, dispatch }) {
+  const go = useNavigationGuard();
   const [tab, setTab]           = useState("fleet");
   const [selectedUnitId, setSelectedUnitId] = useState(null);
   const [selectedWOId, setSelectedWOId]     = useState(null);
@@ -63,6 +65,7 @@ export default function Equipment({ db, dispatch }) {
         dispensing={dispensing.filter(f=>f.equipmentId===selectedUnit.id)}
         invItems={invItems}
         invBatches={invBatches}
+        invGroups={db.inventoryGroups || []}
         dispatch={dispatch}
         onBack={() => setSelectedUnitId(null)}
         onOpenWO={woId => setSelectedWOId(woId)}
@@ -80,7 +83,7 @@ export default function Equipment({ db, dispatch }) {
     <div>
       <div style={{ display:"flex", gap:2, marginBottom:24, borderBottom:"1px solid #ddd" }}>
         {TABS.map(t=>(
-          <button key={t.id} onClick={()=>setTab(t.id)} style={{
+          <button key={t.id} onClick={() => go(() => setTab(t.id))} style={{
             background:"transparent", border:"none", padding:"8px 14px 10px",
             fontWeight:tab===t.id?700:400, fontSize:13, cursor:"pointer",
             color:tab===t.id?"#1a5a3a":"#666",

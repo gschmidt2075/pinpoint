@@ -12,14 +12,16 @@ import Employees from "./modules/Employees.jsx";
 import Reporting from "./modules/Reporting.jsx";
 import { FISCAL_YEAR } from "./data/accountCodes.js";
 import { DEFAULT_TOWNSHIPS, DEFAULT_LOOKUPS, DEFAULT_TANKS, nextWorkOrderNumber,
-         createTank, createStorageLocation, createInventoryItem, createEquipmentUnit,
+         createTank, createInventoryGroup, createInventoryItem, createEquipmentUnit,
          createWorkOrder, createVendor, createEmployee,
          DEFAULT_ROLES, createRole, createUser, MODULES, ROOT_ROLE_ID,
          accessTo, canView, canEdit, hasCapability,
-         createAuditEntry, AUDITED, diffRecords } from "./data/schema.js";
+         createAuditEntry, AUDITED, diffRecords, transferStock,
+         resolveHourlyRate, recostFuelDispensing } from "./data/schema.js";
 import { INITIAL_INVENTORY_ITEMS, INITIAL_INVENTORY_BATCHES, INITIAL_INVENTORY_TRANSACTIONS,
-         INITIAL_STORAGE_LOCATIONS } from "./data/inventoryData.js";
+         INITIAL_INVENTORY_GROUPS, INVENTORY_EXCEPTIONS } from "./data/inventoryData.js";
 import { Icon } from "./components/shared.jsx";
+import { UnsavedWorkProvider, useNavigationGuard } from "./components/unsaved.jsx";
 
 // ── Roles ─────────────────────────────────────────────────────────────────────
 // Defined in schema.js alongside the permission rules, so the roles and what
@@ -76,19 +78,24 @@ const initialState = {
   // ── People & Vendors ─────────────────────────────────────────────────────
   vendors:            [],   // createVendor[]
   employees:          [],   // createEmployee[]
-  payScales:          [],   // createPayScale[] — rate per classification, dated
 
   // ── Settings / Lookups ───────────────────────────────────────────────────
   // Backward-compat aliases — removed when old modules are rebuilt
   fuelLogs:           [],   // alias for fuelDispensing (Equipment.jsx old)
-  locations:          [],   // alias for storageLocations (Settings.jsx old)
+
+  // Which generation of the seeded lists this data came from. See SEED_VERSION.
+  seedVersion:        2,
 
   countyInfo:         {},
   fiscalYear:         null,
-  // Seeded from the inventory export, so every location holding stock exists as
-  // a record from the start. Most names were inferred from what is stored
-  // there; twelve are blank and need someone who knows the buildings.
-  storageLocations:   INITIAL_STORAGE_LOCATIONS,
+  // ONE list of commodity groups, used twice: an item's categoryId names a group
+  // (what it IS) and a batch's location holds a group code (where it is). Day
+  // one they are identical for every item, so staff see the list they know from
+  // R&B; they diverge the first time something is transferred.
+  inventoryGroups:    INITIAL_INVENTORY_GROUPS,
+  // Everything the crosswalk could not carry over cleanly, with the CSV row and
+  // a reason. Surfaced in the Inventory module rather than buried in a log.
+  inventoryExceptions: INVENTORY_EXCEPTIONS,
   townships:          DEFAULT_TOWNSHIPS,
   // Editable dropdown lists — managed in Settings, never hardcoded in modules
   lookups:            DEFAULT_LOOKUPS,
@@ -99,11 +106,14 @@ const initialState = {
   customFunds:        [],
   customAccountCodes: {},
   femaRates:          [],
+  // Named fuel taxes with dated rates — state, federal, or whatever a county
+  // actually remits. Empty by default: nobody's rate is another county's rate.
+  fuelTaxRates:       [],   // createFuelTaxRate[]
   userRoles:          [],
 };
 
 // ── Reducer ───────────────────────────────────────────────────────────────────
-function reducer(state, action) {
+function baseReducer(state, action) {
   switch (action.type) {
 
     // ── Fund Accounting ────────────────────────────────────────────────────
@@ -326,10 +336,23 @@ function reducer(state, action) {
       }
 
       if (tx.type === "transfer") {
-        // Move batch to new location
-        if (tx.batchId) {
-          batches = batches.map(b => b.id === tx.batchId ? { ...b, location: tx.toLocation } : b);
-        }
+        // A transfer moves a QUANTITY, not a batch.
+        //
+        // This used to reassign the whole batch to the destination: move 5 of
+        // the 14 blades at Kenesaw and all 14 followed, leaving Kenesaw showing
+        // nothing and Holstein showing fourteen. Nobody caught it because the
+        // county-wide total stayed right — only the per-shed figures were wrong,
+        // and the old system had no per-shed figures to compare against.
+        //
+        // The arithmetic lives in schema.js so it can be tested directly.
+        batches = transferStock(batches, {
+          itemId:       tx.itemId,
+          fromLocation: tx.fromLocation,
+          toLocation:   tx.toLocation,
+          quantity:     tx.quantity,
+          toShelf:      tx.toShelf || "",
+          ref:          tx.id,
+        }).batches;
       }
 
       if (tx.type === "adjustment") {
@@ -663,10 +686,31 @@ function reducer(state, action) {
 
     case "ADD_FUEL_DISPENSING": {
       const fd = action.payload;
-      // Decrement the source tank level
+      // Decrement the source tank level. A fluid taken off a shelf has no tank,
+      // so this finds nothing and changes nothing.
       const tanks = state.tanks.map(t =>
         t.id !== fd.sourceTankId ? t : { ...t, currentLevel: Math.max(0, t.currentLevel - fd.gallons) }
       );
+
+      // DEF comes out of inventory, not a tank. The issue travels WITH the fuel
+      // entry rather than as a second dispatch, so a jug cannot be poured into a
+      // machine without coming off the shelf — the two either both happen or
+      // neither does, and there is one audit event rather than two that have to
+      // be read together.
+      let inventoryBatches      = state.inventoryBatches;
+      let inventoryTransactions = state.inventoryTransactions;
+      if (fd.sourceType === "inventory" && action.transaction) {
+        const tx = action.transaction;
+        (tx.batchLines || []).forEach(line => {
+          inventoryBatches = inventoryBatches.map(b => {
+            if (b.id !== line.batchId) return b;
+            const left = Math.max(0, (b.quantityRemaining || 0) - line.quantity);
+            return { ...b, quantityRemaining: left, status: left <= 0 ? "depleted" : "open" };
+          });
+        });
+        inventoryTransactions = [...inventoryTransactions, tx];
+      }
+
       // Meters are read at every fuelling — carry the reading onto the unit so PM
       // due dates stay current without anyone entering it twice. Only move it
       // forward; a lower number means a typo or a meter that's since been swapped.
@@ -675,7 +719,8 @@ function reducer(state, action) {
             u.id !== fd.equipmentId ? u
               : (fd.meterReading > (u.currentMeter || 0) ? { ...u, currentMeter: fd.meterReading } : u))
         : state.equipment;
-      return { ...state, tanks, equipment, fuelDispensing: [...state.fuelDispensing, fd] };
+      return { ...state, tanks, equipment, inventoryBatches, inventoryTransactions,
+               fuelDispensing: [...state.fuelDispensing, fd] };
     }
     case "UPDATE_FUEL_DISPENSING":
       return { ...state, fuelDispensing: state.fuelDispensing.map(f => f.id === action.payload.id ? action.payload : f) };
@@ -696,12 +741,58 @@ function reducer(state, action) {
     case "ADD_SIGN_HISTORY":return { ...state, signHistory:[...state.signHistory, action.payload] };
 
     // ── Vendors ────────────────────────────────────────────────────────────
-    // ── Employees & pay scales ─────────────────────────────────────────────
+    // ── Employees ──────────────────────────────────────────────────────────
+    // There is no pay scale table. Rates live on the person as a dated history
+    // — see createRateChange. The old table said the CLASSIFICATION set the
+    // pay, which is wrong wherever there is a step program.
     case "ADD_EMPLOYEE":    return { ...state, employees: [...state.employees, action.payload] };
     case "UPDATE_EMPLOYEE": return { ...state, employees: state.employees.map(e => e.id === action.payload.id ? action.payload : e) };
-    case "ADD_PAY_SCALE":   return { ...state, payScales: [...(state.payScales||[]), action.payload] };
-    case "UPDATE_PAY_SCALE":return { ...state, payScales: (state.payScales||[]).map(s => s.id === action.payload.id ? action.payload : s) };
-    case "DELETE_PAY_SCALE":return { ...state, payScales: (state.payScales||[]).filter(s => s.id !== action.payload) };
+
+    // A rate change, and the labor entries it moves.
+    //
+    // Backdating is the point: the Board approves in September, effective July.
+    // Every labor entry on or after that date is recosted so the record matches
+    // what people were actually paid.
+    //
+    // This is safe here in a way it would not be in fund accounting, because
+    // cost accounting is not money leaving. Greg: "The cost accounting on
+    // projects isn't claimed through the fund accounting. It is just a
+    // reflection of what work has been done and how it costed out."
+    case "SAVE_RATE_CHANGE": {
+      const { employeeId, change, assignment } = action.payload;
+      const employees = state.employees.map(e => {
+        if (e.id !== employeeId) return e;
+        const history = [...(e.rateHistory || []).filter(r => r.id !== change.id), change]
+          .sort((a, b) => String(a.effectiveDate).localeCompare(String(b.effectiveDate)));
+        // A promotion is one event on one form, written as two records so the
+        // histories stay separate.
+        const assignments = assignment
+          ? [...(e.assignments || []).filter(a => a.id !== assignment.id), assignment]
+              .sort((a, b) => String(a.effectiveDate).localeCompare(String(b.effectiveDate)))
+          : e.assignments;
+        return { ...e, rateHistory: history, assignments };
+      });
+
+      const employee = employees.find(e => e.id === employeeId);
+      const projects = (state.projects || []).map(p => {
+        const labor = (p.laborEntries || []).map(l => {
+          if (l.employeeId !== employeeId || String(l.date) < String(change.effectiveDate)) return l;
+          const r = resolveHourlyRate(employee, l.date);
+          const st = (Number(l.straightTimeHours) || 0) * r.rate;
+          const ot = (Number(l.overtimeHours) || 0) * r.overtimeRate;
+          const fringe = st * ((Number(l.fringeRate) || 0) / 100);
+          return { ...l, straightTimeRate: r.rate, overtimeRate: r.overtimeRate,
+                   classification: r.classification || l.classification,
+                   totalCost: Number((st + ot + fringe).toFixed(2)) };
+        });
+        return labor === p.laborEntries ? p : { ...p, laborEntries: labor };
+      });
+      return { ...state, employees, projects };
+    }
+
+    case "DELETE_RATE_CHANGE":
+      return { ...state, employees: state.employees.map(e => e.id !== action.payload.employeeId ? e
+        : { ...e, rateHistory: (e.rateHistory || []).filter(r => r.id !== action.payload.id) }) };
 
     case "ADD_VENDOR":      return { ...state, vendors: [...state.vendors, action.payload] };
     case "UPDATE_VENDOR":   return { ...state, vendors: state.vendors.map(v => v.id === action.payload.id ? action.payload : v) };
@@ -717,11 +808,7 @@ function reducer(state, action) {
     case "SET_FISCAL_YEAR":       return { ...state, fiscalYear: action.payload };
     case "UPDATE_ACCOUNT_CODE":   return { ...state, customAccountCodes: { ...state.customAccountCodes, [action.payload.code]: action.payload } };
 
-    case "ADD_STORAGE_LOCATION":    return { ...state, storageLocations: [...state.storageLocations, action.payload] };
-    case "UPDATE_STORAGE_LOCATION": return { ...state, storageLocations: state.storageLocations.map(l => l.id === action.payload.id ? action.payload : l) };
-    case "REMOVE_STORAGE_LOCATION": return { ...state, storageLocations: state.storageLocations.filter(l => l.id !== action.payload) };
-
-    // ── Townships & storage locations ──────────────────────────────────────
+    // ── Townships & commodity groups ───────────────────────────────────────
     // Both are lists of objects, not strings. Settings previously pushed raw
     // strings into the township list and edited a `locations` alias nothing read,
     // which is why editing them appeared to do nothing.
@@ -732,12 +819,64 @@ function reducer(state, action) {
     case "REMOVE_TOWNSHIP":
       return { ...state, townships: (state.townships || []).filter(t => t.id !== action.payload) };
 
-    case "ADD_STORAGE_LOCATION":
-      return { ...state, storageLocations: [...(state.storageLocations || []), action.payload] };
-    case "UPDATE_STORAGE_LOCATION":
-      return { ...state, storageLocations: (state.storageLocations || []).map(l => l.id === action.payload.id ? action.payload : l) };
-    case "REMOVE_STORAGE_LOCATION":
-      return { ...state, storageLocations: (state.storageLocations || []).filter(l => l.id !== action.payload) };
+    // Commodity groups. Greg: "we will need to be able to add/remove/edit codes."
+    case "ADD_INVENTORY_GROUP":
+      return { ...state, inventoryGroups: [...(state.inventoryGroups || []), action.payload] };
+    case "UPDATE_INVENTORY_GROUP": {
+      // Changing a group's CODE has to bring its stock with it. Batches store
+      // the code, so an edit that touched only the group would strand every
+      // batch at a code nothing answers to — stock present in the total,
+      // missing from every count sheet.
+      const prev = (state.inventoryGroups || []).find(g => g.id === action.payload.id);
+      const recoded = prev && String(prev.code) !== String(action.payload.code);
+      return {
+        ...state,
+        inventoryGroups: (state.inventoryGroups || []).map(g => g.id === action.payload.id ? action.payload : g),
+        inventoryBatches: recoded
+          ? (state.inventoryBatches || []).map(b =>
+              String(b.location) === String(prev.code) ? { ...b, location: action.payload.code } : b)
+          : state.inventoryBatches,
+        inventoryTransactions: recoded
+          ? (state.inventoryTransactions || []).map(t => ({
+              ...t,
+              location:     String(t.location)     === String(prev.code) ? action.payload.code : t.location,
+              fromLocation: String(t.fromLocation) === String(prev.code) ? action.payload.code : t.fromLocation,
+              toLocation:   String(t.toLocation)   === String(prev.code) ? action.payload.code : t.toLocation,
+            }))
+          : state.inventoryTransactions,
+      };
+    }
+    case "REMOVE_INVENTORY_GROUP":
+      // The screen blocks this when the group still holds stock or is some
+      // item's category; this is the last line of defence, not the first.
+      return { ...state, inventoryGroups: (state.inventoryGroups || []).filter(g => g.id !== action.payload) };
+
+    // Loading a county's own inventory, from Settings.
+    //
+    // This REPLACES the catalog, the groups, the opening batches and the
+    // exception list, and leaves everything else — claims, work orders, fuel,
+    // revenue — alone. That is the whole point: at go-live the real crosswalk
+    // lands on top of whatever was used for testing, without throwing away the
+    // work people did while testing.
+    //
+    // It is destructive to inventory by design, so the screen makes you read
+    // what it will do and type a confirmation before dispatching.
+    case "IMPORT_INVENTORY":
+      return {
+        ...state,
+        inventoryItems:        action.payload.items,
+        inventoryBatches:      action.payload.batches,
+        inventoryTransactions: action.payload.transactions,
+        inventoryGroups:       action.payload.groups,
+        inventoryExceptions:   action.payload.exceptions,
+        // Stamp the current seed generation so the built-in data does not
+        // reload over the top of a county's own import on the next deploy.
+        seedVersion:           SEED_VERSION,
+      };
+
+    case "RESOLVE_INVENTORY_EXCEPTION":
+      return { ...state, inventoryExceptions: (state.inventoryExceptions || []).map(e =>
+        e.id === action.payload.id ? { ...e, resolved: action.payload.resolved } : e) };
 
     case "REMOVE_TANK":
       return { ...state, tanks: (state.tanks || []).filter(t => t.id !== action.payload) };
@@ -745,12 +884,35 @@ function reducer(state, action) {
     case "ADD_CUSTOM_FUND":    return { ...state, customFunds: [...state.customFunds, action.payload] };
     case "REMOVE_CUSTOM_FUND": return { ...state, customFunds: state.customFunds.filter(f => f !== action.payload) };
 
+    case "ADD_FUEL_TAX_RATE":    return { ...state, fuelTaxRates: [...(state.fuelTaxRates||[]), action.payload] };
+    case "UPDATE_FUEL_TAX_RATE": return { ...state, fuelTaxRates: (state.fuelTaxRates||[]).map(r => r.id === action.payload.id ? action.payload : r) };
+    case "DELETE_FUEL_TAX_RATE": return { ...state, fuelTaxRates: (state.fuelTaxRates||[]).filter(r => r.id !== action.payload) };
+
     case "ADD_FEMA_RATE":    return { ...state, femaRates: [...state.femaRates, action.payload] };
     case "UPDATE_FEMA_RATE": return { ...state, femaRates: state.femaRates.map(r => r.id === action.payload.id ? action.payload : r) };
     case "DELETE_FEMA_RATE": return { ...state, femaRates: state.femaRates.filter(r => r.id !== action.payload) };
 
     default: return state;
   }
+}
+
+// Anything that can move a fuel price.
+//
+// Fuel cost is FIFO, computed from the tank's history rather than typed, so a
+// corrected delivery price has to reach every gallon that came out of that
+// delivery afterwards — Greg asked for exactly that. Doing it here, once,
+// means no screen has to remember to ask for it, and no screen can forget.
+const RECOSTS_FUEL = new Set([
+  "ADD_TANK_TRANSACTION", "UPDATE_TANK_TRANSACTION", "DELETE_TANK_TRANSACTION",
+  "ADD_FUEL_DISPENSING",  "UPDATE_FUEL_DISPENSING",  "DELETE_FUEL_DISPENSING",
+  "IMPORT_INVENTORY", "RESET_DATA",
+]);
+
+function reducer(state, action) {
+  const next = baseReducer(state, action);
+  if (!RECOSTS_FUEL.has(action.type)) return next;
+  const fuelDispensing = recostFuelDispensing(next.tankTransactions, next.fuelDispensing);
+  return fuelDispensing === next.fuelDispensing ? next : { ...next, fuelDispensing };
 }
 
 // ── Navigation config ─────────────────────────────────────────────────────────
@@ -817,7 +979,7 @@ const labelOf = (rec) =>
 function findPair(rule, action, before, after) {
   const list = {
     expenditure:"expenditures", revenue:"revenue", project:"projects",
-    equipment:"equipment", role:"roles", user:"users", "pay scale":"payScales",
+    equipment:"equipment", role:"roles", user:"users", employee:"employees",
   }[rule.entity];
   if (!list) return [null, null];
   const id = action.payload?.id || action.payload?.roleId || action.payload || null;
@@ -903,8 +1065,8 @@ const REHYDRATE = {
   tanks:            createTank,
   roles:            createRole,
   users:            createUser,
-  storageLocations: createStorageLocation,
-  inventoryItems:   createInventoryItem,
+  inventoryGroups:     createInventoryGroup,
+  inventoryItems:      createInventoryItem,
   equipment:        createEquipmentUnit,
   workOrders:       createWorkOrder,
   vendors:          createVendor,
@@ -923,19 +1085,68 @@ function rehydrate(state) {
 
 const auditedReducer = withAudit(reducer);
 
+// Seeded data that has been RESHAPED, not just added to.
+//
+// mergeSaved fills in missing keys, and rehydrate gives saved records defaults
+// for new fields. Neither can help when the shape of the seed itself changes:
+// the saved array wins wholesale, so somebody testing since before the
+// inventory rebuild would keep 2,375 one-row-per-shed items forever and never
+// see the new model at all.
+//
+// Bumping this replaces those specific seeded lists with the current ones, and
+// leaves everything the person actually entered — claims, work orders, fuel —
+// untouched. Bump it whenever a seeded list is regenerated in a new shape, and
+// say so here.
+//
+//   1  inventory rebuilt: one item per part number, stock per location  (2026-08-23)
+//   2  the commodity group became the single source of truth for both what a
+//      thing is and where it is; Inventory Usual Location dropped  (2026-08-26)
+const SEED_VERSION = 2;
+const RESEED = ["inventoryItems", "inventoryBatches", "inventoryTransactions",
+                "inventoryGroups", "inventoryExceptions",
+                // Removed by the v2 rebuild — delete so they cannot linger.
+                "storageLocations", "inventoryCategories"];
+
 function loadPersisted() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return initialState;
-    return rehydrate(mergeSaved(initialState, JSON.parse(raw)));
+    const saved = JSON.parse(raw);
+
+    if ((saved.seedVersion || 0) < SEED_VERSION) {
+      for (const key of RESEED) delete saved[key];
+      console.info(
+        `Inventory seed data was rebuilt — reloading it and keeping your other work. ` +
+        `(seed v${saved.seedVersion || 0} → v${SEED_VERSION})`);
+    }
+
+    const state = rehydrate(mergeSaved(initialState, { ...saved, seedVersion: SEED_VERSION }));
+    // Recost the fuel that was saved before this ran. Data written under the
+    // old rule — one price per tank, the newest one — is priced wrongly, and
+    // this is the only moment that fixes it without anyone being asked to.
+    return { ...state, fuelDispensing: recostFuelDispensing(state.tankTransactions, state.fuelDispensing) };
   } catch (err) {
     console.warn("Could not load saved data — starting fresh.", err);
     return initialState;
   }
 }
 
-// ── App Shell ─────────────────────────────────────────────────────────────────
+// ── App ───────────────────────────────────────────────────────────────────────
+// A thin wrapper, so the shell below can USE the unsaved-work guard that this
+// provides. A component cannot consume its own context.
 export default function App() {
+  return (
+    <UnsavedWorkProvider>
+      <AppShell />
+    </UnsavedWorkProvider>
+  );
+}
+
+// ── App Shell ─────────────────────────────────────────────────────────────────
+function AppShell() {
+  // Routes a navigation click through the unsaved-work check: runs straight
+  // away when nothing is half-typed, asks first when something is.
+  const go = useNavigationGuard();
   const [activeTab, setActiveTab] = useState("fund");
   const [role, setRole] = useState("superintendent"); // superintendent | staff
   const [db, rawDispatch] = useReducer(auditedReducer, undefined, loadPersisted);
@@ -1052,7 +1263,7 @@ export default function App() {
               <div key={group.label} style={{ marginBottom:8 }}>
                 <div style={{ fontSize:10, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", color:"#aaa", padding:"8px 16px 4px" }}>{group.label}</div>
                 {group.items.filter(item => item.soon || canView(item.id, myRoles, db.roles)).map(item => (
-                  <button key={item.id} onClick={() => !item.soon && setActiveTab(item.id)} style={{
+                  <button key={item.id} onClick={() => !item.soon && go(() => setActiveTab(item.id))} style={{
                     display:"flex", alignItems:"center", gap:10, width:"100%",
                     padding:"9px 16px", background: activeTab===item.id ? "#eef2f8" : "transparent",
                     border:"none", cursor: item.soon ? "default" : "pointer", textAlign:"left",

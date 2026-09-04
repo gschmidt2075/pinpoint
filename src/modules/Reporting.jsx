@@ -1,6 +1,8 @@
 import { useState, useMemo } from "react";
 import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm } from "../components/shared.jsx";
+import { useNavigationGuard } from "../components/unsaved.jsx";
 import { FISCAL_YEAR, EXPENDITURE_CODES, REVENUE_CODES } from "../data/accountCodes.js";
+import { categoryName, locationName } from "../data/schema.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // REPORTING
@@ -86,6 +88,7 @@ const PRINT_CSS = `
 
 // ── Module Shell ──────────────────────────────────────────────────────────────
 export default function Reporting({ db, dispatch, role = "staff" }) {
+  const go = useNavigationGuard();
   const [view, setView] = useState("annual");
   const thisFY = Number(String(FISCAL_YEAR.label).replace(/\D/g,"")) || new Date().getFullYear();
   const [fy, setFy] = useState(thisFY);
@@ -104,7 +107,7 @@ export default function Reporting({ db, dispatch, role = "staff" }) {
       <div className="no-print" style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", marginBottom:18, flexWrap:"wrap", gap:12 }}>
         <div style={{ display:"flex", gap:2, borderBottom:"1px solid #ddd", flex:1 }}>
           {tabs.map(t=>(
-            <button key={t.id} onClick={()=>setView(t.id)} style={{
+            <button key={t.id} onClick={() => go(() => setView(t.id))} style={{
               background:"transparent", border:"none", padding:"8px 14px 10px",
               fontWeight: view===t.id?700:400, fontSize:13, cursor:"pointer",
               color: view===t.id?"#1a5a3a":"#666",
@@ -697,7 +700,7 @@ function InventoryEquipment({ db, range }) {
   const msRows = useMemo(() => {
     const key = msView === "account"
       ? (i) => String(i.glAccountCode || "").trim() || "(uncoded)"
-      : (i) => (i.commodityGroupCode ? `${i.commodityGroupCode} — ` : "") + (i.commodityGroup || "(ungrouped)");
+      : (i) => categoryName(i, db.inventoryGroups || []);
     const by = new Map();
     for (const i of items) {
       const v = valueByItem.get(i.id);

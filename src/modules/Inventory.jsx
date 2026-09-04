@@ -1,6 +1,8 @@
 import { useState, useMemo } from "react";
-import { Icon, Field, SectionCard, Table, KPICard, StatusBadge, SearchSelect, inp, btn, fmt, fmtSm, DateField, titleCase } from "../components/shared.jsx";
-import { locationLabel, locationFor } from "../data/schema.js";
+import { Icon, Field, SectionCard, Table, KPICard, StatusBadge, SearchSelect, inp, btn, fmt, fmtSm, DateField, titleCase, MoneyField } from "../components/shared.jsx";
+import { groupLabel, groupByCode, groupTypeLabel, categoryName, locationName,
+         INVENTORY_GROUP_TYPES, buildFIFOLines } from "../data/schema.js";
+import { useUnsavedGuard, useNavigationGuard, useUnsavedForm } from "../components/unsaved.jsx";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const UNITS = ["EA","TON","CY","YD","LF","FT","LB","OZ","GAL","QT","SF","BAG","BX","CS","RL","SET","PR","KIT","BLOCK","OTH"];
@@ -60,60 +62,9 @@ function getItemValue(itemId, batches) {
     .reduce((s, b) => s + (b.quantityRemaining || 0) * (b.unitCost || 0), 0);
 }
 
-function buildFIFOLines(itemId, location, qtyNeeded, batches) {
-  const open = batches
-    .filter(b => b.itemId === itemId && b.status === "open" && (location === "all" || b.location === location))
-    .sort((a, b) => a.receiptDate.localeCompare(b.receiptDate));
-
-  let remaining = qtyNeeded;
-  const batchLines = [];
-  let totalCost = 0;
-
-  for (const batch of open) {
-    if (remaining <= 0) break;
-    const take = Math.min(remaining, batch.quantityRemaining || 0);
-    if (take <= 0) continue;
-    batchLines.push({
-      batchId:   batch.id,
-      batchRef:  `${batch.receiptDate} — ${batch.vendorName || ""}`,
-      itemId:    batch.itemId,
-      itemName:  batch.itemName || "",
-      quantity:  take,
-      unitCost:  batch.unitCost || 0,
-      totalCost: take * (batch.unitCost || 0),
-    });
-    totalCost += take * (batch.unitCost || 0);
-    remaining -= take;
-  }
-
-  return { batchLines, totalCost, canFulfill: remaining <= 0 };
-}
-
-// Always show the numeric commodity group code alongside the name.
-function fmtGroup(item) {
-  const code  = (item.commodityGroupCode || "").trim();
-  const alpha = item.commodityGroup || "—";
-  return code ? `${code} — ${alpha}` : alpha;
-}
-
-// Build a group list sorted by numeric code (blank codes last, alpha-sorted).
-function buildGroupList(items) {
-  const map = {};
-  items.forEach(i => {
-    const name = i.commodityGroup || "Other";
-    if (!map[name]) map[name] = { name, code: (i.commodityGroupCode||"").trim() };
-  });
-  return Object.values(map).sort((a, b) => {
-    const na = parseInt(a.code, 10), nb = parseInt(b.code, 10);
-    const aNum = !isNaN(na), bNum = !isNaN(nb);
-    if (aNum && bNum) return na - nb;
-    if (aNum) return -1;
-    if (bNum) return 1;
-    return a.name.localeCompare(b.name);
-  });
-}
-
-const groupLabel = g => g.code ? `${g.code} — ${g.name}` : g.name;
+// buildFIFOLines moved to schema.js — the fuel screen needs the same
+// arithmetic to take a jug of DEF off a shelf, and a copy of it here would be
+// a second implementation to keep in step.
 
 // Is this item below its reorder point?
 function isBelowMinimum(item, batches) {
@@ -132,6 +83,9 @@ function fmtDate(str) {
 // ── Module Shell ──────────────────────────────────────────────────────────────
 export default function Inventory({ db, dispatch }) {
   const [view, setView] = useState("dashboard");
+  // Switching tabs inside the module abandons whatever is half-typed just as
+  // surely as leaving the module does.
+  const go = useNavigationGuard();
 
   const tabs = [
     { id:"dashboard",  label:"Dashboard",        icon:"layout-dashboard" },
@@ -148,7 +102,7 @@ export default function Inventory({ db, dispatch }) {
     <div>
       <div style={{ display:"flex", gap:2, marginBottom:24, borderBottom:"1px solid #ddd", flexWrap:"wrap" }}>
         {tabs.map(v => (
-          <button key={v.id} onClick={() => setView(v.id)} style={{
+          <button key={v.id} onClick={() => go(() => setView(v.id))} style={{
             background:"transparent", border:"none", padding:"8px 14px 10px",
             fontWeight: view===v.id ? 700 : 400, fontSize:13, cursor:"pointer",
             color: view===v.id ? "#1a5a3a" : "#666",
@@ -160,7 +114,7 @@ export default function Inventory({ db, dispatch }) {
           </button>
         ))}
       </div>
-      {view==="dashboard" && <InvDashboard  db={db} setView={setView} />}
+      {view==="dashboard" && <InvDashboard  db={db} dispatch={dispatch} setView={setView} />}
       {view==="items"     && <ItemList      db={db} dispatch={dispatch} />}
       {view==="receive"   && <ReceiveForm   db={db} dispatch={dispatch} onDone={() => setView("dashboard")} />}
       {view==="scaletix"  && <ScaleTicket   db={db} dispatch={dispatch} onDone={() => setView("dashboard")} />}
@@ -172,11 +126,86 @@ export default function Inventory({ db, dispatch }) {
   );
 }
 
+
+// ── What would not crosswalk ─────────────────────────────────────────────────
+//
+// R&B holds things Pinpoint cannot carry over without inventing an answer: a
+// negative quantity, value sitting against no quantity, an item with no GL code,
+// a part number whose rows disagree about what it is.
+//
+// None of it is guessed at and none of it blocks anything. It is a list, with
+// the R&B row number so it can be found in the source system, that can be
+// worked through whenever suits — Greg's inventory will be substantially
+// different by go-live, and the crosswalk gets re-run then.
+//
+// Ticking one off only hides it here. It changes nothing in R&B, which is where
+// the fix has to happen.
+function ExceptionsPanel({ exceptions, dispatch }) {
+  const [open, setOpen] = useState(false);
+  const [kind, setKind] = useState("all");
+
+  const kinds = exceptions.reduce((a, e) => ({ ...a, [e.kind]: (a[e.kind] || 0) + 1 }), {});
+  const shown = (kind === "all" ? exceptions : exceptions.filter(e => e.kind === kind))
+    .slice(0, open ? 500 : 6);
+
+  return (
+    <SectionCard
+      title="Did Not Crosswalk"
+      subtitle={`${exceptions.length} row${exceptions.length===1?"":"s"} from R&B needed a decision. Nothing was guessed at.`}
+      style={{ marginBottom:20 }}>
+
+      <div style={{ display:"flex", gap:6, padding:"12px 18px", borderBottom:"1px solid #eee", flexWrap:"wrap" }}>
+        {[["all", `Everything (${exceptions.length})`],
+          ...Object.entries(kinds).sort((a,b)=>b[1]-a[1]).map(([k,n]) => [k, `${k} (${n})`])
+         ].map(([v,l])=>(
+          <button key={v} onClick={()=>{setKind(v);setOpen(true);}} style={{ padding:"4px 10px", fontSize:11, fontWeight:600,
+            border:"1px solid", borderRadius:5, cursor:"pointer",
+            background: kind===v?"#7a4f00":"#fff", color: kind===v?"#fff":"#7a4f00",
+            borderColor: kind===v?"#7a4f00":"#f0d080" }}>{l}</button>
+        ))}
+      </div>
+
+      <Table
+        headers={[{label:"R&B row"},{label:"What"},{label:"Part #"},{label:"Description"},{label:"Why"},{label:""}]}
+        rows={shown.map(e => [
+          <span style={{ fontFamily:"ui-monospace, monospace", color:"#888" }}>{e.csvRow}</span>,
+          <span style={{ fontWeight:600, fontSize:12 }}>{e.kind}</span>,
+          <span style={{ fontFamily:"ui-monospace, monospace", fontSize:12 }}>{e.partNumber || "—"}</span>,
+          <span style={{ fontSize:12 }}>{e.description || "—"}</span>,
+          <span style={{ fontSize:12, color:"#666" }}>{e.detail}</span>,
+          <button style={btn.ghostSm}
+            onClick={()=>dispatch({ type:"RESOLVE_INVENTORY_EXCEPTION", payload:{ id:e.id, resolved:true } })}>
+            Done
+          </button>,
+        ])}
+      />
+
+      {!open && exceptions.length > 6 && (
+        <div style={{ padding:"12px 18px", borderTop:"1px solid #eee" }}>
+          <button style={btn.ghostSm} onClick={()=>setOpen(true)}>
+            Show all {exceptions.length}
+          </button>
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
 // ── Dashboard ─────────────────────────────────────────────────────────────────
-function InvDashboard({ db, setView }) {
-  const items   = db.inventoryItems    || [];
-  const batches = db.inventoryBatches  || [];
-  const txs     = db.inventoryTransactions || [];
+function InvDashboard({ db, dispatch, setView }) {
+  const go = useNavigationGuard();
+  const items     = db.inventoryItems    || [];
+  const batches   = db.inventoryBatches  || [];
+  const txs       = db.inventoryTransactions || [];
+  const locations = db.inventoryGroups  || [];
+
+  // Everything the crosswalk could not carry over cleanly.
+  //
+  // Greg: "Can we just make it so it flags the stuff that will not crosswalk?
+  // This inventory will be very different by the time this goes live." So none
+  // of it blocks anything and none of it was guessed at — it is a list, with
+  // the R&B row number, that can be worked through or ignored.
+  const openExceptions = (db.inventoryExceptions || []).filter(e => !e.resolved);
 
   const totalValue = useMemo(() =>
     items.reduce((s, i) => s + getItemValue(i.id, batches), 0)
@@ -222,6 +251,10 @@ function InvDashboard({ db, setView }) {
         <KPICard label="Pending Reconcile"    value={pendingReconcile}                             sub="Scale tickets"        accent={pendingReconcile>0?"#d97706":"#888"} icon="clock" />
       </div>
 
+      {openExceptions.length > 0 && (
+        <ExceptionsPanel exceptions={openExceptions} dispatch={dispatch} />
+      )}
+
       {/* ── Below Minimum ── */}
       <SectionCard
         title="Below Minimum"
@@ -250,12 +283,12 @@ function InvDashboard({ db, setView }) {
                     <span style={{ fontFamily:"monospace", fontSize:12, fontWeight:700, background:"#f0f4ff", color:"#1a3a5c", padding:"2px 7px", borderRadius:4 }}>{item.legacyNumber||"—"}</span>
                   </td>
                   <td style={{ padding:"9px 14px", fontWeight:600 }}>{item.name}</td>
-                  <td style={{ padding:"9px 14px", fontSize:12, color:"#555" }}>{fmtGroup(item)}</td>
+                  <td style={{ padding:"9px 14px", fontSize:12, color:"#555" }}>{categoryName(item, db.inventoryGroups||[])}</td>
                   <td style={{ padding:"9px 14px", textAlign:"right", fontFamily:"monospace", fontWeight:700, color:"#c0392b" }}>{item.onHand}</td>
                   <td style={{ padding:"9px 14px", textAlign:"right", fontFamily:"monospace", color:"#888" }}>{item.minimumQuantity}</td>
                   <td style={{ padding:"9px 14px", textAlign:"right", fontFamily:"monospace", fontWeight:700, color:"#c0392b" }}>−{item.short}</td>
                   <td style={{ padding:"9px 14px", textAlign:"right" }}>
-                    <button onClick={()=>setView("receive")} style={{ ...btn.small, fontSize:10, padding:"4px 10px" }}>Receive</button>
+                    <button onClick={() => go(() => setView("receive"))} style={{ ...btn.small, fontSize:10, padding:"4px 10px" }}>Receive</button>
                   </td>
                 </tr>
               ))}
@@ -299,7 +332,7 @@ function InvDashboard({ db, setView }) {
               </tbody>
             </table>
             <div style={{ padding:"12px 14px", borderTop:"1px solid #eee", textAlign:"right" }}>
-              <button onClick={()=>setView("scaletix")} style={{ ...btn.primary, fontSize:12 }}>Go to Reconcile →</button>
+              <button onClick={() => go(() => setView("scaletix"))} style={{ ...btn.primary, fontSize:12 }}>Go to Reconcile →</button>
             </div>
           </>
         )}
@@ -311,32 +344,55 @@ function InvDashboard({ db, setView }) {
 // ── Item List / Catalog ───────────────────────────────────────────────────────
 function ItemList({ db, dispatch }) {
   const [search, setSearch]           = useState("");
-  const [groupFilter, setGroupFilter] = useState("all");
+  const [catFilter, setCatFilter]     = useState("all");
+  const [locFilter, setLocFilter]     = useState("all");
   const [editing, setEditing]         = useState(null);
   const [showForm, setShowForm]       = useState(false);
   const [detail, setDetail]           = useState(null);
 
-  const items   = db.inventoryItems   || [];
-  const batches = db.inventoryBatches || [];
-  const locations = db.storageLocations || [];
+  const items      = db.inventoryItems   || [];
+  const batches    = db.inventoryBatches || [];
+  const locations  = db.inventoryGroups || [];
+  const categories = db.inventoryGroups || [];
 
-  // Derive groups from live data, sorted by numeric code
-  const groupList = useMemo(() => buildGroupList(items), [items]);
+  // Sorted by CODE, not by name. Staff know the numbers — "it's a 133" — and an
+  // alphabetical list puts 200 SHOP SUPPLIES between 13 LUBRICANT and 24 CHEMICALS.
+  const catList = useMemo(
+    () => [...categories].filter(c => c.active !== false)
+                         .sort((a,b) => (Number(a.code)||0) - (Number(b.code)||0)),
+    [categories]);
+
+  // Which items are held at a given location — read from the batches, so it is
+  // never out of step with the stock it describes.
+  const itemsAtLocation = useMemo(() => {
+    const m = new Map();
+    for (const b of batches) {
+      if (b.status !== "open" || !(b.quantityRemaining > 0)) continue;
+      const k = String(b.location ?? "");
+      if (!m.has(k)) m.set(k, new Set());
+      m.get(k).add(b.itemId);
+    }
+    return m;
+  }, [batches]);
 
   const [lowOnly, setLowOnly] = useState(false);
   const lowCount = useMemo(() => items.filter(i => isBelowMinimum(i, batches)).length, [items, batches]);
 
   const filtered = items.filter(i => {
-    if (groupFilter !== "all" && i.commodityGroup !== groupFilter) return false;
+    // Two independent filters, because they are two independent questions:
+    // "show me all the filters" and "show me everything in the Kenesaw Shed".
+    // The old single group field could only answer one of them at a time.
+    if (catFilter !== "all" && i.categoryId !== catFilter) return false;
+    if (locFilter !== "all" && !(itemsAtLocation.get(String(locFilter)) || new Set()).has(i.id)) return false;
     if (lowOnly && !isBelowMinimum(i, batches)) return false;
     const q = search.toLowerCase();
-    if (q && !`${i.name} ${i.legacyNumber} ${i.commodityGroupCode} ${i.commodityGroup} ${i.description}`.toLowerCase().includes(q)) return false;
+    if (q && !`${i.name} ${i.partNumber} ${i.legacyNumber} ${i.commodityGroup} ${i.description}`.toLowerCase().includes(q)) return false;
     return true;
   });
 
   if (detail) {
     return <ItemDetail item={detail} batches={batches} equipment={db.equipment||[]}
-             locations={db.storageLocations||[]} transactions={db.inventoryTransactions||[]}
+             locations={locations} categories={categories} transactions={db.inventoryTransactions||[]}
              onBack={() => setDetail(null)} onEdit={()=>{ setEditing(detail); setDetail(null); }} />;
   }
 
@@ -345,7 +401,7 @@ function ItemList({ db, dispatch }) {
       <ItemForm
         item={editing}
         locations={locations}
-        groupList={groupList}
+        categories={catList}
         equipment={db.equipment||[]}
         onSave={payload => {
           dispatch({ type: editing ? "UPDATE_INVENTORY_ITEM" : "ADD_INVENTORY_ITEM", payload });
@@ -364,10 +420,18 @@ function ItemList({ db, dispatch }) {
           <div style={{ fontSize:13, color:"#888", marginTop:2 }}>{items.length} items · FIFO cost tracking</div>
         </div>
         <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search part #, name, group…" style={{ ...inp, width:230, margin:0 }} />
-          <select value={groupFilter} onChange={e=>setGroupFilter(e.target.value)} style={{ ...inp, margin:0, maxWidth:200 }}>
-            <option value="all">All Groups</option>
-            {groupList.map(g => <option key={g.name} value={g.name}>{groupLabel(g)}</option>)}
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search part #, name, description…" style={{ ...inp, width:230, margin:0 }} />
+          <select value={catFilter} onChange={e=>setCatFilter(e.target.value)} style={{ ...inp, margin:0, maxWidth:190 }}>
+            <option value="all">Any category</option>
+            {catList.map(c => <option key={c.id} value={c.id}>{groupLabel(c)}</option>)}
+          </select>
+          <select value={locFilter} onChange={e=>setLocFilter(e.target.value)} style={{ ...inp, margin:0, maxWidth:190 }}>
+            <option value="all">Anywhere</option>
+            {[...locations].sort((a,b)=>(Number(a.code)||0)-(Number(b.code)||0))
+              .filter(l => (itemsAtLocation.get(String(l.code))||new Set()).size > 0)
+              .map(l => <option key={l.id} value={l.code}>
+                {groupLabel(l)} ({(itemsAtLocation.get(String(l.code))||new Set()).size})
+              </option>)}
           </select>
           {lowCount > 0 && (
             <button onClick={()=>setLowOnly(v=>!v)} style={{
@@ -392,19 +456,25 @@ function ItemList({ db, dispatch }) {
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
           <thead>
             <tr style={{ background:"#f7f7f5" }}>
-              {["Part #","Item Name","Group","UOM","On Hand","FIFO Value",""].map(h=>(
+              {["Part #","Item Name","Category","Held At","UOM","On Hand","FIFO Value",""].map(h=>(
                 <th key={h} style={{ padding:"9px 14px", textAlign:["On Hand","FIFO Value"].includes(h)?"right":"left", fontWeight:600, fontSize:11, textTransform:"uppercase", letterSpacing:"0.05em", color:"#666", borderBottom:"1px solid #eee", whiteSpace:"nowrap" }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {filtered.length===0 && (
-              <tr><td colSpan={7} style={{ padding:32, textAlign:"center", color:"#aaa", fontSize:13 }}>
+              <tr><td colSpan={8} style={{ padding:32, textAlign:"center", color:"#aaa", fontSize:13 }}>
                 {items.length===0?"No items yet — click New Item to start.":"No items match your filter."}
               </td></tr>
             )}
             {filtered.map((item, i) => {
-              const onHand = getOnHand(item.id, batches);
+              // With a location picked, "on hand" means on hand THERE. Showing
+              // the county-wide total next to a shed filter is how people end
+              // up driving to Kenesaw for a part that is in the main shop.
+              const places = onHandByLocation(item.id, batches);
+              const onHand = locFilter === "all"
+                ? getOnHand(item.id, batches)
+                : getOnHand(item.id, batches, locFilter);
               const value  = getItemValue(item.id, batches);
               const low    = isBelowMinimum(item, batches);
               return (
@@ -424,7 +494,16 @@ function ItemList({ db, dispatch }) {
                     <div style={{ fontWeight:600, color:"#1a1a1a" }}>{item.name}</div>
                     {item.notes && <div style={{ fontSize:11, color:"#aaa", fontWeight:400, marginTop:1 }}>{item.notes.slice(0,60)}</div>}
                   </td>
-                  <td style={{ padding:"10px 14px", fontSize:12, color:"#555" }}>{fmtGroup(item)}</td>
+                  <td style={{ padding:"10px 14px", fontSize:12, color:"#555" }}>{categoryName(item, categories)}</td>
+                  <td style={{ padding:"10px 14px", fontSize:12, color:"#555" }}>
+                    {places.length === 0 ? <span style={{ color:"#bbb" }}>nowhere</span>
+                     : places.length === 1
+                       ? (locationName(places[0].location, locations) || places[0].location)
+                       : <span title={places.map(p =>
+                             `${locationName(p.location, locations) || p.location}: ${p.qty}`).join("\n")}>
+                           {places.length} places
+                         </span>}
+                  </td>
                   <td style={{ padding:"10px 14px", fontFamily:"monospace", fontSize:12 }}>{item.unitOfMeasure||"—"}</td>
                   <td style={{ padding:"10px 14px", textAlign:"right", fontFamily:"monospace", fontWeight:700, color:low?"#c0392b":onHand===0?"#c0392b":"#1a1a1a" }}>
                     {onHand}
@@ -455,7 +534,7 @@ function ItemList({ db, dispatch }) {
 }
 
 // ── Item Detail ───────────────────────────────────────────────────────────────
-function ItemDetail({ item, batches, equipment = [], locations = [], transactions = [], onBack, onEdit }) {
+function ItemDetail({ item, batches, equipment = [], locations = [], categories = [], transactions = [], onBack, onEdit }) {
   const onHand = getOnHand(item.id, batches);
   const value  = getItemValue(item.id, batches);
   const low    = isBelowMinimum(item, batches);
@@ -496,7 +575,7 @@ function ItemDetail({ item, batches, equipment = [], locations = [], transaction
         <KPICard label="On Hand"    value={`${onHand} ${item.unitOfMeasure||""}`} sub={item.trackStockLevel?`Min: ${item.minimumQuantity||0}`:"FIFO batches"} accent={low?"#c0392b":"#1a5a3a"} icon="package" />
         <KPICard label="FIFO Value" value={fmtSm(value)}                          sub="Open batches"  accent="#1a3a5c" icon="building-bank" />
         <KPICard label="Std Cost"   value={fmtSm(item.standardCost||0)}           sub="Per unit"      accent="#5a1a8a" icon="tag" />
-        <KPICard label="Group"      value={fmtGroup(item)}                         sub="Commodity grp" accent="#888"    icon="folder" />
+        <KPICard label="Category"   value={categoryName(item, categories)}        sub="What it is"    accent="#888"    icon="folder" />
       </div>
 
       {fitted.length > 0 && (
@@ -515,12 +594,15 @@ function ItemDetail({ item, batches, equipment = [], locations = [], transaction
       <SectionCard title="Item Details" style={{ marginBottom:16 }}>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:0 }}>
           {[
-            ["Part #",       item.legacyNumber||"—"],
+            ["Part #",       item.partNumber || item.legacyNumber || "—"],
             ["Name",         item.name],
-            ["Group",        fmtGroup(item)],
+            ["Category",     categoryName(item, categories)],
             ["GL Account",   item.glAccountCode||"—"],
-            ["Location",     locationLabel(locationFor(item.locationCode ?? item.location, locations))
-                             || item.location || "—"],
+            // No single "location" field. An item is held wherever its batches
+            // say it is — listed under Held At below, which is the only honest
+            // answer for a part sitting in four sheds at once.
+            ["Group at crosswalk", item.commodityGroup || "—"],
+            ...(item.shelfLocation ? [["Shelf", item.shelfLocation]] : []),
             ["Unit",         item.unitOfMeasure||"—"],
             ["Vendor",       item.primaryVendor||"—"],
             ["Receiving",    (item.receivingMode||"standard").replace(/_/g," ")],
@@ -552,20 +634,40 @@ function ItemDetail({ item, batches, equipment = [], locations = [], transaction
         </SectionCard>
       )}
 
+      {/* Where it actually is.
+          Always shown, even for one location — this is the question the parts
+          room asks first, and the old system could not answer it without
+          creating a separate item per shed. */}
       {(() => {
         const spread = onHandByLocation(item.id, batches);
-        if (spread.length < 2) return null;
+        const total  = spread.reduce((t,x)=>t+x.qty,0);
         return (
-          <SectionCard title="Held At" subtitle={`${spread.length} locations`}>
+          <SectionCard
+            title="Held At"
+            subtitle={spread.length === 0 ? "None on hand"
+                    : `${total} ${item.unitOfMeasure||""} across ${spread.length} location${spread.length!==1?"s":""}`}
+            style={{ marginBottom:16 }}>
             <Table
-              headers={[{label:"Location"},{label:"On Hand"},{label:"Share"}]}
-              rows={spread.map(s => [
-                <span>{locationLabel(locationFor(s.location, locations)) || s.location || "—"}</span>,
-                <span style={{ fontFamily:"monospace", fontWeight:700 }}>{s.qty} {item.unitOfMeasure||""}</span>,
-                <span style={{ fontFamily:"monospace", color:"#888" }}>
-                  {`${Math.round((s.qty / spread.reduce((t,x)=>t+x.qty,0)) * 100)}%`}
-                </span>,
-              ])}
+              headers={[{label:"Location"},{label:"Type"},{label:"On Hand"},{label:"Share"}]}
+              rows={spread.map(s => {
+                const loc = groupByCode(s.location, locations);
+                // A shelf shown here is the one recorded against the stock at
+                // that place, which may differ from the item's usual shelf.
+                const shelf = s.shelf || item.shelfLocation || "";
+                return [
+                  <span>
+                    {groupLabel(loc) || s.location || "—"}
+                    {shelf && <span style={{ marginLeft:8, fontFamily:"ui-monospace, monospace",
+                                             fontSize:11, color:"#888" }}>{shelf}</span>}
+                  </span>,
+                  <span style={{ fontSize:12, color:"#888" }}>{groupTypeLabel(loc?.type)}</span>,
+                  <span style={{ fontFamily:"monospace", fontWeight:700 }}>{s.qty} {item.unitOfMeasure||""}</span>,
+                  <span style={{ fontFamily:"monospace", color:"#888" }}>
+                    {total > 0 ? `${Math.round((s.qty / total) * 100)}%` : "—"}
+                  </span>,
+                ];
+              })}
+              emptyMessage="Nothing on hand anywhere."
             />
           </SectionCard>
         );
@@ -615,8 +717,8 @@ function ItemHistory({ item, transactions = [], locations = [], equipment = [] }
     if (t.projectNumber)   return t.projectNumber;
     if (t.vendorName)   return t.vendorName;
     if (t.type === "transfer") {
-      const f = locationLabel(locationFor(t.fromLocation, locations)) || t.fromLocation || "?";
-      const to = locationLabel(locationFor(t.toLocation, locations)) || t.toLocation || "?";
+      const f = locationName(t.fromLocation, locations) || t.fromLocation || "?";
+      const to = locationName(t.toLocation, locations) || t.toLocation || "?";
       return `${f} → ${to}`;
     }
     return "—";
@@ -640,7 +742,7 @@ function ItemHistory({ item, transactions = [], locations = [], equipment = [] }
             </span>,
             <span style={{ fontSize:12 }}>{counterparty(t)}</span>,
             <span style={{ fontSize:12, color:"#888" }}>
-              {locationLabel(locationFor(t.location, locations)) || t.location || "—"}
+              {locationName(t.location, locations) || t.location || "—"}
             </span>,
             <span style={{ fontFamily:"monospace", fontSize:12 }}>{t.totalCost ? fmtSm(t.totalCost) : "—"}</span>,
           ];
@@ -659,38 +761,40 @@ function ItemHistory({ item, transactions = [], locations = [], equipment = [] }
 }
 
 // ── Item Form (New / Edit) ────────────────────────────────────────────────────
-function ItemForm({ item, locations, groupList, equipment, onSave, onCancel }) {
+// The catalog entry says what a thing IS. It deliberately has no quantity and
+// no location — both of those belong to the batches, because the same part sits
+// in several sheds at once and a field on the item could only ever hold one of
+// them. Stock arrives through Receive, and moves through Transfer.
+function ItemForm({ item, locations, categories = [], equipment, onSave, onCancel }) {
   const [form, setForm] = useState({
     id:                 item?.id                 || `${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+    partNumber:         item?.partNumber         || item?.legacyNumber || "",
     legacyNumber:       item?.legacyNumber       || "",
     name:               item?.name               || "",
     description:        item?.description        || "",
+    categoryId:         item?.categoryId         || "",
     commodityGroup:     item?.commodityGroup     || "",
-    commodityGroupCode: item?.commodityGroupCode || "",
     glAccountCode:      item?.glAccountCode      || "",
     unitOfMeasure:      item?.unitOfMeasure      || "EA",
-    location:           item?.location           || "",
     shelfLocation:      item?.shelfLocation      || "",
     standardCost:       item?.standardCost       || 0,
     primaryVendor:      item?.primaryVendor      || "",
     receivingMode:      item?.receivingMode      || "standard",
+    fluidType:          item?.fluidType          || "",
+    unitGallons:        item?.unitGallons        || "",
     trackStockLevel:    item?.trackStockLevel    || false,
     minimumQuantity:    item?.minimumQuantity    || "",
     fitsEquipment:      item?.fitsEquipment      || [],
     active:             item?.active !== false,
+    dataFlag:           item?.dataFlag           || "",
     notes:              item?.notes              || "",
     createdAt:          item?.createdAt          || new Date().toISOString(),
   });
+  useUnsavedForm(form, "this item");
   const set = (k,v) => setForm(f=>({ ...f,[k]:v }));
-  const [newGroup, setNewGroup]         = useState("");
-  const [newGroupCode, setNewGroupCode] = useState("");
   const [equipSearch, setEquipSearch]   = useState("");
-
-  const isNewGroup     = form.commodityGroup === "__new__";
-  const effectiveGroup = isNewGroup ? newGroup : form.commodityGroup;
-  const effectiveCode  = isNewGroup
-    ? newGroupCode
-    : (groupList.find(g=>g.name===form.commodityGroup)?.code || "");
+  // Open if this item already has one, collapsed if not.
+  const [showShelf, setShowShelf] = useState(!!(item?.shelfLocation));
 
   const toggleEquip = (id) =>
     setForm(f => ({
@@ -709,10 +813,10 @@ function ItemForm({ item, locations, groupList, equipment, onSave, onCancel }) {
   const handleSave = () => {
     onSave({
       ...form,
-      commodityGroup:     effectiveGroup,
-      commodityGroupCode: effectiveCode,
-      location:           effectiveGroup || form.location,
-      minimumQuantity:    form.trackStockLevel ? (parseFloat(form.minimumQuantity)||0) : "",
+      legacyNumber:    form.legacyNumber || form.partNumber,
+      shelfLocation:   (form.shelfLocation || "").trim().toUpperCase(),
+      minimumQuantity: form.trackStockLevel ? (parseFloat(form.minimumQuantity)||0) : "",
+      unitGallons:     form.fluidType ? (parseFloat(form.unitGallons)||0) : 0,
     });
   };
 
@@ -726,8 +830,11 @@ function ItemForm({ item, locations, groupList, equipment, onSave, onCancel }) {
       <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
         {/* Part # + Name */}
         <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:16, marginBottom:16 }}>
+          {/* On culverts and blades the part number carries the SIZE — "18 X 20
+              Round" against a name of "New Annular Culvert". Nine culverts look
+              identical without it, which is why it leads the row. */}
           <Field label="Part # (Inv #)">
-            <input type="text" value={form.legacyNumber} onChange={e=>set("legacyNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace", fontWeight:700 }} placeholder="#1 (MS260-16)…" />
+            <input type="text" value={form.partNumber} onChange={e=>set("partNumber",e.target.value)} style={{ ...inp, fontFamily:"monospace", fontWeight:700 }} placeholder="18 X 20 Round, MS260-16…" />
           </Field>
           <Field label="Item Name" required>
             <input type="text" value={form.name} onChange={e=>set("name",e.target.value)} style={inp} placeholder="Description…" />
@@ -739,18 +846,19 @@ function ItemForm({ item, locations, groupList, equipment, onSave, onCancel }) {
           </Field>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginBottom:16 }}>
-          <Field label="Commodity Group (= Location)">
-            <select value={form.commodityGroup} onChange={e=>set("commodityGroup",e.target.value)} style={inp}>
-              <option value="">Select…</option>
-              {groupList.map(g=><option key={g.name} value={g.name}>{groupLabel(g)}</option>)}
-              <option value="__new__">+ New group…</option>
+          {/* In R&B this same dropdown MOVED the item: sending a filter to
+              Kenesaw meant reassigning its group from 133 FILTERS to 7 KENESAW
+              SHED, and it stopped being a filter. Here it only says what the
+              thing is. Transfers move it. */}
+          <Field label="Category (commodity group)">
+            <select value={form.categoryId} onChange={e=>set("categoryId",e.target.value)} style={inp}>
+              <option value="">Uncategorised</option>
+              {categories.map(c=><option key={c.id} value={c.id}>{groupLabel(c)}</option>)}
             </select>
-            {isNewGroup && (
-              <div style={{ display:"flex", gap:6, marginTop:6 }}>
-                <input type="text" value={newGroupCode} onChange={e=>setNewGroupCode(e.target.value)} style={{ ...inp, width:70, fontFamily:"monospace" }} placeholder="Code" />
-                <input type="text" value={newGroup} onChange={e=>setNewGroup(e.target.value)} style={inp} placeholder="New group name…" />
-              </div>
-            )}
+            <div style={{ fontSize:11, color:"#999", marginTop:4 }}>
+              What it is, and it stays put when the thing moves. Where it sits comes from
+              receiving and transfers. Manage the group list in Settings.
+            </div>
           </Field>
           <Field label="Unit of Measure" required>
             <select value={form.unitOfMeasure} onChange={e=>set("unitOfMeasure",e.target.value)} style={inp}>
@@ -763,7 +871,7 @@ function ItemForm({ item, locations, groupList, equipment, onSave, onCancel }) {
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginBottom:16 }}>
           <Field label="Standard Cost ($/unit)">
-            <input type="number" min="0" step="0.01" value={form.standardCost} onChange={e=>set("standardCost",parseFloat(e.target.value)||0)} style={{ ...inp, fontFamily:"monospace" }} />
+            <MoneyField value={form.standardCost} onChange={v=>set("standardCost",v||0)} style={{ ...inp, fontFamily:"monospace" }} />
           </Field>
           <Field label="Primary Vendor">
             <input type="text" value={form.primaryVendor} onChange={e=>set("primaryVendor",e.target.value)} style={inp} />
@@ -775,6 +883,65 @@ function ItemForm({ item, locations, groupList, equipment, onSave, onCancel }) {
               <option value="scale_ticket_simple">Scale Ticket — Simple (Asphalt / Cold Patch)</option>
             </select>
           </Field>
+        </div>
+
+        {/* ── Shelf ──────────────────────────────────────────────────────────
+            Only some things live on a shelf. A stockpile does not, and neither
+            does the extinguisher on unit 327. So this is offered rather than
+            presented: an always-visible blank field on 2,300 items teaches
+            people to skip past it, and then it never gets filled in on the
+            hundred that need it. */}
+        <div style={{ borderTop:"1px solid #eee", paddingTop:16, marginTop:4 }}>
+          {showShelf ? (
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:16, alignItems:"end" }}>
+              <Field label="Shelf">
+                <input type="text" value={form.shelfLocation} autoFocus
+                       onChange={e=>set("shelfLocation", e.target.value)}
+                       style={{ ...inp, fontFamily:"monospace", textTransform:"uppercase" }}
+                       placeholder="A1, B3, Rack 2…" />
+              </Field>
+              <div style={{ fontSize:11, color:"#999", paddingBottom:10 }}>
+                Where it usually sits. Shows on count sheets and on the item page.
+                {form.shelfLocation && (
+                  <button onClick={()=>{ set("shelfLocation",""); setShowShelf(false); }}
+                          style={{ ...btn.ghostSm, marginLeft:10 }}>Clear</button>
+                )}
+              </div>
+            </div>
+          ) : (
+            <button onClick={()=>setShowShelf(true)} style={btn.ghostSm}>
+              <Icon name="plus" size={12} /> Add a shelf location
+            </button>
+          )}
+        </div>
+
+        {/* ── Logged at the machine ──
+            DEF is bought in jugs and poured into a machine whole. Marking the
+            item here is what puts it on the fuel screen, where the person
+            holding the jug already is — Greg's call, and the reason it gets
+            logged at all. Nothing about DEF is hardcoded: the container size is
+            typed, and a county with a bulk tank does not need this at all. */}
+        <div style={{ borderTop:"1px solid #eee", paddingTop:16, marginTop:4 }}>
+          <label style={{ display:"flex", alignItems:"center", gap:9, cursor:"pointer", marginBottom:form.fluidType?14:0 }}>
+            <input type="checkbox" checked={!!form.fluidType}
+                   onChange={e=>set("fluidType", e.target.checked ? "def" : "")}
+                   style={{ width:16, height:16, cursor:"pointer" }} />
+            <span style={{ fontSize:13, fontWeight:600, color:"#1a1a1a" }}>This is DEF</span>
+            <span style={{ fontSize:12, color:"#888" }}>— logged on the fuel screen, against a machine</span>
+          </label>
+          {form.fluidType && (
+            <div style={{ display:"grid", gridTemplateColumns:"200px 1fr", gap:16, alignItems:"end" }}>
+              <Field label="Gallons per container">
+                <input type="number" min="0" step="any" value={form.unitGallons}
+                  onChange={e=>set("unitGallons",e.target.value)}
+                  style={{ ...inp, fontFamily:"monospace" }} placeholder="2.5" />
+              </Field>
+              <div style={{ fontSize:12, color:"#888", paddingBottom:10, lineHeight:1.6 }}>
+                What ONE of these holds. Stock is counted in containers; the fuel log turns
+                that into gallons and puts the cost on the machine.
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ── Low stock tracking ── */}
@@ -862,15 +1029,27 @@ function ItemForm({ item, locations, groupList, equipment, onSave, onCancel }) {
 }
 
 // ── Receive Form ──────────────────────────────────────────────────────────────
+//
+// Receiving is where stock gets a location. The item itself has none — it is a
+// catalog entry, and the same part legitimately sits in four sheds at once — so
+// this form has to ask, and what it stores must be the location CODE.
+//
+// It used to store the location NAME. Nothing else in the system matches on
+// names: batches, transfers and count sheets all key on the code. So received
+// stock landed at a location that, as far as every other screen was concerned,
+// did not exist — present in the county-wide total, absent from every count
+// sheet, and unmovable by transfer.
 function ReceiveForm({ db, dispatch, onDone }) {
   const items     = (db.inventoryItems || []).filter(i => i.active !== false && i.receivingMode === "standard");
-  const locations = (db.storageLocations || []).filter(l => l.type === "shed");
-  const todayStr  = new Date().toISOString().split("T")[0];
+  const locations = [...(db.inventoryGroups || [])]
+    .filter(l => l.active !== false)
+    .sort((a, b) => (Number(a.code) || 0) - (Number(b.code) || 0));
 
   const [form, setForm] = useState({
     date: today(), itemId:"", vendorName:"", invoiceNumber:"",
     quantity:"", unitCost:"", location:"", notes:"",
   });
+  useUnsavedForm(form, "this receipt");
   const [saved, setSaved] = useState(false);
   const set = (k,v) => setForm(f=>({ ...f,[k]:v }));
 
@@ -926,7 +1105,7 @@ function ReceiveForm({ db, dispatch, onDone }) {
   return (
     <div style={{ maxWidth:700 }}>
       <div style={{ fontSize:18, fontWeight:700, marginBottom:4 }}>Receive Stock</div>
-      <div style={{ fontSize:13, color:"#888", marginBottom:20 }}>Standard invoice-based receipt — creates a FIFO batch at the selected shed location</div>
+      <div style={{ fontSize:13, color:"#888", marginBottom:20 }}>Standard invoice-based receipt — creates a FIFO batch at the location you choose</div>
 
       {saved && <div style={{ background:"#e6f4ec", border:"1px solid #a8d5b5", borderRadius:6, padding:"12px 16px", marginBottom:16, color:"#1a6b35", fontWeight:600, fontSize:13 }}>✓ Stock received and batch created</div>}
 
@@ -943,11 +1122,18 @@ function ReceiveForm({ db, dispatch, onDone }) {
           </Field>
         </div>
         <div style={{ marginBottom:16 }}>
+          {/* 2,300 items is not a dropdown. Search by part number — which on
+              culverts and blades is where the size lives — or by name. */}
           <Field label="Item" required>
-            <select value={form.itemId} onChange={e=>set("itemId",e.target.value)} style={inp}>
-              <option value="">Select item…</option>
-              {items.map(i=><option key={i.id} value={i.id}>{i.legacyNumber ? `[${i.legacyNumber}] ` : ""}{i.name}</option>)}
-            </select>
+            <SearchSelect
+              items={items}
+              value={form.itemId}
+              onChange={id=>set("itemId",id)}
+              placeholder="Type a part number or name…"
+              emptyMessage="No catalog item matches. Anything received must exist in the catalog first."
+              getLabel={i=>`${i.partNumber?`[${i.partNumber}] `:""}${i.name}`}
+              getSearch={i=>`${i.partNumber} ${i.legacyNumber} ${i.name} ${i.description} ${i.glAccountCode}`}
+            />
           </Field>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:16, marginBottom:16 }}>
@@ -955,12 +1141,12 @@ function ReceiveForm({ db, dispatch, onDone }) {
             <input type="number" min="0" step="any" value={form.quantity} onChange={e=>set("quantity",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
           </Field>
           <Field label="Unit Cost ($)" required>
-            <input type="number" min="0" step="0.01" value={form.unitCost} onChange={e=>set("unitCost",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
+            <MoneyField value={form.unitCost} onChange={v=>set("unitCost",v)} style={{ ...inp, fontFamily:"monospace" }} />
           </Field>
-          <Field label="Receive to Shed" required>
+          <Field label="Receive To" required>
             <select value={form.location} onChange={e=>set("location",e.target.value)} style={inp}>
-              <option value="">Select shed…</option>
-              {locations.map(l=><option key={l.id} value={l.name}>{l.name}</option>)}
+              <option value="">Where is it going?…</option>
+              {locations.map(l=><option key={l.id} value={l.code}>{groupLabel(l)} · {groupTypeLabel(l.type)}</option>)}
             </select>
           </Field>
           <Field label="Total Cost">
@@ -998,6 +1184,7 @@ function ScaleTicket({ db, dispatch, onDone }) {
     unitRate:"", notes:"",
   };
   const [form, setForm] = useState(EMPTY_FORM);
+  useUnsavedForm(form, "this scale ticket");
   const [saved, setSaved] = useState(false);
   const set = (k,v) => setForm(f=>({ ...f,[k]:v }));
 
@@ -1499,11 +1686,13 @@ function IssueForm({ db, dispatch, onDone }) {
   const items    = (db.inventoryItems||[]).filter(i=>i.active!==false);
   const batches  = db.inventoryBatches || [];
   const projects = (db.projects||[]).filter(p=>p.status==="active"||p.status==="pending");
-  const locations= db.storageLocations || [];
+  const locations= [...(db.inventoryGroups || [])].filter(l=>l.active!==false)
+                     .sort((a,b)=>(Number(a.code)||0)-(Number(b.code)||0));
 
   const [form, setForm] = useState({
     date: today(), itemId:"", location:"all", quantity:"", projectId:"", notes:"",
   });
+  useUnsavedForm(form, "this issue");
   const [preview, setPreview] = useState(null);
   const [saved, setSaved]     = useState(false);
   const set = (k,v) => { setForm(f=>({ ...f,[k]:v })); setPreview(null); }
@@ -1586,15 +1775,36 @@ function IssueForm({ db, dispatch, onDone }) {
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:16, marginBottom:16 }}>
           <Field label="Item" required>
-            <select value={form.itemId} onChange={e=>set("itemId",e.target.value)} style={inp}>
-              <option value="">Select item…</option>
-              {items.map(i=><option key={i.id} value={i.id}>{i.legacyNumber?`[${i.legacyNumber}] `:"" }{i.name} — {getOnHand(i.id,batches)} on hand</option>)}
-            </select>
+            <SearchSelect
+              items={items}
+              value={form.itemId}
+              onChange={id=>set("itemId",id)}
+              placeholder="Type a part number or name…"
+              emptyMessage="No catalog item matches."
+              getLabel={i=>`${i.partNumber?`[${i.partNumber}] `:""}${i.name}`}
+              getSearch={i=>`${i.partNumber} ${i.legacyNumber} ${i.name} ${i.description} ${i.glAccountCode}`}
+              isDisabled={i=>getOnHand(i.id,batches,form.location==="all"?null:form.location) <= 0}
+              renderRow={(i,off)=>{
+                const oh = getOnHand(i.id,batches,form.location==="all"?null:form.location);
+                return (
+                  <div style={{ display:"flex", justifyContent:"space-between", gap:10 }}>
+                    <span>
+                      {i.partNumber && <strong style={{ fontFamily:"monospace", color: off?"#bbb":"#1a3a5c" }}>{i.partNumber}</strong>}
+                      {i.partNumber ? "  " : ""}{i.name}
+                    </span>
+                    <span style={{ fontFamily:"monospace", whiteSpace:"nowrap", color: off?"#ccc":"#1a5a3a" }}>
+                      {oh > 0 ? `${oh} ${i.unitOfMeasure||""}` : "none"}
+                    </span>
+                  </div>
+                );
+              }}
+            />
           </Field>
+          {/* Codes, not names. Everything holding stock keys on the code. */}
           <Field label="From Location">
             <select value={form.location} onChange={e=>set("location",e.target.value)} style={inp}>
               <option value="all">Any (FIFO across all)</option>
-              {locations.map(l=><option key={l.id} value={l.name}>{l.name}</option>)}
+              {locations.map(l=><option key={l.id} value={l.code}>{groupLabel(l)}</option>)}
             </select>
           </Field>
           <Field label={`Qty (on hand: ${availableOnHand})`} required>
@@ -1656,14 +1866,24 @@ function IssueForm({ db, dispatch, onDone }) {
   );
 }
 
-// ── Transfer Form (shed ↔ shed or shed ↔ on-equipment only) ──────────────────
+// ── Transfer Form ────────────────────────────────────────────────────────────
+// Moving stock from anywhere to anywhere.
+//
+// This used to offer sheds only, and wrote the destination as free text when
+// the destination was a machine — "On Equipment — Unit 228". That string was
+// not a location, so the stock landed nowhere countable and the shed it left
+// simply lost it. A machine that carries parts is now a location like any
+// other, with a code, so a transfer onto a truck is the same operation as a
+// transfer between sheds and both sides still add up.
 function TransferForm({ db, dispatch, onDone }) {
-  const items   = (db.inventoryItems||[]).filter(i=>i.active!==false);
-  const batches = db.inventoryBatches||[];
-  // Only shed locations for transfers (no stockpiles, no portable tanks)
-  const shedLocations = (db.storageLocations||[]).filter(l => l.type === "shed");
+  const items     = (db.inventoryItems||[]).filter(i=>i.active!==false);
+  const batches   = db.inventoryBatches||[];
+  const locations = [...(db.inventoryGroups||[])]
+    .filter(l => l.active !== false)
+    .sort((a,b) => (Number(a.code)||0) - (Number(b.code)||0));
 
-  const [form, setForm] = useState({ date: today(), itemId:"", fromLocation:"", toLocation:"", toEquipment:false, equipmentUnit:"", quantity:"", notes:"" });
+  const [form, setForm] = useState({ date: today(), itemId:"", fromLocation:"", toLocation:"", quantity:"", notes:"" });
+  useUnsavedForm(form, "this transfer");
   const [saved, setSaved] = useState(false);
   const [showEmpty, setShowEmpty] = useState(false);
   const set = (k,v) => setForm(f=>({ ...f,[k]:v }));
@@ -1673,9 +1893,10 @@ function TransferForm({ db, dispatch, onDone }) {
   // supplied yet — matching on it meant every location reported nothing to
   // move, which is what made transfers unusable.
   const availableQty = form.itemId && form.fromLocation ? getOnHand(form.itemId, batches, form.fromLocation) : 0;
-  const toLocationName = form.toEquipment ? (form.equipmentUnit ? `On Equipment — ${form.equipmentUnit}` : "On Equipment") : form.toLocation;
+  const qty = parseFloat(form.quantity) || 0;
+  const tooMuch = qty > availableQty;
 
-  // Only what is actually held at the chosen shed can be moved out of it.
+  // Only what is actually held at the chosen location can be moved out of it.
   // Everything else is offered behind a toggle rather than hidden outright, so
   // "we don't stock that here" and "that part doesn't exist" stay tellable apart.
   const stocked = useMemo(() => {
@@ -1684,15 +1905,12 @@ function TransferForm({ db, dispatch, onDone }) {
   }, [items, batches, form.fromLocation]);
 
   const pickable = showEmpty || !form.fromLocation ? items : stocked;
+  const canSave = form.date && form.itemId && form.fromLocation && form.toLocation
+                  && qty > 0 && !tooMuch;
 
   const handleSave = () => {
-    if (!form.date||!form.itemId||!form.fromLocation||!toLocationName||!form.quantity) return;
+    if (!canSave) return;
     const selectedItem = items.find(i=>i.id===form.itemId);
-    const sourceBatches = batches
-      .filter(b=>b.itemId===form.itemId&&b.location===form.fromLocation&&b.status==="open")
-      .sort((a,b)=>a.receiptDate.localeCompare(b.receiptDate));
-    const batchId = sourceBatches[0]?.id || null;
-
     dispatch({
       type: "ADD_INVENTORY_TRANSACTION",
       payload: {
@@ -1701,25 +1919,27 @@ function TransferForm({ db, dispatch, onDone }) {
         date:         form.date,
         itemId:       form.itemId,
         itemName:     selectedItem?.name||"",
-        quantity:     parseFloat(form.quantity),
+        quantity:     qty,
+        unitOfMeasure:selectedItem?.unitOfMeasure || "",
+        // Both sides are CODES. The reducer takes FIFO from the source and
+        // lands the same quantity at the destination at the same unit cost.
         fromLocation: form.fromLocation,
-        toLocation:   toLocationName,
+        toLocation:   form.toLocation,
         location:     form.fromLocation,
-        batchId,
         notes:        form.notes,
         createdAt:    new Date().toISOString(),
       },
     });
     setSaved(true);
-    setForm({ date: today(), itemId:"", fromLocation:"", toLocation:"", toEquipment:false, equipmentUnit:"", quantity:"", notes:"" });
-    setTimeout(()=>{ setSaved(false); onDone(); }, 1400);
+    setForm({ date: today(), itemId:"", fromLocation:"", toLocation:"", quantity:"", notes:"" });
+    setTimeout(()=>setSaved(false), 2500);
   };
 
   return (
     <div style={{ maxWidth:600 }}>
       <div style={{ fontSize:18, fontWeight:700, marginBottom:4 }}>Transfer Stock</div>
-      <div style={{ fontSize:13, color:"#888", marginBottom:6 }}>Move stock between shed locations or to a piece of equipment.</div>
-      <div style={{ fontSize:12, color:"#aaa", marginBottom:20 }}>Note: Stockpiles receive stock via Scale Ticket. Portable tank fills use the Tanks workflow in Equipment.</div>
+      <div style={{ fontSize:13, color:"#888", marginBottom:6 }}>Move stock between any two locations — shed to shed, shed to machine, machine back to shed.</div>
+      <div style={{ fontSize:12, color:"#aaa", marginBottom:20 }}>Cost travels with the stock. A transfer is not a purchase, so it never changes what the county paid.</div>
 
       {saved && <div style={{ background:"#e6f4ec", border:"1px solid #a8d5b5", borderRadius:6, padding:"12px 16px", marginBottom:16, color:"#1a6b35", fontWeight:600, fontSize:13 }}>✓ Transfer recorded</div>}
 
@@ -1728,29 +1948,22 @@ function TransferForm({ db, dispatch, onDone }) {
           <Field label="Date" required>
             <DateField value={form.date} onChange={v => set("date", v)} />
           </Field>
-          <Field label="From Shed" required>
+          <Field label="From" required>
             <select value={form.fromLocation} onChange={e=>{ set("fromLocation",e.target.value); set("itemId",""); }} style={inp}>
-              <option value="">Select shed…</option>
-              {shedLocations.map(l=><option key={l.id} value={l.code}>{locationLabel(l)}</option>)}
+              <option value="">Where is it now?…</option>
+              {locations.map(l=><option key={l.id} value={l.code}>{groupLabel(l)} · {groupTypeLabel(l.type)}</option>)}
             </select>
           </Field>
         </div>
 
-        {/* To: shed or equipment toggle */}
         <div style={{ marginBottom:16 }}>
-          <div style={{ fontSize:12, fontWeight:600, color:"#555", marginBottom:8 }}>Destination</div>
-          <div style={{ display:"flex", gap:10, marginBottom:10 }}>
-            <button onClick={()=>set("toEquipment",false)} style={{ ...btn.small, background:!form.toEquipment?"#1a5a3a":"#eee", color:!form.toEquipment?"#fff":"#555", fontSize:12 }}>Shed</button>
-            <button onClick={()=>set("toEquipment",true)}  style={{ ...btn.small, background:form.toEquipment?"#1a5a3a":"#eee", color:form.toEquipment?"#fff":"#555", fontSize:12 }}>On Equipment</button>
-          </div>
-          {!form.toEquipment ? (
+          <Field label="To" required>
             <select value={form.toLocation} onChange={e=>set("toLocation",e.target.value)} style={inp}>
-              <option value="">Select destination shed…</option>
-              {shedLocations.filter(l=>String(l.code)!==String(form.fromLocation)).map(l=><option key={l.id} value={l.code}>{locationLabel(l)}</option>)}
+              <option value="">Where is it going?…</option>
+              {locations.filter(l=>String(l.code)!==String(form.fromLocation))
+                        .map(l=><option key={l.id} value={l.code}>{groupLabel(l)} · {groupTypeLabel(l.type)}</option>)}
             </select>
-          ) : (
-            <input type="text" value={form.equipmentUnit} onChange={e=>set("equipmentUnit",e.target.value)} style={inp} placeholder="Unit # or description (e.g. Unit 228 — 2003 140H CAT)…" />
-          )}
+          </Field>
         </div>
 
         <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr", gap:16, marginBottom:16 }}>
@@ -1759,20 +1972,20 @@ function TransferForm({ db, dispatch, onDone }) {
               items={pickable}
               value={form.itemId}
               onChange={id=>set("itemId",id)}
-              placeholder={form.fromLocation ? "Type a part number or name…" : "Choose the shed first…"}
+              placeholder={form.fromLocation ? "Type a part number or name…" : "Choose where it is now first…"}
               emptyMessage={form.fromLocation
-                ? `Nothing matching is held at ${locationLabel(locationFor(form.fromLocation, db.storageLocations||[])) || form.fromLocation}`
-                : "Choose a shed first"}
-              getLabel={i=>`${i.legacyNumber?`[${i.legacyNumber}] `:""}${i.name}`}
-              getSearch={i=>`${i.legacyNumber} ${i.name} ${i.commodityGroup} ${i.glAccountCode}`}
+                ? `Nothing matching is held at ${locationName(form.fromLocation, locations) || form.fromLocation}`
+                : "Choose a source location first"}
+              getLabel={i=>`${i.partNumber?`[${i.partNumber}] `:""}${i.name}`}
+              getSearch={i=>`${i.partNumber} ${i.legacyNumber} ${i.name} ${i.description} ${i.glAccountCode}`}
               isDisabled={i=>getOnHand(i.id,batches,form.fromLocation||null) <= 0}
               renderRow={(i,off)=>{
                 const oh = getOnHand(i.id,batches,form.fromLocation||null);
                 return (
                   <div style={{ display:"flex", justifyContent:"space-between", gap:10 }}>
                     <span>
-                      {i.legacyNumber && <strong style={{ fontFamily:"monospace", color: off?"#bbb":"#1a3a5c" }}>{i.legacyNumber}</strong>}
-                      {i.legacyNumber ? "  " : ""}{i.name}
+                      {i.partNumber && <strong style={{ fontFamily:"monospace", color: off?"#bbb":"#1a3a5c" }}>{i.partNumber}</strong>}
+                      {i.partNumber ? "  " : ""}{i.name}
                     </span>
                     <span style={{ fontFamily:"monospace", whiteSpace:"nowrap", color: off?"#ccc":"#1a5a3a" }}>
                       {oh > 0 ? `${oh} ${i.unitOfMeasure||""}` : "none here"}
@@ -1789,7 +2002,13 @@ function TransferForm({ db, dispatch, onDone }) {
             )}
           </Field>
           <Field label={`Qty (available: ${availableQty})`} required>
-            <input type="number" min="0" step="any" value={form.quantity} onChange={e=>set("quantity",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
+            <input type="number" min="0" step="any" value={form.quantity} onChange={e=>set("quantity",e.target.value)}
+                   style={{ ...inp, fontFamily:"monospace", borderColor: tooMuch ? "#c0392b" : undefined }} />
+            {tooMuch && (
+              <div style={{ fontSize:11, color:"#c0392b", marginTop:4, fontWeight:600 }}>
+                Only {availableQty} there. Count it, or adjust first.
+              </div>
+            )}
           </Field>
         </div>
         <Field label="Notes">
@@ -1798,7 +2017,8 @@ function TransferForm({ db, dispatch, onDone }) {
       </div>
 
       <div style={{ display:"flex", gap:10 }}>
-        <button onClick={handleSave} style={btn.primary}>Record Transfer</button>
+        <button onClick={handleSave} disabled={!canSave}
+                style={{ ...btn.primary, opacity: canSave ? 1 : 0.4, cursor: canSave ? "pointer" : "not-allowed" }}>Record Transfer</button>
         <button onClick={onDone} style={btn.ghost}>Cancel</button>
       </div>
     </div>
@@ -1808,10 +2028,12 @@ function TransferForm({ db, dispatch, onDone }) {
 // ── Adjust Form ───────────────────────────────────────────────────────────────
 function AdjustForm({ db, dispatch, onDone }) {
   const items    = (db.inventoryItems||[]).filter(i=>i.active!==false);
-  const locations= db.storageLocations||[];
+  const locations= [...(db.inventoryGroups || [])].filter(l=>l.active!==false)
+                     .sort((a,b)=>(Number(a.code)||0)-(Number(b.code)||0));
   const batches  = db.inventoryBatches||[];
 
   const [form, setForm] = useState({ date: today(), itemId:"", location:"", quantityAdjustment:"", reason:"", notes:"" });
+  useUnsavedForm(form, "this adjustment");
   const [saved, setSaved] = useState(false);
   const set = (k,v) => setForm(f=>({ ...f,[k]:v }));
 
@@ -1856,8 +2078,8 @@ function AdjustForm({ db, dispatch, onDone }) {
           </Field>
           <Field label="Location" required>
             <select value={form.location} onChange={e=>set("location",e.target.value)} style={inp}>
-              <option value="">Select…</option>
-              {locations.map(l=><option key={l.id} value={l.name}>{l.name}</option>)}
+              <option value="">Which location?…</option>
+              {locations.map(l=><option key={l.id} value={l.code}>{groupLabel(l)} · {groupTypeLabel(l.type)}</option>)}
             </select>
           </Field>
         </div>
@@ -1908,40 +2130,68 @@ function AdjustForm({ db, dispatch, onDone }) {
 }
 
 // ── Year-End Count Sheet ──────────────────────────────────────────────────────
+//
+// One sheet per LOCATION, because that is how a count is actually done: one
+// person walks into one building with one sheet and counts what is in front of
+// them.
+//
+// It used to print by commodity group, which quietly guaranteed an incomplete
+// count. A filter stored at the Kenesaw Shed but grouped as FILTERS appeared on
+// the FILTERS sheet, not the Kenesaw sheet — so whoever counted Kenesaw never
+// saw it, and nothing anywhere revealed that it had been missed. Printing by
+// location cannot miss anything: every batch has a location, so every unit of
+// stock lands on exactly one sheet.
 function YearEndCount({ db }) {
-  const items   = (db.inventoryItems||[]).filter(i=>i.active!==false);
-  const batches = db.inventoryBatches||[];
+  const items      = db.inventoryItems   || [];
+  const batches    = db.inventoryBatches || [];
+  const locations  = db.inventoryGroups || [];
+  const categories = db.inventoryGroups || [];
   // Never hardcode the county — it's set in Settings → County Info
   const countyName = db.countyInfo?.countyName || db.countyInfo?.name || "County";
 
-  // Group by commodityGroup, sort groups alpha
-  const grouped = useMemo(() => {
-    const map = {};
-    items.forEach(i => {
-      const g = i.commodityGroup || "Other";
-      if (!map[g]) map[g] = [];
-      map[g].push(i);
-    });
-    // Sort items within each group by legacyNumber then name
-    Object.values(map).forEach(arr => arr.sort((a,b)=>
-      (a.legacyNumber||"").localeCompare(b.legacyNumber||"") || (a.name||"").localeCompare(b.name||"")
-    ));
-    return Object.entries(map).sort((a,b)=>a[0].localeCompare(b[0]));
-  }, [items]);
+  // Built from the BATCHES, not the items. Stock is what is on a shelf, and the
+  // batches are the only record of which shelf.
+  const sheets = useMemo(() => {
+    const byLoc = new Map();
+    for (const b of batches) {
+      if (b.status !== "open" || !((b.quantityRemaining || 0) > 0)) continue;
+      const code = String(b.location ?? "");
+      if (!byLoc.has(code)) byLoc.set(code, new Map());
+      const held = byLoc.get(code);
+      const cur = held.get(b.itemId) || { itemId: b.itemId, qty: 0, value: 0, shelf: b.shelf || "" };
+      cur.qty   += b.quantityRemaining || 0;
+      cur.value += (b.quantityRemaining || 0) * (Number(b.unitCost) || 0);
+      if (!cur.shelf && b.shelf) cur.shelf = b.shelf;
+      held.set(b.itemId, cur);
+    }
+    return [...byLoc.entries()]
+      .map(([code, held]) => {
+        const loc = groupByCode(code, locations);
+        return {
+          code,
+          loc,
+          label: groupLabel(loc) || `Group ${code}`,
+          rows: [...held.values()]
+            .map(h => ({ ...h, item: items.find(i => i.id === h.itemId) || null }))
+            .filter(h => h.item)
+            .sort((a, b) =>
+              (a.shelf || a.item?.shelfLocation || "").localeCompare(b.shelf || b.item?.shelfLocation || "") ||
+              (a.item.partNumber || "").localeCompare(b.item.partNumber || "") ||
+              (a.item.name || "").localeCompare(b.item.name || "")),
+        };
+      })
+      .filter(sh => sh.rows.length > 0)
+      .sort((a, b) => (Number(a.code) || 0) - (Number(b.code) || 0));
+  }, [batches, items, locations]);
 
-  const [selectedGroup, setSelectedGroup] = useState("__all__");
-  const [fiscalYear, setFiscalYear]        = useState(() => {
+  const [selectedLoc, setSelectedLoc] = useState("__all__");
+  const [fiscalYear, setFiscalYear]   = useState(() => {
     const now = new Date();
     return now.getMonth() >= 6 ? now.getFullYear() + 1 : now.getFullYear();
   });
 
-  const displayGroups = selectedGroup === "__all__"
-    ? grouped
-    : grouped.filter(([g]) => g === selectedGroup);
-
-  const totalValue = displayGroups.reduce((tot, [,items]) =>
-    tot + items.reduce((s,i) => s + getItemValue(i.id, batches), 0)
-  , 0);
+  const displaySheets = selectedLoc === "__all__" ? sheets : sheets.filter(sh => sh.code === selectedLoc);
+  const totalValue = displaySheets.reduce((t, sh) => t + sh.rows.reduce((x, r) => x + r.value, 0), 0);
 
   const handlePrint = () => window.print();
 
@@ -1975,16 +2225,16 @@ function YearEndCount({ db }) {
       <div className="no-print" style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", marginBottom:20, flexWrap:"wrap", gap:12 }}>
         <div>
           <div style={{ fontSize:18, fontWeight:700 }}>Year-End Count Sheets</div>
-          <div style={{ fontSize:13, color:"#888", marginTop:3 }}>Print one sheet per group for physical count reconciliation</div>
+          <div style={{ fontSize:13, color:"#888", marginTop:3 }}>One sheet per location — hand a building to a person and they count what is in it</div>
         </div>
         <div style={{ display:"flex", gap:10, alignItems:"center" }}>
           <Field label="Fiscal Year">
             <input type="number" value={fiscalYear} onChange={e=>setFiscalYear(parseInt(e.target.value)||fiscalYear)} style={{ ...inp, width:90, margin:0, fontFamily:"monospace" }} />
           </Field>
-          <Field label="Group">
-            <select value={selectedGroup} onChange={e=>setSelectedGroup(e.target.value)} style={{ ...inp, margin:0, maxWidth:220 }}>
-              <option value="__all__">All Groups (multi-page)</option>
-              {grouped.map(([g])=><option key={g} value={g}>{titleCase(g)}</option>)}
+          <Field label="Location">
+            <select value={selectedLoc} onChange={e=>setSelectedLoc(e.target.value)} style={{ ...inp, margin:0, maxWidth:260 }}>
+              <option value="__all__">Everywhere (one page each)</option>
+              {sheets.map(sh=><option key={sh.code} value={sh.code}>{sh.label} ({sh.rows.length})</option>)}
             </select>
           </Field>
           <button onClick={handlePrint} style={{ ...btn.primary, marginTop:20 }}>🖨 Print</button>
@@ -1993,69 +2243,77 @@ function YearEndCount({ db }) {
 
       {/* Summary banner */}
       <div className="no-print" style={{ background:"#f0f8f4", border:"1px solid #a8d5b5", borderRadius:8, padding:"12px 18px", marginBottom:20, display:"flex", gap:32 }}>
-        <div><span style={{ fontSize:11, color:"#888", textTransform:"uppercase", letterSpacing:"0.06em" }}>Groups</span><div style={{ fontSize:20, fontWeight:700 }}>{displayGroups.length}</div></div>
-        <div><span style={{ fontSize:11, color:"#888", textTransform:"uppercase", letterSpacing:"0.06em" }}>Items</span><div style={{ fontSize:20, fontWeight:700 }}>{displayGroups.reduce((s,[,a])=>s+a.length,0)}</div></div>
+        <div><span style={{ fontSize:11, color:"#888", textTransform:"uppercase", letterSpacing:"0.06em" }}>Sheets</span><div style={{ fontSize:20, fontWeight:700 }}>{displaySheets.length}</div></div>
+        <div><span style={{ fontSize:11, color:"#888", textTransform:"uppercase", letterSpacing:"0.06em" }}>Lines to Count</span><div style={{ fontSize:20, fontWeight:700 }}>{displaySheets.reduce((t,sh)=>t+sh.rows.length,0)}</div></div>
         <div><span style={{ fontSize:11, color:"#888", textTransform:"uppercase", letterSpacing:"0.06em" }}>Book Value</span><div style={{ fontSize:20, fontWeight:700 }}>{fmt(totalValue)}</div></div>
       </div>
 
-      {/* Print sections */}
-      {displayGroups.map(([group, groupItems], gi) => {
-        const grpValue = groupItems.reduce((s,i)=>s+getItemValue(i.id,batches),0);
+      {/* Print sections — one page per location */}
+      {displaySheets.map(sh => {
+        const shValue = sh.rows.reduce((t,r)=>t+r.value, 0);
+        // No shelf column at all where nothing on the sheet has a shelf — a
+        // stockpile sheet with an empty Shelf column is just a narrower page.
+        const anyShelf = sh.rows.some(r => r.shelf || r.item.shelfLocation);
         return (
-          <div key={group} className="print-section" style={{ marginBottom:32 }}>
-            {/* Group header */}
+          <div key={sh.code} className="print-section" style={{ marginBottom:32 }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", borderBottom:"2px solid #1a5a3a", paddingBottom:8, marginBottom:12 }}>
               <div>
-                <div style={{ fontSize:16, fontWeight:700, color:"#1a5a3a" }}>{group}</div>
+                <div style={{ fontSize:16, fontWeight:700, color:"#1a5a3a" }}>
+                  {sh.label}
+                  {sh.loc && <span style={{ fontSize:12, fontWeight:400, color:"#888", marginLeft:10 }}>{groupTypeLabel(sh.loc.type)}</span>}
+                </div>
                 <div style={{ fontSize:12, color:"#888" }}>FY{fiscalYear} Physical Count — {countyName} Highway Department</div>
               </div>
               <div style={{ textAlign:"right" }}>
                 <div style={{ fontSize:12, color:"#888" }}>Count Date: _______________</div>
-                <div style={{ fontSize:12, color:"#888", marginTop:4 }}>Book Value: <strong>{fmtSm(grpValue)}</strong></div>
+                <div style={{ fontSize:12, color:"#888", marginTop:4 }}>Book Value: <strong>{fmtSm(shValue)}</strong></div>
               </div>
             </div>
 
             <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
               <thead>
                 <tr style={{ background:"#f7f7f5" }}>
-                  {["Part #","Item Name / Description","Unit","Book Qty","Book Value","Count Qty","Difference","Notes"].map(h=>(
+                  {(anyShelf ? ["Shelf"] : []).concat(
+                    ["Part #","Item Name / Description","Category","Unit","Book Qty","Book Value","Count Qty","Difference","Notes"]).map(h=>(
                     <th key={h} style={{ padding:"7px 10px", textAlign:["Book Qty","Book Value","Count Qty","Difference"].includes(h)?"right":"left", fontWeight:700, fontSize:10, textTransform:"uppercase", letterSpacing:"0.05em", color:"#555", borderBottom:"2px solid #ddd" }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {groupItems.map((item, ii) => {
-                  const onHand = getOnHand(item.id, batches);
-                  const val    = getItemValue(item.id, batches);
-                  return (
-                    <tr key={item.id} className="print-row" style={{ borderTop:"1px solid #eee", background:ii%2===0?"#fff":"#fafaf8" }}>
-                      <td style={{ padding:"8px 10px", fontFamily:"monospace", fontSize:11, fontWeight:700, color:"#1a3a5c", whiteSpace:"nowrap" }}>{item.legacyNumber||"—"}</td>
-                      <td style={{ padding:"8px 10px" }}>
-                        <div style={{ fontWeight:600 }}>{item.name}</div>
-                        {item.notes && <div style={{ fontSize:10, color:"#aaa" }}>{item.notes.slice(0,80)}</div>}
+                {sh.rows.map((r, ii) => (
+                  <tr key={r.itemId} className="print-row" style={{ borderTop:"1px solid #eee", background:ii%2===0?"#fff":"#fafaf8" }}>
+                    {anyShelf && (
+                      <td style={{ padding:"8px 10px", fontFamily:"monospace", fontSize:11, color:"#888" }}>
+                        {r.shelf || r.item.shelfLocation || "—"}
                       </td>
-                      <td style={{ padding:"8px 10px", fontFamily:"monospace", fontSize:11 }}>{item.unitOfMeasure}</td>
-                      <td style={{ padding:"8px 10px", textAlign:"right", fontFamily:"monospace", fontWeight:700 }}>{onHand}</td>
-                      <td style={{ padding:"8px 10px", textAlign:"right", fontFamily:"monospace", fontSize:11 }}>{val>0?fmtSm(val):"—"}</td>
-                      {/* Count fields — blank for manual entry */}
-                      <td style={{ padding:"8px 10px", textAlign:"right", borderLeft:"1px dashed #ccc" }}>
-                        <div style={{ borderBottom:"1px solid #999", width:60, display:"inline-block", minHeight:16 }}></div>
-                      </td>
-                      <td style={{ padding:"8px 10px", textAlign:"right" }}>
-                        <div style={{ borderBottom:"1px solid #999", width:60, display:"inline-block", minHeight:16 }}></div>
-                      </td>
-                      <td style={{ padding:"8px 10px" }}>
-                        <div style={{ borderBottom:"1px solid #999", width:100, display:"inline-block", minHeight:16 }}></div>
-                      </td>
-                    </tr>
-                  );
-                })}
+                    )}
+                    <td style={{ padding:"8px 10px", fontFamily:"monospace", fontSize:11, fontWeight:700, color:"#1a3a5c", whiteSpace:"nowrap" }}>{r.item.partNumber||"—"}</td>
+                    <td style={{ padding:"8px 10px" }}>
+                      <div style={{ fontWeight:600 }}>{r.item.name}</div>
+                      {r.item.notes && <div style={{ fontSize:10, color:"#aaa" }}>{r.item.notes.slice(0,80)}</div>}
+                    </td>
+                    <td style={{ padding:"8px 10px", fontSize:11, color:"#666" }}>{categoryName(r.item, categories)}</td>
+                    <td style={{ padding:"8px 10px", fontFamily:"monospace", fontSize:11 }}>{r.item.unitOfMeasure}</td>
+                    <td style={{ padding:"8px 10px", textAlign:"right", fontFamily:"monospace", fontWeight:700 }}>{r.qty}</td>
+                    <td style={{ padding:"8px 10px", textAlign:"right", fontFamily:"monospace", fontSize:11 }}>{r.value>0?fmtSm(r.value):"—"}</td>
+                    {/* Count fields — blank for manual entry */}
+                    <td style={{ padding:"8px 10px", textAlign:"right", borderLeft:"1px dashed #ccc" }}>
+                      <div style={{ borderBottom:"1px solid #999", width:60, display:"inline-block", minHeight:16 }}></div>
+                    </td>
+                    <td style={{ padding:"8px 10px", textAlign:"right" }}>
+                      <div style={{ borderBottom:"1px solid #999", width:60, display:"inline-block", minHeight:16 }}></div>
+                    </td>
+                    <td style={{ padding:"8px 10px" }}>
+                      <div style={{ borderBottom:"1px solid #999", width:100, display:"inline-block", minHeight:16 }}></div>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
               <tfoot>
                 <tr style={{ borderTop:"2px solid #ddd", background:"#f0f8f4" }}>
-                  <td colSpan={3} style={{ padding:"8px 10px", fontWeight:700, textAlign:"right" }}>Group Total</td>
-                  <td style={{ padding:"8px 10px", textAlign:"right", fontFamily:"monospace", fontWeight:700 }}>{groupItems.reduce((s,i)=>s+getOnHand(i.id,batches),0)}</td>
-                  <td style={{ padding:"8px 10px", textAlign:"right", fontFamily:"monospace", fontWeight:700 }}>{fmtSm(grpValue)}</td>
+                  <td colSpan={anyShelf ? 5 : 4} style={{ padding:"8px 10px", fontWeight:700, textAlign:"right" }}>Location Total</td>
+                  <td style={{ padding:"8px 10px", textAlign:"right", fontFamily:"monospace", fontWeight:700 }}>{sh.rows.reduce((t,r)=>t+r.qty,0)}</td>
+                  <td style={{ padding:"8px 10px", textAlign:"right", fontFamily:"monospace", fontWeight:700 }}>{fmtSm(shValue)}</td>
                   <td colSpan={3} style={{ padding:"8px 10px", borderLeft:"1px dashed #ccc" }}>
                     <span style={{ fontSize:11, color:"#888" }}>Counted by: ___________________________ Date: ___________</span>
                   </td>

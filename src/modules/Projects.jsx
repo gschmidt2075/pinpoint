@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
-import { Icon, Field, SectionCard, Table, KPICard, StatusBadge, inp, btn, fmt, fmtSm, pct, ProgressBar, DateField, titleCase } from "../components/shared.jsx";
+import { Icon, Field, SectionCard, Table, KPICard, StatusBadge, inp, btn, fmt, fmtSm, pct, ProgressBar, DateField, titleCase, MoneyField } from "../components/shared.jsx";
+import { useUnsavedForm, useNavigationGuard } from "../components/unsaved.jsx";
 import { createProject } from "../data/schema.js";
 import { FISCAL_YEAR } from "../data/accountCodes.js";
 
@@ -235,6 +236,7 @@ function ProjectCard({ project: p, onClick }) {
 
 // ── Project Detail ────────────────────────────────────────────────────────────
 function ProjectDetail({ project, db, dispatch, onBack, onEdit }) {
+  const go = useNavigationGuard();
   const [tab, setTab]       = useState("overview");
   const [editing, setEditing] = useState(false);
   const totals = projectTotals(project);
@@ -293,7 +295,7 @@ function ProjectDetail({ project, db, dispatch, onBack, onEdit }) {
 
       <div style={{ display:"flex", borderBottom:"1px solid #ddd", marginBottom:24, overflowX:"auto" }}>
         {TABS.map(t => (
-          <button key={t.id} onClick={()=>setTab(t.id)} style={{
+          <button key={t.id} onClick={() => go(() => setTab(t.id))} style={{
             background:"transparent", border:"none", padding:"8px 14px 10px",
             fontWeight:tab===t.id?700:400, fontSize:13, cursor:"pointer",
             color:tab===t.id?"#1a5a3a":"#666",
@@ -448,6 +450,7 @@ function LaborEntryForm({ entry, onSave, onCancel }) {
     notes:        entry?.notes || "",
     createdAt:    entry?.createdAt || new Date().toISOString(),
   });
+  useUnsavedForm(form, "what you have entered");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
   const laborCost = (parseFloat(form.hoursWorked)||0) * (parseFloat(form.hourlyRate)||0);
   const femaTotal = (parseFloat(form.hoursWorked)||0) * (parseFloat(form.femaRate)||0) * FEMA_OVH;
@@ -465,9 +468,9 @@ function LaborEntryForm({ entry, onSave, onCancel }) {
           <Field label="Hours" required><input type="number" min="0" step="0.25" value={form.hoursWorked} onChange={e=>set("hoursWorked",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:14, marginBottom:14 }}>
-          <Field label="Hourly Rate ($)" required><input type="number" min="0" step="0.01" value={form.hourlyRate} onChange={e=>set("hourlyRate",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
+          <Field label="Hourly Rate ($)" required><MoneyField value={form.hourlyRate} onChange={v=>set("hourlyRate",v)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
           <Field label="Labor Cost"><div style={{ ...inp, background:"#f7f7f5", fontFamily:"monospace", fontWeight:700, color:"#1a6b35" }}>{fmtSm(laborCost)}</div></Field>
-          <Field label="FEMA ST Rate ($/hr)"><input type="number" min="0" step="0.01" value={form.femaRate} onChange={e=>set("femaRate",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="Schedule rate…" /></Field>
+          <Field label="FEMA ST Rate ($/hr)"><MoneyField value={form.femaRate} onChange={v=>set("femaRate",v)} placeholder="Schedule rate…" style={{ ...inp, fontFamily:"monospace" }} /></Field>
           <Field label="FEMA Total (15.7% OVH)"><div style={{ ...inp, background:"#fef3cd", fontFamily:"monospace", fontWeight:700, color:"#d97706" }}>{parseFloat(form.femaRate)>0?fmtSm(femaTotal):"—"}</div></Field>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr", gap:14 }}>
@@ -533,6 +536,7 @@ function EquipmentEntryForm({ entry, units, onSave, onCancel }) {
     notes:         entry?.notes || "",
     createdAt:     entry?.createdAt || new Date().toISOString(),
   });
+  useUnsavedForm(form, "what you have entered");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
   const totalCost = (parseFloat(form.hoursOperated)||0) * (parseFloat(form.femaRate)||0);
 
@@ -566,7 +570,7 @@ function EquipmentEntryForm({ entry, units, onSave, onCancel }) {
         )}
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:14, marginBottom:14 }}>
           <Field label="Hours" required><input type="number" min="0" step="0.25" value={form.hoursOperated} onChange={e=>set("hoursOperated",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
-          <Field label="FEMA Rate ($/hr)"><input type="number" min="0" step="0.01" value={form.femaRate} onChange={e=>set("femaRate",e.target.value)} style={{ ...inp, fontFamily:"monospace", color:"#d97706" }} /></Field>
+          <Field label="FEMA Rate ($/hr)"><MoneyField value={form.femaRate} onChange={v=>set("femaRate",v)} style={{ ...inp, fontFamily:"monospace", color:"#d97706" }} /></Field>
           <Field label="Total Cost"><div style={{ ...inp, background:"#f7f7f5", fontFamily:"monospace", fontWeight:700, color:"#1a3a5c" }}>{fmtSm(totalCost)}</div></Field>
           <Field label="Operator"><input type="text" value={form.operatorName} onChange={e=>set("operatorName",e.target.value)} style={inp} /></Field>
         </div>
@@ -632,6 +636,7 @@ function MaterialEntryForm({ entry, invItems, onSave, onCancel }) {
     notes:        entry?.notes || "",
     createdAt:    entry?.createdAt || new Date().toISOString(),
   });
+  useUnsavedForm(form, "what you have entered");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
   const handleItemSelect = id => {
@@ -666,7 +671,7 @@ function MaterialEntryForm({ entry, invItems, onSave, onCancel }) {
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14, marginBottom:14 }}>
           <Field label="Quantity" required><input type="number" min="0" step="any" value={form.quantity} onChange={e=>set("quantity",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
           <Field label="Unit"><input type="text" value={form.unitOfMeasure} onChange={e=>set("unitOfMeasure",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="TON, CY, LF…" /></Field>
-          <Field label="Total Cost ($)" required><input type="number" min="0" step="0.01" value={form.batchLines.length>0?form.totalCost:form.totalCost} onChange={e=>set("totalCost",e.target.value)} readOnly={form.batchLines.length>0} style={{ ...inp, fontFamily:"monospace", background:form.batchLines.length>0?"#f7f7f5":"" }} /></Field>
+          <Field label="Total Cost ($)" required><MoneyField value={form.totalCost} onChange={v=>set("totalCost",v)} disabled={form.batchLines.length>0} style={{ ...inp, fontFamily:"monospace", background:form.batchLines.length>0?"#f7f7f5":"" }} /></Field>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr", gap:14 }}>
           <Field label="Segment / Asset"><input type="text" value={(form.linkedAssets||[]).join(", ")} onChange={e=>set("linkedAssets",e.target.value.split(",").map(s=>s.trim()).filter(Boolean))} style={inp} placeholder="Road 14 — MP 2.1 to 3.4" /></Field>
@@ -732,6 +737,7 @@ function ContractorEntryForm({ entry, onSave, onCancel }) {
     notes:          entry?.notes || "",
     createdAt:      entry?.createdAt || new Date().toISOString(),
   });
+  useUnsavedForm(form, "what you have entered");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
   const retention = (parseFloat(form.totalAmount)||0) * (parseFloat(form.retentionPct)||0) / 100;
   const net       = (parseFloat(form.totalAmount)||0) - retention;
@@ -752,7 +758,7 @@ function ContractorEntryForm({ entry, onSave, onCancel }) {
           <Field label="Description"><input type="text" value={form.description} onChange={e=>set("description",e.target.value)} style={inp} /></Field>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:14, marginBottom:14 }}>
-          <Field label="Invoice Amount ($)" required><input type="number" min="0" step="0.01" value={form.totalAmount} onChange={e=>set("totalAmount",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
+          <Field label="Invoice Amount ($)" required><MoneyField value={form.totalAmount} onChange={v=>set("totalAmount",v)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
           <Field label="Retention (%)"><input type="number" min="0" max="100" step="0.5" value={form.retentionPct} onChange={e=>set("retentionPct",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
           <Field label="Net Payable"><div style={{ ...inp, background:"#f7f7f5", fontFamily:"monospace", fontWeight:700 }}>{fmtSm(net)}</div></Field>
           <Field label="Payment Status">
@@ -831,6 +837,7 @@ function EngineeringEntryForm({ entry, onSave, onCancel }) {
     notes:        entry?.notes || "",
     createdAt:    entry?.createdAt || new Date().toISOString(),
   });
+  useUnsavedForm(form, "what you have entered");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
   return (
@@ -852,7 +859,7 @@ function EngineeringEntryForm({ entry, onSave, onCancel }) {
             </select>
           </Field>
           <Field label="Phase"><input type="text" value={form.phase} onChange={e=>set("phase",e.target.value)} style={inp} placeholder="Preliminary, Final…" /></Field>
-          <Field label="Amount ($)" required><input type="number" min="0" step="0.01" value={form.amount} onChange={e=>set("amount",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
+          <Field label="Amount ($)" required><MoneyField value={form.amount} onChange={v=>set("amount",v)} style={{ ...inp, fontFamily:"monospace" }} /></Field>
           <Field label="Notes"><input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={inp} /></Field>
         </div>
       </div>
@@ -926,6 +933,7 @@ function ProjectForm({ type: initialType, project, projects, assets, equipment, 
     if (t === "miscellaneous") { base.status = "active"; base.projectNumber = ""; }
     return base;
   });
+  useUnsavedForm(form, "this project");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
   const isCapital = form.type==="capital";

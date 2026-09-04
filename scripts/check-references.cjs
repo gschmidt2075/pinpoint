@@ -18,7 +18,8 @@ const fs = require("fs"), path = require("path");
 const GLOBALS = new Set(["console","window","document","Math","JSON","Object","Array","String",
  "Number","Boolean","Date","Set","Map","Promise","parseFloat","parseInt","isNaN","isFinite",
  "setTimeout","clearTimeout","setInterval","clearInterval","URL","Blob","Intl","RegExp","Error",
- "undefined","NaN","Infinity","React","globalThis","structuredClone","alert","confirm","localStorage","requestAnimationFrame"]);
+ "undefined","NaN","Infinity","React","globalThis","structuredClone","alert","confirm","localStorage","requestAnimationFrame",
+ "BigInt","Symbol","Proxy","Reflect","WeakMap","WeakSet","TextDecoder","TextEncoder","FileReader","fetch","AbortController"]);
 
 const files = [];
 (function walk(d){ for (const e of fs.readdirSync(d,{withFileTypes:true})) {

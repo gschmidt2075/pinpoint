@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Field, Table, KPICard, inp, btn, fmtSm, DateField, titleCase } from "../../components/shared.jsx";
+import { Field, Table, KPICard, inp, btn, fmtSm, DateField, titleCase, MoneyField } from "../../components/shared.jsx";
+import { useUnsavedForm } from "../../components/unsaved.jsx";
 import { createWorkOrder, createPMSchedule, PM_PRESETS, PM_PRESET_LABELS } from "../../data/schema.js";
 import { lifetimeMeter, today, fmtDate, PM_TASKS } from "./shared.jsx";
 
@@ -301,6 +302,7 @@ export function PMDueTab({ units, dispatch, onOpen }) {
   const due = pmDueList(units);
   const [selected, setSelected] = useState([]);
   const [form, setForm] = useState({ date: new Date().toISOString().split("T")[0], reportedBy:"", notes:"" });
+  useUnsavedForm(form, "this PM entry");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
   const overdue = due.filter(d => d.status.state === "overdue");
@@ -431,6 +433,7 @@ export function PMDueTab({ units, dispatch, onOpen }) {
 export function UnitPM({ unit, pmLogs, dispatch }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ date: today(), service:"", meterReading:"", performedBy:"", cost:"", notes:"" });
+  useUnsavedForm(form, "what you have entered");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
   const handleSave = () => {
@@ -462,7 +465,7 @@ export function UnitPM({ unit, pmLogs, dispatch }) {
               </select>
             </Field>
             <Field label={`Meter (${unit.meterType||"hours"})`}><input type="number" min="0" step="any" value={form.meterReading} onChange={e=>set("meterReading",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
-            <Field label="Cost ($)"><input type="number" min="0" step="0.01" value={form.cost} onChange={e=>set("cost",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+            <Field label="Cost ($)"><MoneyField value={form.cost} onChange={v=>set("cost",v)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:12 }}>
             <Field label="Performed By"><input type="text" value={form.performedBy} onChange={e=>set("performedBy",e.target.value)} style={{ ...inp, margin:0 }} /></Field>

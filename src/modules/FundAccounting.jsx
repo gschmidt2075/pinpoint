@@ -1,7 +1,8 @@
 import { useState, useMemo } from "react";
 import { EXPENDITURE_CODES, REVENUE_CODES, FUNDS, FISCAL_YEAR, EXP_TYPES } from "../data/accountCodes.js";
-import { StatusBadge, ProgressBar, KPICard, Field, SectionCard, Table, Icon, inp, btn, fmt, fmtSm, pct, DateField, titleCase } from "../components/shared.jsx";
-import { DEFAULT_INVOICES_PER_CLAIM } from "../data/schema.js";
+import { StatusBadge, ProgressBar, KPICard, Field, SectionCard, Table, Icon, inp, btn, fmt, fmtSm, pct, DateField, titleCase, MoneyField } from "../components/shared.jsx";
+import { DEFAULT_INVOICES_PER_CLAIM, groupLabel } from "../data/schema.js";
+import { useUnsavedGuard, useNavigationGuard, useUnsavedForm } from "../components/unsaved.jsx";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 // Most entries are for today, so date fields open on it rather than blank. A
@@ -90,6 +91,7 @@ function VendorInput({ value, onChange, onSelect, vendors = [], placeholder = "V
 // ── Module Shell ──────────────────────────────────────────────────────────────
 export default function FundAccounting({ db, dispatch }) {
   const [view, setView] = useState("dashboard");
+  const go = useNavigationGuard();
 
   return (
     <div>
@@ -105,7 +107,7 @@ export default function FundAccounting({ db, dispatch }) {
           { id:"amendments",     label:"Amendments",      icon:"edit" },
           { id:"manageFunds",    label:"Manage Funds",    icon:"adjustments-horizontal" },
         ].map(v => (
-          <button key={v.id} onClick={() => setView(v.id)} style={{
+          <button key={v.id} onClick={() => go(() => setView(v.id))} style={{
             background:"transparent", border:"none", padding:"8px 16px 10px",
             fontWeight: view===v.id ? 700 : 400, fontSize:13, cursor:"pointer",
             color: view===v.id ? "#1a3a5c" : "#666",
@@ -118,12 +120,12 @@ export default function FundAccounting({ db, dispatch }) {
         ))}
       </div>
 
-      {view==="dashboard"      && <FADashboard db={db} dispatch={dispatch} setView={setView} />}
+      {view==="dashboard"      && <FADashboard db={db} setView={setView} />}
       {view==="newExpenditure" && <ExpenditureForm db={db} dispatch={dispatch} onDone={() => setView("claims")} />}
       {view==="newRevenue"     && <RevenueForm     db={db} dispatch={dispatch} onDone={() => setView("revenue")} />}
       {view==="revenue"        && <RevenueList     db={db} dispatch={dispatch} onNew={() => setView("newRevenue")} />}
       {view==="claims"         && <ClaimCycles     db={db} dispatch={dispatch} />}
-      {view==="ledger"         && <Ledger          db={db} dispatch={dispatch} />}
+      {view==="ledger"         && <Ledger          db={db} />}
       {view==="journal"        && <JournalEntries  db={db} dispatch={dispatch} />}
       {view==="amendments"     && <Amendments      db={db} dispatch={dispatch} />}
       {view==="manageFunds"    && <ManageFundsFA   db={db} dispatch={dispatch} />}
@@ -387,9 +389,12 @@ function ExpenditureForm({ db, dispatch, onDone, initialData = null }) {
     // Assigned by the Clerk's office after processing — recorded, not generated
     claimNumber: initialData?.claimNumber || "",
   });
+  useUnsavedForm(header, "this expenditure");
   const [lines, setLines]     = useState(initialData ? (initialData.lines||[]).map(l=>emptyLine(l)) : [emptyLine()]);
   const [saved, setSaved]     = useState(false);
   const [catFilter, setCatFilter] = useState("all");
+
+  // Losing a part-typed claim is the worst version of this, because it is the
 
   const set  = (k,v) => setHeader(h => ({ ...h, [k]:v }));
   const setL = (id,k,v) => setLines(ls => ls.map(l => l.id===id ? { ...l,[k]:v } : l));
@@ -477,7 +482,11 @@ function ExpenditureForm({ db, dispatch, onDone, initialData = null }) {
           totalCost:         lineAmt,
           vendorName:        header.vendorName,
           referenceNumber:   header.reference,
-          location:          l.invLocationId || "Main Shop",
+          // No default location. "Main Shop" was one county's building name
+          // hardcoded into everyone's software, and it was not even a valid
+          // location code — stock defaulted into a place that did not exist.
+          // The form requires a location; if it is blank the receipt is blank.
+          location:          l.invLocationId,
           status:            "open",
           invoiceStatus:     "final",
           invoiceRef:        header.reference,
@@ -497,7 +506,7 @@ function ExpenditureForm({ db, dispatch, onDone, initialData = null }) {
             quantity:      qty,
             unitCost,
             totalCost:     lineAmt,
-            location:      l.invLocationId || "Main Shop",
+            location:      l.invLocationId,
             referenceNumber: header.reference,
             expenditureId: payload.id,
             batch,
@@ -626,9 +635,7 @@ function ExpenditureForm({ db, dispatch, onDone, initialData = null }) {
                 </div>
                 <div style={{ flex:1 }}>
                   <Field label={line.isCredit?"Credit Amount ($)":"Amount ($)"} required>
-                    <input type="number" min="0" step="0.01" placeholder="0.00"
-                      value={line.amount} onChange={e=>setL(line.id,"amount",e.target.value)}
-                      style={{ ...inp, fontFamily:"monospace", color:line.isCredit?"#5a1a8a":"#1a1a1a" }} />
+                    <MoneyField value={line.amount} onChange={v=>setL(line.id,"amount",v)} placeholder="0.00" style={{ ...inp, fontFamily:"monospace", color:line.isCredit?"#5a1a8a":"#1a1a1a" }} />
                   </Field>
                 </div>
                 <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:4, paddingBottom:2 }}>
@@ -725,16 +732,23 @@ function ExpenditureForm({ db, dispatch, onDone, initialData = null }) {
                             style={{ ...inp, fontFamily:"monospace" }}
                           />
                         </Field>
+                        {/* The location CODE, not its name. Batches, transfers
+                            and count sheets all key on the code; storing a name
+                            here put received stock at a location nothing else
+                            could find. */}
                         <Field label="Receive to Location">
                           <select
                             value={line.invLocationId}
                             onChange={e=>setL(line.id,"invLocationId",e.target.value)}
                             style={inp}
                           >
-                            <option value="">Select location…</option>
-                            {(db.storageLocations||[]).map(loc=>(
-                              <option key={loc.id} value={loc.name}>{loc.name}</option>
-                            ))}
+                            <option value="">Where is it going?…</option>
+                            {[...(db.inventoryGroups||[])]
+                              .filter(l=>l.active!==false)
+                              .sort((a,b)=>(Number(a.code)||0)-(Number(b.code)||0))
+                              .map(loc=>(
+                                <option key={loc.id} value={loc.code}>{groupLabel(loc)}</option>
+                              ))}
                           </select>
                         </Field>
                       </div>
@@ -1133,9 +1147,11 @@ function RevenueForm({ db, dispatch, onDone, initialData = null }) {
     reference:   initialData?.reference || "",
     description: initialData?.description || "",
   });
+  useUnsavedForm(header, "this revenue entry");
   const [lines, setLines]   = useState(initialData ? (initialData.lines||[]).map(l=>emptyLine(l)) : [emptyLine()]);
   const [saved, setSaved]   = useState(false);
   const [typeFilter, setTypeFilter] = useState("all");
+
 
   const setH = (k,v) => setHeader(h=>({ ...h,[k]:v }));
   const setL = (id,k,v) => setLines(ls=>ls.map(l=>l.id===id?{ ...l,[k]:v }:l));
@@ -1231,9 +1247,7 @@ function RevenueForm({ db, dispatch, onDone, initialData = null }) {
               </div>
               <div style={{ flex:1 }}>
                 <Field label="Amount ($)" required>
-                  <input type="number" min="0" step="0.01" placeholder="0.00"
-                    value={line.amount} onChange={e=>setL(line.id,"amount",e.target.value)}
-                    style={{ ...inp, fontFamily:"monospace" }} />
+                  <MoneyField value={line.amount} onChange={v=>setL(line.id,"amount",v)} placeholder="0.00" style={{ ...inp, fontFamily:"monospace" }} />
                 </Field>
               </div>
               {lines.length>1 && (
@@ -1361,6 +1375,7 @@ function JournalEntries({ db, dispatch }) {
   const [form, setForm] = useState({
     date: today(), description:"", debitCode:"", creditCode:"", amount:"", reason:"", claimCycleId:"",
   });
+  useUnsavedForm(form, "what you have entered");
   const [saved, setSaved] = useState(false);
   const set = (k,v) => setForm(f=>({ ...f,[k]:v }));
 
@@ -1406,8 +1421,7 @@ function JournalEntries({ db, dispatch }) {
             <DateField value={form.date} onChange={v => set("date", v)} />
           </Field>
           <Field label="Amount ($)" required>
-            <input type="number" min="0" step="0.01" placeholder="0.00" value={form.amount}
-              onChange={e=>set("amount",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
+            <MoneyField value={form.amount} onChange={v=>set("amount",v)} placeholder="0.00" style={{ ...inp, fontFamily:"monospace" }} />
           </Field>
         </div>
         <div style={{ marginBottom:16 }}>
@@ -1466,6 +1480,7 @@ function JournalEntries({ db, dispatch }) {
 // ── Budget Amendments ─────────────────────────────────────────────────────────
 function Amendments({ db, dispatch }) {
   const [form, setForm] = useState({ date: today(), code:"", amount:"", reason:"" });
+  useUnsavedForm(form, "what you have entered");
   const [saved, setSaved] = useState(false);
   const set = (k,v) => setForm(f=>({ ...f,[k]:v }));
 
@@ -1488,7 +1503,7 @@ function Amendments({ db, dispatch }) {
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
           <Field label="Date" required><DateField value={form.date} onChange={v => set("date", v)} /></Field>
           <Field label="Amount ($) — negative to reduce" required>
-            <input type="number" step="0.01" placeholder="e.g. 25000 or -10000" value={form.amount} onChange={e=>set("amount",e.target.value)} style={{ ...inp, fontFamily:"monospace" }} />
+            <MoneyField value={form.amount} onChange={v=>set("amount",v)} allowNegative placeholder="e.g. 25000 or -10000" style={{ ...inp, fontFamily:"monospace" }} />
           </Field>
         </div>
         <div style={{ marginBottom:16 }}>

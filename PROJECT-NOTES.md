@@ -95,6 +95,35 @@ Things that aren't obvious from the code.
 
 **Fiscal year** — July 1 to June 30. FY2027 = 2026-07-01 through 2027-06-30.
 
+**The inventory model — one list of commodity groups, used twice.**
+R&B IMS has one field where there should be two. `Comm Grp Alpha` answers both
+"what kind of thing is this" and "where is it", and only one at a time. So the
+only way to send an oil filter out to Kenesaw is to reassign its group from
+`133 FILTERS` to `7 KENESAW SHED` — and it stops being a filter.
+
+Pinpoint keeps the same 111 groups and uses them for both jobs:
+
+| | |
+|---|---|
+| `item.categoryId` | a group — what it **is**. A transfer never changes it. |
+| batch `location` | a group **code** — where it is. A transfer does change it. |
+
+Day one they are identical for every item, so staff see the list they know. They
+diverge the first time something moves, and that divergence is the whole
+improvement. Full detail in `docs/Inventory-Model.md`.
+
+`Inventory Usual Location` is **not used** — a copy of the group code on 74% of
+rows, and where it differs it points at bare numbers with no name anywhere.
+
+Group types: **area** (part of the main shop — the sign shop, the parts room),
+**building**, **machine** (gear that lives on a unit), **stockpile**. There is
+no "Main Shop" group; the shop is where things are unless a group says
+otherwise, so its areas cover it.
+
+Codes are editable in Settings — add, rename, retype, renumber, remove.
+Renumbering carries the stock with it; removing is blocked while a group holds
+stock or is some item's category.
+
 **Annual Certification of Program Compliance (ACPC)** — filed with the Nebraska
 Board of Public Roads Classifications and Standards by 31 October. Failure to
 file suspends Highway Allocation funds. **Pinpoint must never generate the form**
@@ -434,6 +463,79 @@ or revenue receipted. Before that, editing is correcting your own typing.
 
 ---
 
+## Verifying a change
+
+`npm run check` runs four things, in increasing order of what they can catch:
+
+1. **`check-references.cjs`** — every identifier resolves, and every import
+   resolves to a real export. Catches the blank-page class of bug: Vite only
+   fails on a missing *module*, not a missing *name*, so `pmDueList` used but
+   never imported builds fine and renders nothing.
+2. **`parse-check.mjs`** — parses every file with acorn + acorn-jsx. `npm run
+   build` needs platform-native binaries and cannot run everywhere this project
+   is worked on; this is pure JavaScript and catches unclosed tags and stray
+   braces anywhere.
+3. **`check-props.mjs`** — every component gets the props it actually reads.
+   This is the white-screen check. `<Table columns={…}>` where Table reads
+   `headers` leaves `headers` undefined, `headers.map` throws, React unmounts
+   the tree, and the page goes blank — with every name resolved, every file
+   parsed and every test green, because the mistake is in the *shape* of the
+   call rather than in any identifier. It separates two severities: a missing
+   required prop **throws** and fails the build; an unknown prop is **silently
+   dropped** by React and is only reported.
+4. **`test-inventory.mjs`** — the crosswalked data holds together, and transfers
+   do the right arithmetic.
+
+I previously wrote here that nothing could have caught the tanks bug, where a
+rewritten function returned an object missing three keys its caller went on to
+read. That was wrong, and check-props is the answer to it.
+
+The transfer arithmetic is a pure function in `schema.js` with tests, rather
+than inline in the reducer, for a related reason: a transfer bug hides. The
+county-wide total stays correct however wrong the per-group figures are, and
+before Pinpoint the county-wide total was the only number anyone could check.
+
+---
+
+## Before go-live: paring down the inventory
+
+Greg will trim the CSV before the final crosswalk. `docs/Inventory-Cleanup-Guide.md`
+sets out the decisions and `docs/reference/Inventory-Cleanup-Plan.xlsx` lists every
+row with a recommendation.
+
+The headline is that trimming does not make the crosswalk easier — it makes the
+result better — and that **nothing the county still physically has should be
+deleted**, because the opening balance ties to R&B to the penny and the physical
+count is what settles doubt.
+
+Two decisions in there are design questions rather than tidying:
+
+- **Stockpiles are 9 rows carrying $419,675.36 — 27% of all inventory value.**
+  Aggregate is measured, not counted. If a gravel module happens, it should not
+  also live in inventory.
+- **498 rows are a place's own fixtures** — fuel tanks, transits, compressors —
+  worth $221,437.03. A tank bolted down at Kenesaw is a fixed asset; "how many on
+  hand" is not a question anyone asks about it.
+
+---
+
+## Employee pay
+
+The pay scale table is gone. `docs/Employee-Model.md` has the detail; the short
+version is that it said the CLASSIFICATION set the rate, and Adams County runs a
+step program where two Equipment Operators earn different money. The rate is now
+a dated history on the person, typed in, with a reason on each row.
+
+The reason is not decoration — `Six-month review` and `Step increase` are what
+let the program flag who is coming due. It flags dates and raises nobody's pay
+by itself.
+
+Overtime is always 1.5× and derived, never typed. Backdating a rate recosts
+every labor entry on or after the effective date and reports what moved, which
+is safe here because cost accounting is a record rather than money leaving.
+
+---
+
 ## Known problems
 
 - **OneDrive vs git.** The repo lives in OneDrive, which holds `.git` files open
@@ -441,16 +543,22 @@ or revenue receipted. Before that, editing is correcting your own typing.
   project outside OneDrive would eliminate this. *(The working copy is now at
   `C:\dev\public-works-app`, which sidesteps it.)*
 - **56 legacy inventory rows cannot be right.** 13 with negative quantity, 43
-  carrying value with no quantity — **$109,932.72** between them. They are
+  carrying value with no quantity — **$107,455.30** between them. They are
   flagged on the item and excluded from the opening balance, deliberately, so
   they surface at the next count. Awaiting Greg: are these known ghosts?
 - **17 GL codes on inventory items are not in the FY2027 budget chart**, and 14
   items carry no GL code at all. They report with a blank description. Dead
   codes from the old system, or live ones missing from the budget list?
-- **12 storage locations have no name.** 95 came out of the legacy export as
-  bare numbers; 83 were named by inferring from what is stored there. The rest
-  need someone who knows the buildings — including code 134, which holds 1,124
-  items and is probably the main parts room.
+- **105 rows would not crosswalk cleanly** and are listed on the Inventory
+  dashboard with their R&B row number and a reason. Nothing was guessed at and
+  nothing blocks. Greg: *"This inventory will be very different by the time this
+  goes live."*
+- **The item names still carry locations in places.** The legacy descriptions
+  include things like "Diesel Oil Kenesaw" and "Diesel Oil Holstein" — the same
+  product, named for where it sat, because naming it for where it sat was the
+  only way the old system could tell the two apart. Now that location is a
+  separate field these should collapse to one item. Greg will clean them in the
+  source system before the go-live crosswalk.
 - **`inventoryData.js` is 2.8 MB.** Fine for GitHub, makes the browser bundle
   large. Goes away with a real database.
 - **The preview URL is public.** No real data should be entered until there's
@@ -459,6 +567,19 @@ or revenue receipted. Before that, editing is correcting your own typing.
   record and the audit trail. It sits behind a typed confirmation and the
   delete capability, but it should not exist at all once the system holds real
   work. Greg raised this; he is right.
+- **A fresh install still ships with Adams County's inventory.** The crosswalk
+  output is compiled into the build as `inventoryData.js` and loaded as the
+  starting state. That is deliberate for now — staff need real items to test
+  Receive, Issue and Transfer against — but it must be stripped before the
+  program is handed to another county. Settings → Import Inventory is the
+  replacement path and already works.
+- **A project's labor figure is what was recorded, not what the work cost.**
+  Greg: *"Everyone's hours are not 100% tracked."* The reports should say so
+  rather than implying completeness.
+- **The `access` object reaches no module.** `App.jsx` passes `access` to all
+  ten modules and not one of them destructures it, so permissions currently
+  shape the navigation only — nothing inside a screen is dimmed or hidden.
+  `check-props` reports this on every run until it is done.
 - **Permissions are advisory until Azure AD.** Anyone can pick any role from the
   switcher, and anyone can pick any name. The screens say so plainly rather than
   implying protection that is not there.

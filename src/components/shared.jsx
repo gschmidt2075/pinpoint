@@ -66,9 +66,9 @@ export function KPICard({ label, value, sub, accent, icon }) {
 }
 
 // ── Field wrapper ─────────────────────────────────────────────────────────────
-export function Field({ label, children, required }) {
+export function Field({ label, children, required, style }) {
   return (
-    <div>
+    <div style={style}>
       <label style={{ display:"block", fontSize:12, fontWeight:600, color:"#444", marginBottom:5, letterSpacing:"0.03em" }}>
         {label}{required && <span style={{ color:"#c0392b", marginLeft:2 }}>*</span>}
       </label>
@@ -234,6 +234,64 @@ export function DateField({ value, onChange, style = {}, required, disabled, sho
           Not a date — try 8/14/26
         </div>
       )}
+    </div>
+  );
+}
+
+// ── MoneyField ────────────────────────────────────────────────────────────────
+//
+// Greg: "In all dollar entities the decimal should populate if you do not enter
+// it manually."
+//
+// Type 5, leave the field, and it settles as 5.00. Type 5.5 and it settles as
+// 5.50. Nothing is corrected WHILE typing, because a field that rewrites itself
+// under the cursor is impossible to type into — "5." would become "5.00" before
+// the cents were reached.
+//
+// A `<input type="number">` cannot do this. It also gives every money field a
+// spinner nobody wants, scrolls the value when the mouse passes over it, and
+// silently reports an empty string for anything it considers malformed. This is
+// a text field that knows it holds money.
+export function MoneyField({ value, onChange, style = {}, disabled, placeholder = "0.00",
+                             allowNegative = false, prefix = "$", decimals = 2 }) {
+  const [text, setText] = useState("");
+  const [editing, setEditing] = useState(false);
+
+  const settled = (value === "" || value === null || value === undefined || Number.isNaN(Number(value)))
+    ? "" : Number(value).toFixed(decimals);
+
+  const commit = (raw) => {
+    const cleaned = String(raw).replace(/[$,\s]/g, "");
+    if (!cleaned) { onChange(""); return; }
+    const n = parseFloat(cleaned);
+    if (!Number.isFinite(n)) { onChange(""); return; }
+    // Store exactly what is shown. Keeping 5.555 behind a field displaying 5.55
+    // means a total that does not add up from the numbers on screen, and an
+    // afternoon spent looking for the missing cent.
+    const rounded = Number((allowNegative ? n : Math.abs(n)).toFixed(decimals));
+    onChange(rounded);
+  };
+
+  return (
+    <div style={{ position:"relative", display:"flex", alignItems:"stretch" }}>
+      <span style={{ position:"absolute", left:10, top:"50%", transform:"translateY(-50%)",
+                     fontSize:13, color:"#999", pointerEvents:"none" }}>{prefix}</span>
+      <input
+        type="text"
+        inputMode="decimal"
+        disabled={disabled}
+        placeholder={placeholder}
+        value={editing ? text : settled}
+        onFocus={() => { setEditing(true); setText(settled); }}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={() => { setEditing(false); commit(text); }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter")  { commit(text); setEditing(false); e.currentTarget.blur(); }
+          if (e.key === "Escape") { setEditing(false); setText(settled); }
+        }}
+        style={{ ...inp, margin:0, flex:1, paddingLeft:22, textAlign:"right",
+                 fontFamily:"ui-monospace, monospace", ...style }}
+      />
     </div>
   );
 }

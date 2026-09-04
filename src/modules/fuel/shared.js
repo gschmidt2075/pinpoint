@@ -8,20 +8,13 @@ export function fmtDate(str) {
   return d && m && y ? `${m}/${d}/${y}` : str;
 }
 
-// What a tank's fuel cost per gallon.
+// tankUnitCost lived here. It answered "what did the last fuel to enter this
+// tank cost", which is not what a gallon coming out of it costs — fuel is FIFO
+// on Greg's decision, so the OLDEST gallons go first and a single draw can span
+// two deliveries. It is deleted rather than left unused, because a function
+// implementing the superseded rule is one somebody imports again by accident.
 //
-// Taken from the most recent fuel to ENTER the tank, whether it was delivered
-// or transferred in. Looking only at deliveries was a real bug: a mobile tank
-// never receives one — it gets filled from a fixed tank — so every gallon
-// pumped out of it was priced at zero and the departments billed for it were
-// undercharged.
-export function tankUnitCost(tankId, tankTx = []) {
-  const priced = tankTx
-    .filter(t => t.tankId === tankId && t.unitCost > 0
-              && (t.type === "delivery" || t.type === "portable_fill"))
-    .sort((a,b) => String(b.date||"").localeCompare(String(a.date||"")));
-  return priced[0]?.unitCost || 0;
-}
+// Use costFuel / quoteFuel / tankFuelValue from src/data/schema.js.
 
 // Days since a date, or null if there isn't one.
 export function daysSince(dateStr) {

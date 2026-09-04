@@ -1537,7 +1537,7 @@ price list, not what stock cost — valuing the catalog at **$1.13m against the
 legacy system's own $1.66m**. Now derived from Cost On Hand, tying to the penny.
 
 **56 legacy rows cannot be right.** 13 with negative quantity, 43 carrying value
-with no quantity — **$109,932.72** between them. One gravel line reads −0.97
+with no quantity — **$107,455.30** between them. One gravel line reads −0.97
 units and $19,972. No opening balance created; each flagged on the item so it
 surfaces at the next count. *Are these known ghosts?*
 
@@ -1654,7 +1654,7 @@ accounting, and the two are never summed — the same rule as the culvert.
 ### Open questions
 
 1. **12 location numbers still unnamed**, including 134 (1,124 items).
-2. **56 legacy inventory rows** carrying $109,932.72 — known ghosts?
+2. **56 legacy inventory rows** carrying $107,455.30 — known ghosts?
 3. **17 GL codes** on items that are not in the FY2027 budget chart.
 4. **Should heating fuel or other tanks use a GL code other than 302.09?**
    Currently one default; could be per tank.

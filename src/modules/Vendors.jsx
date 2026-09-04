@@ -1,6 +1,8 @@
 import { useState, useMemo } from "react";
 import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm, DateField, titleCase } from "../components/shared.jsx";
-import { createVendor, createInsuranceCert, createContractRate, VENDOR_TYPES } from "../data/schema.js";
+import { useUnsavedForm, useNavigationGuard } from "../components/unsaved.jsx";
+import { createVendor, createInsuranceCert, createContractRate, VENDOR_TYPES,
+         categoryName } from "../data/schema.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmtDate(str) {
@@ -207,6 +209,7 @@ function Flag({ children, tone, title }) {
 
 // ── Detail ────────────────────────────────────────────────────────────────────
 function VendorDetail({ vendor: v, db, dispatch, onBack, onEdit }) {
+  const go = useNavigationGuard();
   const [tab, setTab] = useState("details");
 
   const expenditures = (db.expenditures || []).filter(e =>
@@ -247,7 +250,7 @@ function VendorDetail({ vendor: v, db, dispatch, onBack, onEdit }) {
 
       <div style={{ display:"flex", borderBottom:"1px solid #ddd", marginBottom:20 }}>
         {TABS.map(([id,label,icon])=>(
-          <button key={id} onClick={()=>setTab(id)} style={{ background:"transparent", border:"none", padding:"8px 14px 10px", fontWeight:tab===id?700:400, fontSize:13, cursor:"pointer", color:tab===id?"#1a5a3a":"#666", borderBottom:tab===id?"2px solid #1a5a3a":"2px solid transparent", marginBottom:-1, display:"inline-flex", alignItems:"center", gap:6 }}>
+          <button key={id} onClick={() => go(() => setTab(id))} style={{ background:"transparent", border:"none", padding:"8px 14px 10px", fontWeight:tab===id?700:400, fontSize:13, cursor:"pointer", color:tab===id?"#1a5a3a":"#666", borderBottom:tab===id?"2px solid #1a5a3a":"2px solid transparent", marginBottom:-1, display:"inline-flex", alignItems:"center", gap:6 }}>
             <Icon name={icon} size={12} color={tab===id?"#1a5a3a":"#888"} />{label}
           </button>
         ))}
@@ -330,7 +333,7 @@ function VendorDetail({ vendor: v, db, dispatch, onBack, onEdit }) {
               rows={supplied.map(i=>[
                 <span style={{ fontFamily:"monospace", fontSize:11, fontWeight:700, background:"#f0f4ff", color:"#1a3a5c", padding:"2px 6px", borderRadius:3 }}>{i.legacyNumber||"—"}</span>,
                 <span style={{ fontWeight:600 }}>{i.name}</span>,
-                <span style={{ fontSize:12, color:"#555" }}>{i.commodityGroupCode?`${i.commodityGroupCode} — ${i.commodityGroup}`:(i.commodityGroup||"—")}</span>,
+                <span style={{ fontSize:12, color:"#555" }}>{categoryName(i, db.inventoryGroups || [])}</span>,
                 <span style={{ fontFamily:"monospace", fontSize:12 }}>{i.unitOfMeasure||"—"}</span>,
               ])}
             />
@@ -366,6 +369,7 @@ function VendorRates({ vendor: v, dispatch }) {
     haulType:"county_pickup", destinationType:"stockpile_1", township:"",
     unitRate:"", unitOfMeasure:"CY", effectiveDate:"", bidReference:"", notes:"",
   });
+  useUnsavedForm(form, "what you have entered");
   const set = (k,val) => setForm(f=>({...f,[k]:val}));
 
   const rates = [...(v.contractRates||[])].sort((a,b)=>(b.effectiveDate||"").localeCompare(a.effectiveDate||""));
@@ -472,6 +476,7 @@ function VendorRates({ vendor: v, dispatch }) {
 // ── Form ──────────────────────────────────────────────────────────────────────
 function VendorForm({ vendor, invItems, onSave, onCancel }) {
   const [form, setForm] = useState(() => vendor ? { ...vendor } : createVendor());
+  useUnsavedForm(form, "this vendor");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
   const [itemSearch, setItemSearch] = useState("");
 

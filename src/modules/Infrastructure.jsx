@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm, DateField, titleCase } from "../components/shared.jsx";
+import { useUnsavedForm, useNavigationGuard } from "../components/unsaved.jsx";
 import { createRoad, createBridge, createStructure, createStructureBarrel, createSign, createSignHistory, barrelLabel, barrelsSummary } from "../data/schema.js";
 
 
@@ -301,6 +302,7 @@ function AssetCostHistory({ assetId, projects }) {
 
 // ── Module Shell ──────────────────────────────────────────────────────────────
 export default function Infrastructure({ db, dispatch }) {
+  const go = useNavigationGuard();
   const [tab, setTab] = useState("roads");
 
   const TABS = [
@@ -321,7 +323,7 @@ export default function Infrastructure({ db, dispatch }) {
     <div>
       <div style={{ display:"flex", gap:2, marginBottom:24, borderBottom:"1px solid #ddd" }}>
         {TABS.map(t=>(
-          <button key={t.id} onClick={()=>setTab(t.id)} style={{
+          <button key={t.id} onClick={() => go(() => setTab(t.id))} style={{
             background:"transparent", border:"none", padding:"8px 14px 10px",
             fontWeight:tab===t.id?700:400, fontSize:13, cursor:"pointer",
             color:tab===t.id?"#1a5a3a":"#666",
@@ -515,6 +517,7 @@ function RoadDetail({ road: r, projects, onBack, onEdit, dispatch }) {
 
 function RoadForm({ road, onSave, onCancel }) {
   const [form, setForm] = useState(road ? { ...road } : createRoad());
+  useUnsavedForm(form, "this road");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
   return (
     <div style={{ maxWidth:680 }}>
@@ -778,6 +781,7 @@ function BridgeDetail({ bridge: b, projects, onBack, onEdit }) {
 
 function BridgeForm({ bridge, onSave, onCancel }) {
   const [form, setForm] = useState(bridge ? { ...bridge } : createBridge());
+  useUnsavedForm(form, "this bridge");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
   return (
     <div style={{ maxWidth:720 }}>
@@ -1064,6 +1068,7 @@ function StructureForm({ structure, structureTypes = [], townshipList = [], onSa
     }
     return f;
   });
+  useUnsavedForm(form, "this structure");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
   return (
     <div style={{ maxWidth:720 }}>
@@ -1343,6 +1348,7 @@ function SignDetail({ sign: s, history, projects, onBack, onEdit, dispatch }) {
 
 function SignForm({ sign, onSave, onCancel }) {
   const [form, setForm] = useState(sign ? { ...sign } : createSign());
+  useUnsavedForm(form, "this sign");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
   return (
     <div style={{ maxWidth:760 }}>

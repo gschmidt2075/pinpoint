@@ -8,7 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "check": "node scripts/check-references.cjs"
+    "check": "node scripts/check-references.cjs && node scripts/parse-check.mjs && node scripts/check-props.mjs && node scripts/check-hooks.mjs && node scripts/test-inventory.mjs && node scripts/test-employees.mjs && node scripts/test-fuel.mjs"
   },
   "dependencies": {
     "react": "^19.2.6",

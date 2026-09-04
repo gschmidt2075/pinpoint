@@ -1,6 +1,8 @@
 import { useState } from "react";
-import { Icon, Field, Table, KPICard, inp, btn, fmtSm, SearchSelect, DateField, titleCase } from "../../components/shared.jsx";
+import { Icon, Field, Table, KPICard, inp, btn, fmtSm, SearchSelect, DateField, titleCase, MoneyField } from "../../components/shared.jsx";
+import { useUnsavedForm, useNavigationGuard } from "../../components/unsaved.jsx";
 import { createWorkOrder, laborRateFor } from "../../data/schema.js";
+import { stockByLocation, locationName } from "../../data/schema.js";
 import { today, fmtDate, StatusChip, STATUS_META, onHandFor, buildFIFO,
          WO_CATEGORIES, WO_PRIORITIES } from "./shared.jsx";
 import { PMBadge } from "./PM.jsx";
@@ -67,6 +69,7 @@ function WOForm({ unit, onSave, onCancel }) {
       workOrderNumber: "",   // assigned on save, across the whole fleet
     }),
   });
+  useUnsavedForm(form, "what you have entered");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
   return (
@@ -123,6 +126,7 @@ function WOForm({ unit, onSave, onCancel }) {
 // ── Work Order Detail ─────────────────────────────────────────────────────────
 
 export function WorkOrderDetail({ wo, unit, invItems, invBatches, db, dispatch, onBack }) {
+  const go = useNavigationGuard();
   const [closing, setClosing] = useState(false);
   const [tab, setTab] = useState("labor");
   const priorityMeta = WO_PRIORITIES.find(p=>p.value===wo.priority)||{ color:"#888" };
@@ -173,7 +177,7 @@ export function WorkOrderDetail({ wo, unit, invItems, invBatches, db, dispatch, 
 
       <div style={{ display:"flex", borderBottom:"1px solid #ddd", marginBottom:20 }}>
         {TABS.map(t=>(
-          <button key={t.id} onClick={()=>setTab(t.id)} style={{
+          <button key={t.id} onClick={() => go(() => setTab(t.id))} style={{
             background:"transparent", border:"none", padding:"8px 14px 10px",
             fontWeight:tab===t.id?700:400, fontSize:13, cursor:"pointer",
             color:tab===t.id?"#1a5a3a":"#666",
@@ -187,7 +191,8 @@ export function WorkOrderDetail({ wo, unit, invItems, invBatches, db, dispatch, 
       </div>
 
       {tab==="labor"   && <WOLaborTab   wo={wo} db={db} dispatch={dispatch} />}
-      {tab==="parts"   && <WOPartsTab   wo={wo} unit={unit} invItems={invItems} invBatches={invBatches} dispatch={dispatch} />}
+      {tab==="parts"   && <WOPartsTab   wo={wo} unit={unit} invItems={invItems} invBatches={invBatches}
+                                    invLocations={db.inventoryGroups||[]} dispatch={dispatch} />}
       {tab==="service" && <WOServiceTab wo={wo} dispatch={dispatch} />}
     </div>
   );
@@ -206,16 +211,16 @@ function WOLaborTab({ wo, db = {}, dispatch }) {
   const entries = wo.laborEntries || [];
 
   const employees = (db.employees || []).filter(e => e.active !== false);
-  const payScales = db.payScales || [];
 
   const EMPTY = { date: today(), employeeId:"", hoursWorked:"", overtimeHours:"", notes:"" };
   const [form, setForm] = useState(EMPTY);
+  useUnsavedForm(form, "this labor entry");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
   const employee = employees.find(e => e.id === form.employeeId);
   // Resolved for the entry's OWN date, so a repair logged after a raise still
   // costs what it cost on the day.
-  const resolved = employee ? laborRateFor(employee, form.date || today(), payScales) : null;
+  const resolved = employee ? laborRateFor(employee, form.date || today()) : null;
 
   const st   = parseFloat(form.hoursWorked)   || 0;
   const ot   = parseFloat(form.overtimeHours) || 0;
@@ -360,7 +365,7 @@ function WOLaborTab({ wo, db = {}, dispatch }) {
 // logs daily. The outlying sheds and portables have no monitor — they're dipped
 // once a year. Different cadence, so different overdue thresholds.
 
-function WOPartsTab({ wo, unit, invItems, invBatches, dispatch }) {
+function WOPartsTab({ wo, unit, invItems, invBatches, invLocations = [], dispatch }) {
   const [showForm, setShowForm] = useState(false);
   const [justAdded, setJustAdded] = useState(0);
   const [form, setForm]         = useState({ date: today(), itemId:"", quantity:"", notes:"" });
@@ -382,6 +387,17 @@ function WOPartsTab({ wo, unit, invItems, invBatches, dispatch }) {
   const selectedItem = active.find(i => i.id === form.itemId);
   const qty      = parseFloat(form.quantity) || 0;
   const onHand   = form.itemId ? onHandFor(form.itemId, invBatches) : 0;
+
+  // A short answer to "which shed?" — the location holding the most, and a
+  // count of the others. Parts are still issued FIFO across every location,
+  // because the cheapest correct answer to "what did this repair cost" does not
+  // depend on which building somebody walked to.
+  const whereIs = (itemId) => {
+    const spread = stockByLocation(itemId, invBatches);
+    if (!spread.length) return "nowhere";
+    const first = locationName(spread[0].location, invLocations) || `Loc ${spread[0].location}`;
+    return spread.length === 1 ? first : `${first} +${spread.length - 1}`;
+  };
   const preview  = form.itemId && qty > 0 ? buildFIFO(form.itemId, qty, invBatches) : null;
   const canSave  = form.date && form.itemId && qty > 0 && preview?.canFulfill;
 
@@ -456,8 +472,8 @@ function WOPartsTab({ wo, unit, invItems, invBatches, dispatch }) {
                 onChange={id=>set("itemId",id)}
                 placeholder="Type a part number or name…"
                 emptyMessage="No catalog item matches — add it in Inventory first"
-                getLabel={i=>`${i.legacyNumber?`[${i.legacyNumber}] `:""}${i.name}`}
-                getSearch={i=>`${i.legacyNumber} ${i.name} ${i.commodityGroupCode} ${i.commodityGroup}`}
+                getLabel={i=>`${i.partNumber?`[${i.partNumber}] `:""}${i.name}`}
+                getSearch={i=>`${i.partNumber} ${i.legacyNumber} ${i.name} ${i.description} ${i.commodityGroup}`}
                 isDisabled={i=>onHandFor(i.id, invBatches) <= 0}
                 renderRow={(i,off)=>{
                   const oh = onHandFor(i.id, invBatches);
@@ -467,11 +483,14 @@ function WOPartsTab({ wo, unit, invItems, invBatches, dispatch }) {
                         {fittingIds.has(i.id) && (
                           <span style={{ background:"#e6f4ec", color:"#1a5a3a", borderRadius:3, padding:"1px 5px", fontSize:10, fontWeight:700, marginRight:6 }}>FITS</span>
                         )}
-                        {i.legacyNumber && <strong style={{ fontFamily:"monospace", color: off?"#bbb":"#1a3a5c" }}>{i.legacyNumber}</strong>}
-                        {i.legacyNumber ? "  " : ""}{i.name}
+                        {i.partNumber && <strong style={{ fontFamily:"monospace", color: off?"#bbb":"#1a3a5c" }}>{i.partNumber}</strong>}
+                        {i.partNumber ? "  " : ""}{i.name}
                       </span>
+                      {/* Where it is, not just how many. A mechanic who knows
+                          there are four in stock still has to know which
+                          building to walk to. */}
                       <span style={{ fontFamily:"monospace", whiteSpace:"nowrap", color: off?"#ccc":"#1a5a3a" }}>
-                        {oh > 0 ? `${oh} on hand` : "out of stock"}
+                        {oh > 0 ? `${oh} · ${whereIs(i.id)}` : "out of stock"}
                       </span>
                     </div>
                   );
@@ -542,6 +561,7 @@ function WOServiceTab({ wo, dispatch }) {
   const [showForm, setShowForm] = useState(false);
   const entries = wo.serviceEntries || [];
   const [form, setForm] = useState({ date: today(), vendorName:"", description:"", invoiceNumber:"", amount:"", expenditureRef:"", notes:"" });
+  useUnsavedForm(form, "what you have entered");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
   const handleSave = () => {
@@ -572,7 +592,7 @@ function WOServiceTab({ wo, dispatch }) {
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"3fr 1fr", gap:12, marginBottom:12 }}>
             <Field label="Service Description"><input type="text" value={form.description} onChange={e=>set("description",e.target.value)} style={{ ...inp, margin:0 }} placeholder="What was done…" /></Field>
-            <Field label="Amount ($)"><input type="number" min="0" step="0.01" value={form.amount} onChange={e=>set("amount",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+            <Field label="Amount ($)"><MoneyField value={form.amount} onChange={v=>set("amount",v)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:12 }}>
             <Field label="Fund Accounting Ref (if paid via claim)"><input type="text" value={form.expenditureRef} onChange={e=>set("expenditureRef",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} placeholder="Expenditure ID…" /></Field>

@@ -1,10 +1,13 @@
 import { useState, useMemo } from "react";
-import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm, DateField, titleCase } from "../components/shared.jsx";
+import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm, DateField, titleCase, MoneyField } from "../components/shared.jsx";
+import { useUnsavedForm, useNavigationGuard } from "../components/unsaved.jsx";
 import {
-  createEmployee, createPayScale, createEmployeeAssignment,
+  createEmployee, createEmployeeAssignment, createRateChange,
   createFringeProfile, createFringeComponent, createCertification,
-  laborRateFor, resolveClassification, DEFAULT_FRINGE_COMPONENTS,
+  laborRateFor, resolveClassification, rateHistory, payReviewDue,
+  RATE_CHANGE_REASONS, DEFAULT_FRINGE_COMPONENTS,
 } from "../data/schema.js";
+import { AlertBar } from "../components/shared.jsx";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmtDate(str) {
@@ -59,6 +62,7 @@ const displayName = (e) =>
 
 // ── Module Shell ──────────────────────────────────────────────────────────────
 export default function Employees({ db, dispatch, role = "staff" }) {
+  const go = useNavigationGuard();
   const [view, setView]         = useState("people");
   const [selectedId, setSelectedId] = useState(null);
   const [editing, setEditing]   = useState(null);
@@ -68,12 +72,10 @@ export default function Employees({ db, dispatch, role = "staff" }) {
   const canSeeRates = role === "superintendent" || role === "office_manager";
 
   const employees = db.employees || [];
-  const payScales = db.payScales || [];
   const selected  = employees.find(e => e.id === selectedId);
 
   const tabs = [
     { id:"people",  label:"Employees",  icon:"users" },
-    { id:"scales",  label:"Pay Scales", icon:"chart-bar", adminOnly:true },
     { id:"certs",   label:"Certifications", icon:"certificate" },
   ].filter(t => !t.adminOnly || canSeeRates);
 
@@ -110,7 +112,7 @@ export default function Employees({ db, dispatch, role = "staff" }) {
     <div>
       <div style={{ display:"flex", gap:2, marginBottom:22, borderBottom:"1px solid #ddd" }}>
         {tabs.map(t => (
-          <button key={t.id} onClick={()=>setView(t.id)} style={{
+          <button key={t.id} onClick={() => go(() => setView(t.id))} style={{
             background:"transparent", border:"none", padding:"8px 14px 10px",
             fontWeight: view===t.id?700:400, fontSize:13, cursor:"pointer",
             color: view===t.id?"#1a5a3a":"#666",
@@ -124,18 +126,17 @@ export default function Employees({ db, dispatch, role = "staff" }) {
 
       {view==="people" && (
         <EmployeeList
-          employees={employees} payScales={payScales} canSeeRates={canSeeRates}
+          employees={employees} canSeeRates={canSeeRates}
           onSelect={setSelectedId} onNew={()=>setShowForm(true)}
         />
       )}
-      {view==="scales" && <PayScales db={db} dispatch={dispatch} />}
       {view==="certs"  && <CertificationsView employees={employees} onSelect={setSelectedId} />}
     </div>
   );
 }
 
 // ── Employee list ─────────────────────────────────────────────────────────────
-function EmployeeList({ employees, payScales, canSeeRates, onSelect, onNew }) {
+function EmployeeList({ employees, canSeeRates, onSelect, onNew }) {
   const [search, setSearch] = useState("");
   const [showFormer, setShowFormer] = useState(false);
 
@@ -199,7 +200,8 @@ function EmployeeList({ employees, payScales, canSeeRates, onSelect, onNew }) {
       {employees.length === 0 && (
         <div style={{ background:"#f0f4ff", border:"1px solid #c8d8f0", borderRadius:8, padding:20, marginBottom:16, fontSize:13, color:"#1a3a5c", lineHeight:1.6 }}>
           <strong>No employees yet.</strong> Cost Accounting can't record labor until people exist here.
-          {canSeeRates && <> Set up the <strong>Pay Scales</strong> first — rates come from the classification, so a scale has to exist before someone can be costed.</>}
+          {canSeeRates && <> Add someone with their hire date, classification and starting wage — that is everything
+          needed to cost their time. Later raises go on their Rate tab.</>}
         </div>
       )}
 
@@ -229,7 +231,7 @@ function EmployeeList({ employees, payScales, canSeeRates, onSelect, onNew }) {
               </td></tr>
             )}
             {filtered.map((e,i)=>{
-              const r = laborRateFor(e, today(), payScales);
+              const r = laborRateFor(e, today());
               const certs = (e.certifications||[]).length;
               const bad   = (e.certifications||[]).filter(c=>["expired","expiring"].includes(certStatus(c).state)).length;
               return (
@@ -279,9 +281,9 @@ function EmployeeList({ employees, payScales, canSeeRates, onSelect, onNew }) {
 
 // ── Employee detail ───────────────────────────────────────────────────────────
 function EmployeeDetail({ employee: e, db, canSeeRates, dispatch, onBack, onEdit }) {
+  const go = useNavigationGuard();
   const [tab, setTab] = useState("details");
-  const payScales = db.payScales || [];
-  const rate = laborRateFor(e, today(), payScales);
+  const rate = laborRateFor(e, today());
   const unit = (db.equipment||[]).find(u => u.id === e.assignedEquipmentId);
 
   const TABS = [
@@ -314,7 +316,7 @@ function EmployeeDetail({ employee: e, db, canSeeRates, dispatch, onBack, onEdit
 
       <div style={{ display:"flex", borderBottom:"1px solid #ddd", marginBottom:20 }}>
         {TABS.map(([id,label,icon])=>(
-          <button key={id} onClick={()=>setTab(id)} style={{ background:"transparent", border:"none", padding:"8px 14px 10px", fontWeight:tab===id?700:400, fontSize:13, cursor:"pointer", color:tab===id?"#1a5a3a":"#666", borderBottom:tab===id?"2px solid #1a5a3a":"2px solid transparent", marginBottom:-1, display:"inline-flex", alignItems:"center", gap:6 }}>
+          <button key={id} onClick={() => go(() => setTab(id))} style={{ background:"transparent", border:"none", padding:"8px 14px 10px", fontWeight:tab===id?700:400, fontSize:13, cursor:"pointer", color:tab===id?"#1a5a3a":"#666", borderBottom:tab===id?"2px solid #1a5a3a":"2px solid transparent", marginBottom:-1, display:"inline-flex", alignItems:"center", gap:6 }}>
             <Icon name={icon} size={12} color={tab===id?"#1a5a3a":"#888"} />{label}
           </button>
         ))}
@@ -362,88 +364,217 @@ function EmployeeDetail({ employee: e, db, canSeeRates, dispatch, onBack, onEdit
         </div>
       )}
 
-      {tab==="rate" && canSeeRates && <RateTab employee={e} payScales={payScales} db={db} dispatch={dispatch} />}
+      {tab==="rate" && canSeeRates && <RateTab employee={e} db={db} dispatch={dispatch} />}
       {tab==="certs" && <CertsTab employee={e} db={db} dispatch={dispatch} />}
     </div>
   );
 }
 
 // ── Rate & fringe ─────────────────────────────────────────────────────────────
-function RateTab({ employee: e, payScales, db, dispatch }) {
+function RateTab({ employee: e, db, dispatch }) {
   const [asOf, setAsOf] = useState(today());
-  const r = laborRateFor(e, asOf, payScales);
+  const r = laborRateFor(e, asOf);
+  const history = rateHistory(e);
+  const due = payReviewDue(e, today());
 
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const reasons = db?.lookups?.rateChangeReasons || RATE_CHANGE_REASONS;
+  const classifications = db?.lookups?.classifications || [];
+
+  const currentClass = resolveClassification(e, today())?.classification || "";
+  const blank = () => ({ id:null, effectiveDate: today(), hourlyRate:"", reason:"", note:"",
+                         classification: "" });
+  const [form, setForm] = useState(blank);
+  useUnsavedForm(form, "this rate change");
+  const set = (k,v) => setForm(f=>({ ...f,[k]:v }));
+
+  const open = (row) => {
+    setEditing(row?.id || null);
+    setForm(row ? { id:row.id, effectiveDate:row.effectiveDate, hourlyRate:row.hourlyRate,
+                    reason:row.reason, note:row.note || "", classification:"" }
+                : blank());
+    setAdding(true);
+  };
+  const close = () => { setAdding(false); setEditing(null); setForm(blank()); };
+
+  const canSave = form.effectiveDate && form.hourlyRate !== "" && form.reason;
+  const backdated = form.effectiveDate && form.effectiveDate < today();
+
+  // How many labor entries a backdated change would move, worked out before it
+  // is saved so the person can see the consequence rather than discover it.
+  const wouldRecost = useMemo(() => {
+    if (!backdated) return 0;
+    return (db.projects || []).reduce((n, p) =>
+      n + (p.laborEntries || []).filter(l =>
+        l.employeeId === e.id && String(l.date) >= String(form.effectiveDate)).length, 0);
+  }, [db.projects, e.id, form.effectiveDate, backdated]);
+
+  const save = () => {
+    if (!canSave) return;
+    dispatch({ type:"SAVE_RATE_CHANGE", payload:{
+      employeeId: e.id,
+      change: createRateChange({
+        ...(editing ? { id: editing } : {}),
+        effectiveDate: form.effectiveDate,
+        hourlyRate: Number(form.hourlyRate) || 0,
+        reason: form.reason,
+        note: form.note,
+      }),
+      // A promotion is one event. Ticking a new classification writes the
+      // assignment alongside the rate row, on the same date, so nobody has to
+      // remember to enter it twice.
+      assignment: form.classification
+        ? createEmployeeAssignment({ effectiveDate: form.effectiveDate, classification: form.classification })
+        : null,
+    }});
+    close();
+  };
+
+  const profiles = [...(e.fringeProfiles||[])].sort((a,b)=>(b.effectiveDate||"").localeCompare(a.effectiveDate||""));
   const assignments = [...(e.assignments||[])].sort((a,b)=>(b.effectiveDate||"").localeCompare(a.effectiveDate||""));
-  const profiles    = [...(e.fringeProfiles||[])].sort((a,b)=>(b.effectiveDate||"").localeCompare(a.effectiveDate||""));
 
   return (
     <div>
-      <div style={{ background:"#f0f4ff", border:"1px solid #c8d8f0", borderRadius:8, padding:"11px 15px", marginBottom:18, fontSize:12, color:"#1a3a5c", lineHeight:1.5 }}>
-        Rates and fringe are dated. A labor entry uses whatever applied <strong>on its own date</strong>,
-        not today's figures — so past costs stay correct after a raise.
-      </div>
+      {due && (
+        <div style={{ background:"#fff4e0", border:"1px solid #f0d080", borderRadius:8,
+                      padding:"11px 15px", marginBottom:16, fontSize:13, color:"#7a4f00" }}>
+          <strong>{due.kind}</strong> on {fmtDate(due.date)}
+          {due.daysAway >= 0 ? ` — ${due.daysAway} day${due.daysAway===1?"":"s"} away` : " — overdue"}.
+          Nothing changes on its own; record the new rate when it is decided.
+        </div>
+      )}
 
       <div style={{ display:"flex", alignItems:"flex-end", gap:14, marginBottom:16, flexWrap:"wrap" }}>
-        <Field label="Show the rate as of">
+        <Field label="Show the rate as of" style={{ minWidth:220 }}>
           <DateField value={asOf} onChange={v => setAsOf(v)} />
         </Field>
         <div style={{ fontSize:12, color:"#888", paddingBottom:9 }}>
           {r.classification || "No classification"}
-          {r.scaleDate && <> · scale effective {fmtDate(r.scaleDate)}</>}
-          {r.rateSource === "override" && <> · <strong>rate override</strong></>}
+          {r.rateEffective && <> · in force since {fmtDate(r.rateEffective)}</>}
+          {r.rateReason && <> · {r.rateReason}</>}
         </div>
       </div>
 
       <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:20 }}>
-        <KPICard label="Straight Time" value={fmtSm(r.hourlyRate)} sub="Per hour"       accent="#1a3a5c" icon="clock" />
-        <KPICard label="Overtime"      value={fmtSm(r.overtimeRate)} sub="1.5× over 40" accent="#d97706" icon="clock-plus" />
+        <KPICard label="Straight Time" value={fmtSm(r.hourlyRate)}   sub="Per hour"       accent="#1a3a5c" icon="clock" />
+        <KPICard label="Overtime"      value={fmtSm(r.overtimeRate)} sub="1.5× over 40"   accent="#d97706" icon="clock-plus" />
         <KPICard label="Fringe"        value={fmtSm(r.fringePerHour)} sub={`${r.fringePercent.toFixed(1)}% of wage`} accent="#5a1a8a" icon="heart-handshake" />
-        <KPICard label="Loaded Rate"   value={fmtSm(r.loadedRate)} sub="What an hour costs" accent="#1a5a3a" icon="coin" />
+        <KPICard label="Loaded Rate"   value={fmtSm(r.loadedRate)}   sub="What an hour costs" accent="#1a5a3a" icon="coin" />
       </div>
+
+      <SectionCard
+        title="Rate History"
+        subtitle="What they are paid, dated. A labor entry uses whatever applied on its own date."
+        style={{ marginBottom:20 }}
+        action={!adding && <button onClick={()=>open(null)} style={btn.primary}>+ Add a rate change</button>}>
+
+        {adding && (
+          <div style={{ padding:"16px 18px", borderBottom:"1px solid #eee", background:"#fafaf8" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"240px 130px 1fr", gap:14, marginBottom:12 }}>
+              <Field label="Effective" required>
+                <DateField value={form.effectiveDate} onChange={v=>set("effectiveDate",v)} />
+              </Field>
+              <Field label="Hourly rate" required>
+                <MoneyField value={form.hourlyRate} onChange={v=>set("hourlyRate",v)} />
+              </Field>
+              <Field label="Reason" required>
+                <select value={form.reason} onChange={ev=>set("reason",ev.target.value)} style={inp}>
+                  <option value="">Why is it changing?…</option>
+                  {reasons.map(x=><option key={x} value={x}>{x}</option>)}
+                </select>
+              </Field>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:4 }}>
+              <Field label="Note">
+                <input type="text" value={form.note} onChange={ev=>set("note",ev.target.value)}
+                       style={inp} placeholder="Board 8/19, effective 7/1 · 2.5% FY2026" />
+              </Field>
+              {!editing && (
+                <Field label="Also change their classification">
+                  <select value={form.classification} onChange={ev=>set("classification",ev.target.value)} style={inp}>
+                    <option value="">No change — stays {currentClass || "unset"}</option>
+                    {classifications.filter(c=>c!==currentClass).map(c=>(
+                      <option key={c} value={c}>{titleCase(c)}</option>
+                    ))}
+                  </select>
+                </Field>
+              )}
+            </div>
+
+            {form.hourlyRate !== "" && (
+              <div style={{ fontSize:12, color:"#888", marginTop:8 }}>
+                Overtime works out at <strong>{fmtSm((Number(form.hourlyRate)||0) * 1.5)}</strong> — always 1.5×, never typed.
+              </div>
+            )}
+
+            {backdated && wouldRecost > 0 && (
+              <div style={{ marginTop:10 }}>
+                <AlertBar type="warning" message={
+                  `This is backdated. ${wouldRecost} labor entr${wouldRecost===1?"y":"ies"} on or after ` +
+                  `${fmtDate(form.effectiveDate)} will be recosted at the new rate.`} />
+              </div>
+            )}
+
+            <div style={{ display:"flex", gap:10, marginTop:12 }}>
+              <button onClick={save} disabled={!canSave}
+                      style={{ ...btn.primary, opacity:canSave?1:0.4, cursor:canSave?"pointer":"not-allowed" }}>
+                {editing ? "Save change" : "Add rate change"}
+              </button>
+              <button onClick={close} style={btn.ghost}>Cancel</button>
+            </div>
+          </div>
+        )}
+
+        <Table
+          headers={[{label:"Effective"},{label:"Rate",right:true},{label:"Change",right:true},
+                    {label:"Overtime",right:true},{label:"Reason"},{label:"Note"},{label:""},{label:""}]}
+          rows={history.map(row=>[
+            <span style={{ fontFamily:"monospace", fontSize:12 }}>{fmtDate(row.effectiveDate)}</span>,
+            <span style={{ fontFamily:"monospace", fontWeight:700 }}>{fmtSm(row.hourlyRate)}</span>,
+            <span style={{ fontFamily:"monospace", color: row.change === null ? "#ccc" : row.change > 0 ? "#1a6b35" : "#c0392b" }}>
+              {row.change === null ? "—" : `${row.change > 0 ? "+" : ""}${row.change.toFixed(2)}`}
+            </span>,
+            <span style={{ fontFamily:"monospace", color:"#888" }}>{fmtSm(row.overtimeRate)}</span>,
+            <span style={{ fontSize:12 }}>{row.reason || "—"}</span>,
+            <span style={{ fontSize:12, color:"#888" }}>{row.note || ""}</span>,
+            <button style={btn.ghostSm} onClick={()=>open(row)}>Edit</button>,
+            <button style={btn.ghostSm}
+              onClick={()=>dispatch({ type:"DELETE_RATE_CHANGE", payload:{ employeeId:e.id, id:row.id } })}>
+              Remove
+            </button>,
+          ])}
+          emptyMessage="No rate recorded — labor for this person cannot be costed"
+        />
+      </SectionCard>
 
       {r.fringeLines.length > 0 && (
         <SectionCard title="Fringe Breakdown" subtitle={`Per hour at ${fmtSm(r.hourlyRate)} straight time`} style={{ marginBottom:20 }}>
-          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-            <thead>
-              <tr style={{ background:"#f7f7f5" }}>
-                {["Component","Percent","Flat $/hr","Per Hour"].map(h=>(
-                  <th key={h} style={{ padding:"7px 12px", textAlign:h==="Component"?"left":"right", fontWeight:700, fontSize:10, textTransform:"uppercase", letterSpacing:"0.05em", color:"#666", borderBottom:"1px solid #eee" }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {r.fringeLines.filter(l=>l.amount>0).map((l,i)=>(
-                <tr key={l.name} style={{ borderTop:"1px solid #f0f0ee", background:i%2===0?"#fff":"#fafaf8" }}>
-                  <td style={{ padding:"7px 12px" }}>{l.name}</td>
-                  <td style={{ padding:"7px 12px", textAlign:"right", fontFamily:"monospace", color:"#888" }}>{l.percent?`${l.percent}%`:"—"}</td>
-                  <td style={{ padding:"7px 12px", textAlign:"right", fontFamily:"monospace", color:"#888" }}>{l.flatHourly?fmtSm(l.flatHourly):"—"}</td>
-                  <td style={{ padding:"7px 12px", textAlign:"right", fontFamily:"monospace", fontWeight:600 }}>{fmtSm(l.amount)}</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr style={{ borderTop:"2px solid #ddd", background:"#f7f7f5" }}>
-                <td colSpan={3} style={{ padding:"8px 12px", textAlign:"right", fontWeight:700 }}>Total fringe</td>
-                <td style={{ padding:"8px 12px", textAlign:"right", fontFamily:"monospace", fontWeight:700 }}>{fmtSm(r.fringePerHour)}</td>
-              </tr>
-            </tfoot>
-          </table>
-          <div style={{ fontSize:11, color:"#888", padding:"10px 12px 0" }}>
-            The same fringe figure is used for FEMA reporting.
+          <Table
+            headers={[{label:"Component"},{label:"Percent",right:true},{label:"Flat $/hr",right:true},{label:"Per Hour",right:true}]}
+            rows={r.fringeLines.filter(l=>l.amount>0).map(l=>[
+              l.name,
+              <span style={{ fontFamily:"monospace", color:"#888" }}>{l.percent?`${l.percent}%`:"—"}</span>,
+              <span style={{ fontFamily:"monospace", color:"#888" }}>{l.flatHourly?fmtSm(l.flatHourly):"—"}</span>,
+              <span style={{ fontFamily:"monospace", fontWeight:600 }}>{fmtSm(l.amount)}</span>,
+            ])}
+          />
+          <div style={{ fontSize:11, color:"#888", padding:"10px 14px 0" }}>
+            Total fringe <strong>{fmtSm(r.fringePerHour)}</strong> per hour. The same figure is used for FEMA reporting.
           </div>
         </SectionCard>
       )}
 
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20 }}>
-        <SectionCard title="Classification History" subtitle="Promotions add a row, they don't overwrite">
+        <SectionCard title="Classification History" subtitle="What they do. Promotions add a row rather than overwriting.">
           <Table
-            headers={[{label:"Effective"},{label:"Classification"},{label:"Override"}]}
+            headers={[{label:"Effective"},{label:"Classification"},{label:"Notes"}]}
             rows={assignments.map(a=>[
               <span style={{ fontFamily:"monospace", fontSize:12 }}>{fmtDate(a.effectiveDate)}</span>,
               <span style={{ fontWeight:600 }}>{a.classification||"—"}</span>,
-              <span style={{ fontFamily:"monospace", color:a.rateOverride?"#d97706":"#ccc" }}>{a.rateOverride?fmtSm(a.rateOverride):"—"}</span>,
+              <span style={{ fontSize:12, color:"#888" }}>{a.notes||"—"}</span>,
             ])}
-            emptyMessage="No classification assigned — labor can't be costed"
+            emptyMessage="No classification assigned"
           />
         </SectionCard>
 
@@ -466,16 +597,34 @@ function RateTab({ employee: e, payScales, db, dispatch }) {
 // ── Certifications ────────────────────────────────────────────────────────────
 function CertsTab({ employee: e, db, dispatch }) {
   const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing]   = useState(null);
   const types = db?.lookups?.certificationTypes || [];
-  const [form, setForm] = useState({ type:"", certificateNumber:"", issuedDate:"", expirationDate:"", notes:"" });
+  const blank = { type:"", certificateNumber:"", issuedDate:"", expirationDate:"", notes:"" };
+  const [form, setForm] = useState(blank);
+  useUnsavedForm(form, "this certification");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
-  const add = () => {
+  // A renewal EDITS IN PLACE. Greg's call: one record per certification, dates
+  // updated when the card is renewed, and the 90-day warning follows the new
+  // expiry. There was no way back into a record once written, so a mistyped
+  // expiry date warned forever and a renewed CDL needed a duplicate row.
+  const open = (cert) => {
+    setEditing(cert?.id || null);
+    setForm(cert ? { type:cert.type||"", certificateNumber:cert.certificateNumber||"",
+                     issuedDate:cert.issuedDate||"", expirationDate:cert.expirationDate||"",
+                     notes:cert.notes||"" } : blank);
+    setShowForm(true);
+  };
+  const close = () => { setShowForm(false); setEditing(null); setForm(blank); };
+
+  const save = () => {
     if (!form.type) return;
-    const cert = createCertification({ ...form, employeeId:e.id });
-    dispatch({ type:"UPDATE_EMPLOYEE", payload:{ ...e, certifications:[...(e.certifications||[]), cert] } });
-    setForm({ type:"", certificateNumber:"", issuedDate:"", expirationDate:"", notes:"" });
-    setShowForm(false);
+    const list = e.certifications || [];
+    const next = editing
+      ? list.map(c => c.id === editing ? { ...c, ...form } : c)
+      : [...list, createCertification({ ...form, employeeId:e.id })];
+    dispatch({ type:"UPDATE_EMPLOYEE", payload:{ ...e, certifications: next } });
+    close();
   };
   const remove = (id) =>
     dispatch({ type:"UPDATE_EMPLOYEE", payload:{ ...e, certifications:(e.certifications||[]).filter(c=>c.id!==id) } });
@@ -485,8 +634,12 @@ function CertsTab({ employee: e, db, dispatch }) {
   return (
     <div>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
-        <div style={{ fontSize:12, color:"#888" }}>Warned 90 days before expiry.</div>
-        <button onClick={()=>setShowForm(s=>!s)} style={btn.primary}>{showForm?"Cancel":"+ Add Certification"}</button>
+        <div style={{ fontSize:12, color:"#888" }}>
+          Warned 90 days before expiry. Renewing a card edits the record rather than adding a second one.
+        </div>
+        <button onClick={()=>showForm ? close() : open(null)} style={btn.primary}>
+          {showForm ? "Cancel" : "+ Add Certification"}
+        </button>
       </div>
 
       {showForm && (
@@ -504,7 +657,9 @@ function CertsTab({ employee: e, db, dispatch }) {
           </div>
           <div style={{ display:"flex", gap:10 }}>
             <Field label="Notes" style={{ flex:1 }}><input type="text" value={form.notes} onChange={ev=>set("notes",ev.target.value)} style={{ ...inp, margin:0 }} /></Field>
-            <button onClick={add} style={{ ...btn.primary, marginTop:20 }}>Add</button>
+            <button onClick={save} style={{ ...btn.primary, marginTop:20 }}>
+              {editing ? "Save changes" : "Add"}
+            </button>
           </div>
         </div>
       )}
@@ -529,7 +684,10 @@ function CertsTab({ employee: e, db, dispatch }) {
                 <td style={{ padding:"9px 14px", fontFamily:"monospace", fontSize:12 }}>{fmtDate(c.issuedDate)}</td>
                 <td style={{ padding:"9px 14px", fontFamily:"monospace", fontSize:12 }}>{fmtDate(c.expirationDate)}</td>
                 <td style={{ padding:"9px 14px" }}><CertBadge cert={c} /></td>
-                <td style={{ padding:"9px 14px", textAlign:"right" }}>
+                <td style={{ padding:"9px 14px", textAlign:"right", whiteSpace:"nowrap" }}>
+                  <button onClick={()=>open(c)} style={{ ...btn.small, background:"#1a3a5c", fontSize:10, padding:"3px 9px", marginRight:5 }}>
+                    Edit
+                  </button>
                   <button onClick={()=>remove(c.id)} style={{ ...btn.small, background:"#c0392b", fontSize:10, padding:"3px 9px" }}>Remove</button>
                 </td>
               </tr>
@@ -594,106 +752,6 @@ function CertificationsView({ employees, onSelect }) {
   );
 }
 
-// ── Pay scales ────────────────────────────────────────────────────────────────
-function PayScales({ db, dispatch }) {
-  const [showForm, setShowForm] = useState(false);
-  const classifications = db?.lookups?.classifications || [];
-  const scales = db.payScales || [];
-  const [form, setForm] = useState({ classification:"", effectiveDate:"", hourlyRate:"", approvedBy:"", notes:"" });
-  const set = (k,v) => setForm(f=>({...f,[k]:v}));
-
-  const add = () => {
-    if (!form.classification || !form.effectiveDate || !form.hourlyRate) return;
-    dispatch({ type:"ADD_PAY_SCALE", payload: createPayScale({ ...form, hourlyRate: parseFloat(form.hourlyRate)||0 }) });
-    setForm({ classification:"", effectiveDate:"", hourlyRate:"", approvedBy:"", notes:"" });
-    setShowForm(false);
-  };
-
-  // Current rate per classification
-  const current = classifications.map(c => {
-    const applicable = scales
-      .filter(s => s.classification === c && s.effectiveDate <= today())
-      .sort((a,b)=>b.effectiveDate.localeCompare(a.effectiveDate));
-    return { classification:c, scale: applicable[0] || null, count: scales.filter(s=>s.classification===c).length };
-  });
-
-  return (
-    <div>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", marginBottom:16, flexWrap:"wrap", gap:12 }}>
-        <div>
-          <div style={{ fontSize:18, fontWeight:700 }}>Pay Scales</div>
-          <div style={{ fontSize:13, color:"#888", marginTop:3 }}>
-            A rate per classification, from a date. Raises add a row — they never overwrite, so past entries keep the rate that applied.
-          </div>
-        </div>
-        <button onClick={()=>setShowForm(s=>!s)} style={btn.primary}>{showForm?"Cancel":"+ Add Rate"}</button>
-      </div>
-
-      {showForm && (
-        <div style={{ background:"#f7f7f5", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:16 }}>
-          <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 2fr", gap:12, marginBottom:12 }}>
-            <Field label="Classification" required>
-              <select value={form.classification} onChange={e=>set("classification",e.target.value)} style={{ ...inp, margin:0 }}>
-                <option value="">Select…</option>
-                {classifications.map(c=><option key={c} value={c}>{titleCase(c)}</option>)}
-              </select>
-            </Field>
-            <Field label="Effective From" required>
-              <DateField value={form.effectiveDate} onChange={v => set("effectiveDate", v)} />
-            </Field>
-            <Field label="Hourly Rate" required>
-              <input type="number" min="0" step="0.01" value={form.hourlyRate} onChange={e=>set("hourlyRate",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} />
-            </Field>
-            <Field label="Approved By">
-              <input type="text" value={form.approvedBy} onChange={e=>set("approvedBy",e.target.value)} style={{ ...inp, margin:0 }} placeholder="Board 7/1/2026, anniversary…" />
-            </Field>
-          </div>
-          <button onClick={add} style={btn.primary}>Add Rate</button>
-        </div>
-      )}
-
-      <SectionCard title="Current Rates" subtitle="What applies today" style={{ marginBottom:20 }}>
-        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
-          <thead>
-            <tr style={{ background:"#f7f7f5" }}>
-              {["Classification","Current Rate","Effective","OT (1.5×)","History"].map(h=>(
-                <th key={h} style={{ padding:"9px 14px", textAlign:["Current Rate","OT (1.5×)","History"].includes(h)?"right":"left", fontWeight:600, fontSize:11, textTransform:"uppercase", letterSpacing:"0.05em", color:"#666", borderBottom:"1px solid #eee" }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {current.map(({ classification, scale, count },i)=>(
-              <tr key={classification} style={{ borderTop:"1px solid #eee", background:i%2===0?"#fff":"#fafaf8" }}>
-                <td style={{ padding:"9px 14px", fontWeight:600 }}>{classification}</td>
-                <td style={{ padding:"9px 14px", textAlign:"right", fontFamily:"monospace", fontWeight:700, color:scale?"#1a1a1a":"#c0392b" }}>
-                  {scale ? fmtSm(scale.hourlyRate) : "not set"}
-                </td>
-                <td style={{ padding:"9px 14px", textAlign:"right", fontFamily:"monospace", fontSize:12, color:"#888" }}>{scale?fmtDate(scale.effectiveDate):"—"}</td>
-                <td style={{ padding:"9px 14px", textAlign:"right", fontFamily:"monospace", color:"#888" }}>{scale?fmtSm(scale.hourlyRate*1.5):"—"}</td>
-                <td style={{ padding:"9px 14px", textAlign:"right", fontSize:12, color:"#888" }}>{count} rate{count!==1?"s":""}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </SectionCard>
-
-      <SectionCard title="All Rates" subtitle={`${scales.length} recorded`}>
-        <Table
-          headers={[{label:"Effective"},{label:"Classification"},{label:"Rate"},{label:"Approved By"},{label:"Notes"}]}
-          rows={[...scales].sort((a,b)=>(b.effectiveDate||"").localeCompare(a.effectiveDate||"")).map(s=>[
-            <span style={{ fontFamily:"monospace", fontSize:12 }}>{fmtDate(s.effectiveDate)}</span>,
-            <span style={{ fontWeight:600 }}>{s.classification}</span>,
-            <span style={{ fontFamily:"monospace", fontWeight:700 }}>{fmtSm(s.hourlyRate)}</span>,
-            <span style={{ fontSize:12, color:"#888" }}>{s.approvedBy||"—"}</span>,
-            <span style={{ fontSize:12, color:"#888" }}>{s.notes||"—"}</span>,
-          ])}
-          emptyMessage="No pay scales yet — labor can't be costed until at least one exists"
-        />
-      </SectionCard>
-    </div>
-  );
-}
-
 // ── Employee form ─────────────────────────────────────────────────────────────
 function EmployeeForm({ employee, db, canSeeRates, onSave, onCancel }) {
   const [form, setForm] = useState(() => {
@@ -701,9 +759,22 @@ function EmployeeForm({ employee, db, canSeeRates, onSave, onCancel }) {
     if (!base.emergencyContact) base.emergencyContact = { name:"", relationship:"", phone:"" };
     if (!Array.isArray(base.assignments))    base.assignments = [];
     if (!Array.isArray(base.fringeProfiles)) base.fringeProfiles = [];
+    if (!Array.isArray(base.rateHistory))    base.rateHistory = [];
     return base;
   });
+  useUnsavedForm(form, "this employee");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
+
+  // Hiring somebody is ONE event: name, hire date, classification, starting
+  // wage. The rate history lives on the Rate tab, which is right for a raise
+  // three years later and wrong for the first number — it meant saving the
+  // person, finding them again, opening another tab, and only then being able
+  // to say what they earn.
+  //
+  // Shown only until there IS a rate. After that the Rate tab owns it, because
+  // two places to edit the same number is how they end up disagreeing.
+  const noRateYet = (form.rateHistory || []).length === 0;
+  const [startingWage, setStartingWage] = useState("");
   const setEC = (k,v) => setForm(f=>({ ...f, emergencyContact:{ ...(f.emergencyContact||{}), [k]:v } }));
 
   const classifications = db?.lookups?.classifications || [];
@@ -728,7 +799,16 @@ function EmployeeForm({ employee, db, canSeeRates, onSave, onCancel }) {
 
   const handleSave = () => {
     const name = [form.firstName, form.lastName].filter(Boolean).join(" ") || form.name;
-    onSave({ ...form, name });
+    // The starting wage becomes the first row of the rate history, dated to the
+    // hire date, so the reason list can anchor the six-month review to it.
+    const rateHistory = (noRateYet && startingWage !== "")
+      ? [createRateChange({
+          effectiveDate: form.hireDate || today(),
+          hourlyRate: Number(startingWage) || 0,
+          reason: "Starting wage",
+        })]
+      : form.rateHistory;
+    onSave({ ...form, name, rateHistory });
   };
 
   const valid = (form.firstName || form.lastName || form.name) && form.employeeNumber;
@@ -776,6 +856,31 @@ function EmployeeForm({ employee, db, canSeeRates, onSave, onCancel }) {
           Social security numbers, home addresses and dates of birth are deliberately not collected.
         </div>
 
+        {/* ── Starting wage ──────────────────────────────────────────────
+            Only while there is no rate yet. Once one exists the Rate tab owns
+            it, so the same number is never editable in two places. */}
+        {canSeeRates && noRateYet && (
+          <div style={{ borderTop:"1px solid #eee", paddingTop:14, marginBottom:16 }}>
+            <div style={{ fontSize:12, fontWeight:700, color:"#555", marginBottom:4 }}>Starting Wage</div>
+            <div style={{ fontSize:11, color:"#888", marginBottom:11 }}>
+              What they are paid on their hire date. Every later change — the six-month review,
+              anniversaries, a COLA — goes on their Rate tab, so past work keeps the rate that applied then.
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"150px 1fr", gap:14, alignItems:"end" }}>
+              <Field label="Hourly rate">
+                <MoneyField value={startingWage} onChange={v=>setStartingWage(v)} />
+              </Field>
+              <div style={{ fontSize:12, color:"#888", paddingBottom:10 }}>
+                {startingWage === ""
+                  ? "Leave blank and add it later on the Rate tab — but their time cannot be costed until it is set."
+                  : <>Recorded as <strong>Starting wage</strong> effective{" "}
+                     <strong>{form.hireDate ? fmtDate(form.hireDate) : "today"}</strong>.
+                     Overtime works out at <strong>{fmtSm((Number(startingWage)||0) * 1.5)}</strong>.</>}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Classification history */}
         {canSeeRates && (
           <div style={{ borderTop:"1px solid #eee", paddingTop:14, marginBottom:16 }}>
@@ -784,8 +889,9 @@ function EmployeeForm({ employee, db, canSeeRates, onSave, onCancel }) {
               <button onClick={addAssignment} style={{ ...btn.secondary, fontSize:11, padding:"5px 11px" }}>+ Add</button>
             </div>
             <div style={{ fontSize:11, color:"#888", marginBottom:11 }}>
-              A promotion adds a row from its effective date. Past entries keep the earlier classification and its rate.
-              Leave the override blank to use the classification's pay scale.
+              What they do, dated. A promotion adds a row from its effective date rather than overwriting,
+              so past labor keeps the classification that applied then. Pay is separate — it lives on the
+              Rate tab, because two people in the same classification can be on different steps.
             </div>
             {(form.assignments||[]).length===0 && (
               <div style={{ fontSize:12, color:"#c0392b", padding:"6px 0" }}>
@@ -793,16 +899,17 @@ function EmployeeForm({ employee, db, canSeeRates, onSave, onCancel }) {
               </div>
             )}
             {(form.assignments||[]).map(a=>(
-              <div key={a.id} style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr 2fr 34px", gap:10, alignItems:"end", marginBottom:8 }}>
+              // A date needs ROOM. This row used to give it 1fr — about 104px —
+              // while DateField renders a text input plus a Today button plus a
+              // calendar caret inside it. The buttons took ~97px and left seven
+              // pixels to type into, which is why the date "did not work".
+              <div key={a.id} style={{ display:"grid", gridTemplateColumns:"210px 1.4fr 2fr 34px", gap:10, alignItems:"end", marginBottom:8 }}>
                 <Field label="Effective"><DateField value={a.effectiveDate} onChange={v => setAssignment(a.id,"effectiveDate", v)} /></Field>
                 <Field label="Classification">
                   <select value={a.classification} onChange={e=>setAssignment(a.id,"classification",e.target.value)} style={{ ...inp, margin:0 }}>
                     <option value="">Select…</option>
                     {classifications.map(c=><option key={c} value={c}>{titleCase(c)}</option>)}
                   </select>
-                </Field>
-                <Field label="Rate Override">
-                  <input type="number" min="0" step="0.01" value={a.rateOverride ?? ""} onChange={e=>setAssignment(a.id,"rateOverride",e.target.value===""?null:e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} placeholder="scale" />
                 </Field>
                 <Field label="Notes"><input type="text" value={a.notes} onChange={e=>setAssignment(a.id,"notes",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
                 <button onClick={()=>removeAssignment(a.id)} style={{ ...btn.danger, padding:"7px 0", fontSize:14, height:34 }}>×</button>
@@ -835,8 +942,7 @@ function EmployeeForm({ employee, db, canSeeRates, onSave, onCancel }) {
                       <span style={{ fontSize:11, flex:1, color:"#555" }}>{c.name}</span>
                       <input type="number" min="0" step="0.01" value={c.percent||""} onChange={e=>setComponent(p.id,c.id,"percent",e.target.value)}
                         style={{ ...inp, margin:0, width:56, fontFamily:"monospace", fontSize:11, padding:"4px 6px" }} placeholder="%" title="Percent of wage" />
-                      <input type="number" min="0" step="0.01" value={c.flatHourly||""} onChange={e=>setComponent(p.id,c.id,"flatHourly",e.target.value)}
-                        style={{ ...inp, margin:0, width:60, fontFamily:"monospace", fontSize:11, padding:"4px 6px" }} placeholder="$/hr" title="Flat dollars per hour" />
+                      <MoneyField value={c.flatHourly||""} onChange={v=>setComponent(p.id,c.id,"flatHourly",v)} placeholder="$/hr" style={{ ...inp, margin:0, width:60, fontFamily:"monospace", fontSize:11, padding:"4px 6px" }} />
                     </div>
                   ))}
                 </div>

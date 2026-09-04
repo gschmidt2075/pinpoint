@@ -297,17 +297,77 @@ export const createProject = (overrides = {}) => ({
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Inventory item (master record)
+// A thing the county stocks.
+//
+// ONE ITEM PER PART NUMBER — even when it sits in five sheds. The old system
+// could not hold one item in two places, so it made a row per place and used
+// the commodity group to record which shed. That is why the group field ended
+// up meaning two different things, and why a filter could not be transferred
+// without inventing a second item.
+//
+// An item has NO location. It is wherever its stock is, and stock lives on the
+// FIFO batches, each of which carries its own location. So `CARBIDE BLADE 3'`
+// is one item with five batches, and moving six of them to Roseland is a
+// transfer rather than a new item.
+//
+// Four separate ideas, where the old system had one field:
+//
+//   categoryId     what KIND of thing it is        Filters, Culverts, Grader Blades
+//   (batches)      WHERE it is, and how much       Filter racks 18, Kenesaw 14
+//   fitsEquipment  which machines it is FOR        compatibility, not location
+//   partNumber     the maker's number              carries the size on a culvert
+//
+// categoryId and the batch locations both point at the SAME list of commodity
+// groups — see createInventoryGroup. They start out identical for every item,
+// and diverge the first time something is transferred. That divergence is the
+// whole improvement over R&B, where moving a filter to Kenesaw meant
+// overwriting the fact that it was a filter.
 export const createInventoryItem = (overrides = {}) => ({
   id:              uid(),
-  legacyNumber:    "",            // from existing system (crosswalk reference)
-  name:            "",
+  // The legacy Inventory # — and on many rows this is where the SIZE lives:
+  // "18 X 20 ROUND" against a description of "New Annular Culvert". Kept as its
+  // own column rather than mashed into the name, and searchable on its own.
+  partNumber:      "",
+  legacyNumber:    "",            // same thing, kept for older references
+  name:            "",            // the human description
   description:     "",
-  commodityGroup:  "",            // PARTS | FILTERS | CULVERTS | SHOP TOOLS | etc.
+  categoryId:      "",            // which group — see createInventoryGroup
+  commodityGroup:  "",            // the raw legacy group, kept for tracing
   glAccountCode:   "",            // default expenditure code for purchasing
   unitOfMeasure:   "",            // fixed at creation: ton | LF | CY | EA | QUART | etc.
-  location:        "",            // shed name or equipment unit number
-  shelfLocation:   "",            // A1, B2, etc. (for parts room items)
   fitsEquipment:   [],            // unit numbers this part is compatible with
+  // Where on the shelf, for the things that need it. Most items do not: a
+  // stockpile has no shelf, and neither does a fire extinguisher on a truck.
+  // Blank means "not applicable", and every screen hides it rather than showing
+  // an empty column — an always-present blank field trains people to skip it.
+  //
+  // This is the item's USUAL shelf. A batch carries its own `shelf` for the
+  // case where the same part sits on different racks in different buildings;
+  // the batch wins when it has one, and this is the fallback.
+  shelfLocation:   "",
+  // ── Fluids that are logged at the machine ────────────────────────────────
+  //
+  // DEF is bought in jugs, kept on a shelf at every shop, and poured into a
+  // machine whole — Greg: "Typically an entire jug is dispensed into a machine
+  // and no carryover per jug." So it is an INVENTORY item, not a tank, and it
+  // is consumed a container at a time.
+  //
+  // But the person holding the jug is standing at the machine, not at a
+  // computer in the parts room, so it is logged on the fuel screen alongside
+  // diesel — Greg's call. `fluidType` is what puts an item on that screen.
+  //
+  // Not hardcoded to DEF, and not hardcoded to 2.5 gallons: he asked for the
+  // size to be changeable and for bulk to be possible if the county ever goes
+  // that way or another county already has. A bulk DEF tank is just a tank with
+  // fuelType "def" and needs nothing here.
+  fluidType:       "",            // "" | def | (whatever a county adds)
+  unitGallons:     0,             // gallons in ONE catalog unit — 2.5 for a jug
+  // Reorder point. These were being written by the crosswalk and read by the
+  // Inventory screen but were never on the factory, so an item added by hand
+  // came into the world without them — `item.trackStockLevel` was undefined
+  // rather than false, and the low-stock check silently never fired for it.
+  trackStockLevel: false,
+  minimumQuantity: 0,
   standardCost:    0,             // contract/expected unit price
   primaryVendor:   "",
   receivingMode:   "standard",    // standard | scale_ticket_simple | scale_ticket_complex
@@ -316,6 +376,43 @@ export const createInventoryItem = (overrides = {}) => ({
   createdAt:       now(),
   ...overrides,
 });
+
+// Pick the batches an issue should come out of, oldest first.
+//
+// This lived inside Inventory.jsx, where it could not be tested and could not
+// be reached by the fuel screen — which needs exactly the same arithmetic to
+// take a jug of DEF off a shelf. Moved here, unchanged in behavior.
+//
+// `location` of "all" draws from anywhere; anything else is a commodity group
+// code and confines the draw to that place.
+export function buildFIFOLines(itemId, location, qtyNeeded, batches = []) {
+  const open = batches
+    .filter(b => b.itemId === itemId && b.status === "open" && (location === "all" || b.location === location))
+    .sort((a, b) => String(a.receiptDate || "").localeCompare(String(b.receiptDate || "")));
+
+  let remaining = Number(qtyNeeded) || 0;
+  const batchLines = [];
+  let totalCost = 0;
+
+  for (const batch of open) {
+    if (remaining <= 0) break;
+    const take = Math.min(remaining, batch.quantityRemaining || 0);
+    if (take <= 0) continue;
+    batchLines.push({
+      batchId:   batch.id,
+      batchRef:  `${batch.receiptDate} — ${batch.vendorName || ""}`,
+      itemId:    batch.itemId,
+      itemName:  batch.itemName || "",
+      quantity:  take,
+      unitCost:  batch.unitCost || 0,
+      totalCost: take * (batch.unitCost || 0),
+    });
+    totalCost += take * (batch.unitCost || 0);
+    remaining -= take;
+  }
+
+  return { batchLines, totalCost, canFulfill: remaining <= 0, short: Math.max(0, remaining) };
+}
 
 // Inventory batch (created on each receipt — drives FIFO)
 export const createInventoryBatch = (overrides = {}) => ({
@@ -507,6 +604,19 @@ export const createEquipmentUnit = (overrides = {}) => ({
   // What the machine burns, so fuelling can be checked against the tank and a
   // gasoline unit is never filled from the diesel tank by accident.
   fuelType:        "diesel",     // diesel | gasoline | def | propane | electric
+  // Whether this machine's diesel is taxable.
+  //
+  // The county buys DYED diesel, which is untaxed at the pump, and owes the
+  // motor fuel tax on whatever goes into something that drives on a road. It
+  // is remitted quarterly, so the quarter's on-road gallons are a number the
+  // program has to be able to produce.
+  //
+  // Greg: "Yes on the machine, that would take away having to select the
+  // difference when you log fuel and would make it easier." A grader is always
+  // off-road and a pickup is always on-road; it is a property of the machine,
+  // not a choice at the pump, and a choice at the pump is a choice somebody
+  // gets wrong at five in the afternoon.
+  taxClass:        "off_road",   // off_road | on_road
   // A machine arrives with hours already on it — even a new one. Without this
   // the first service interval is measured from the wrong place.
   startingMeter:   0,
@@ -622,6 +732,15 @@ export const FUEL_TYPES = [
   { value:"gasoline", label:"Gasoline" },
   { value:"propane",  label:"Propane" },
   { value:"electric", label:"Electric" },
+];
+
+// What can be logged on the fuel screen. DEF is here and not in FUEL_TYPES
+// because a machine does not RUN on it — nothing should offer DEF as the fuel
+// a grader burns — but it is poured in at the same moment by the same person.
+export const DISPENSABLE_TYPES = [
+  { value:"diesel",   label:"Diesel" },
+  { value:"unleaded", label:"Unleaded" },
+  { value:"def",      label:"DEF" },
 ];
 
 // A meter swap. The old gauge's final reading is banked into the unit's
@@ -875,7 +994,10 @@ export const createTankTransaction = (overrides = {}) => ({
   // arriving later only confirms it.
   expenditureId:   null,         // the claim line this created
   deliveryTicket:  "",           // what the driver leaves
-  bidReference:    "",           // the bid this load was priced from
+  // No bid reference. Greg: "There does not need to be a bid reference for a
+  // delivery. It is not a necessary note." Fuel is bid per load, so the price
+  // on the ticket IS the bid — a separate reference restated it and was never
+  // read back.
   invoiceStatus:   "expected",   // expected | reconciled | disputed
   invoicedAmount:  0,            // what the invoice actually said, when it lands
   reconciledDate:  "",
@@ -1052,10 +1174,22 @@ export const createFuelDispensing = (overrides = {}) => ({
   // Common
   fuelType:        "diesel",
   gallons:         0,
+  // Where it came from. A tank is pumped; DEF comes off a shelf a jug at a
+  // time. Both end up as one record, because "what has this machine had put
+  // into it" is one question.
+  sourceType:      "tank",       // tank | inventory
+  inventoryItemId: null,         // when sourceType is inventory
+  inventoryItemName: "",
+  inventoryLocation: "",         // the commodity group code it was taken from
+  containers:      0,            // how many jugs — gallons is containers × unitGallons
   pumpedBy:        "",           // who actually pumped it
   taxClass:        "off_road",   // off_road | on_road — tracked for fuel tax
-  unitCost:        0,            // $/gal at time of dispensing, from the tank
+  // Both derived from the tank's FIFO layers and rewritten by
+  // recostFuelDispensing whenever a delivery, fill or fuelling changes. Never
+  // typed, and never the place a price is decided.
+  unitCost:        0,            // $/gal — the blend of the layers this draw took
   totalCost:       0,
+  costEstimated:   false,        // true when the tank had no priced fuel to draw
   sourceTankId:    null,
   sourceTankName:  "",
   // Billing — other departments only. Reconciled weekly, billed the 1st monthly.
@@ -1071,6 +1205,503 @@ export const createFuelDispensing = (overrides = {}) => ({
 export const DEFAULT_FUEL_DEPARTMENTS = [
   "Weed", "Sheriff", "Assessor", "Emergency Management", "Maintenance",
 ];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FLUIDS ON A SHELF — DEF
+//
+// Greg, on how DEF actually moves:
+//
+//   "Jugs at all shops no bulk."
+//   "Typically an entire jug is dispensed into a machine and no carryover per
+//    jug so I think it would be easy to cost out."
+//   "Fuel Screen."
+//   "It is usually just logged to the machine that likely used it."
+//
+// So: an inventory item, held at every shop, consumed a whole container at a
+// time, logged where the person already is, and costed onto the machine.
+//
+// The last quote is about the jugs nobody wrote down. When the count comes up
+// short, the missing DEF is not written off — it is logged to the machine that
+// probably had it, which is the same screen and the same action as logging it
+// on the day. Nothing extra to build, and the entry says it was found at a
+// count rather than pretending somebody recorded it at the time.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Catalog items that are logged at the machine rather than issued at a counter.
+export const fluidItems = (items = [], fluidType = "def") =>
+  (items || []).filter(i => i && i.active !== false && (i.fluidType || "") === fluidType);
+
+// How much of a fluid is on hand, broken down by where it is.
+//
+// Containers AND gallons, because the two answer different questions: the
+// person driving to Kenesaw wants to know there are three jugs there, and the
+// year-end count wants gallons and a value.
+export function fluidOnHand(items = [], batches = [], fluidType = "def") {
+  const wanted = new Map(fluidItems(items, fluidType).map(i => [i.id, i]));
+  const byLocation = new Map();
+  let containers = 0, gallons = 0, value = 0;
+
+  for (const b of batches || []) {
+    if (!wanted.has(b.itemId) || b.status !== "open") continue;
+    const qty  = Number(b.quantityRemaining) || 0;
+    if (qty <= 0) continue;
+    const item = wanted.get(b.itemId);
+    const per  = Number(item.unitGallons) || 0;
+    const loc  = b.location || "";
+    const cur  = byLocation.get(loc) || { location: loc, containers: 0, gallons: 0, value: 0, items: new Set() };
+    cur.containers += qty;
+    cur.gallons    += qty * per;
+    cur.value      += qty * (Number(b.unitCost) || 0);
+    cur.items.add(item.id);
+    byLocation.set(loc, cur);
+    containers += qty;
+    gallons    += qty * per;
+    value      += qty * (Number(b.unitCost) || 0);
+  }
+
+  return {
+    containers, gallons, value,
+    byLocation: [...byLocation.values()]
+      .map(l => ({ ...l, items: [...l.items] }))
+      .sort((a, b) => b.containers - a.containers),
+  };
+}
+
+// Turn "two jugs of DEF from Kenesaw, into unit 327" into the records it takes.
+//
+// Returns BOTH the fuel entry and the inventory issue, already costed, or a
+// reason it cannot be done. One function so the screen cannot write one without
+// the other — a jug poured into a machine and not taken off the shelf is how
+// the shelf count stops meaning anything.
+export function issueFluidToMachine({
+  item, location, containers, batches = [], date = today(),
+  equipmentId = null, unitNumber = "", meterReading = 0, meterType = "hours",
+  pumpedBy = "", notes = "", id = null,
+}) {
+  const qty = Number(containers) || 0;
+  if (!item)       return { ok: false, reason: "No item chosen." };
+  if (qty <= 0)    return { ok: false, reason: "No containers entered." };
+
+  const { batchLines, totalCost, canFulfill, short } =
+    buildFIFOLines(item.id, location || "all", qty, batches);
+
+  if (!canFulfill) {
+    return {
+      ok: false, short,
+      reason: `${locationName(location) || "That location"} has ${qty - short} of the ${qty} ` +
+              `${qty === 1 ? "container" : "containers"} recorded. Count it, or take it from somewhere else.`,
+    };
+  }
+
+  const per     = Number(item.unitGallons) || 0;
+  const gallons = qty * per;
+  const fuelId  = id || uid();
+
+  return {
+    ok: true,
+    gallons, totalCost,
+    unitCost: gallons > 0 ? totalCost / gallons : 0,
+    dispensing: createFuelDispensing({
+      id: fuelId, date,
+      consumer: "county_equipment",
+      equipmentId, unitNumber, meterReading, meterType,
+      fuelType: item.fluidType || "def",
+      gallons,
+      sourceType: "inventory",
+      inventoryItemId: item.id,
+      inventoryItemName: item.name || item.partNumber || "",
+      inventoryLocation: location || "",
+      containers: qty,
+      // DEF is not a motor fuel and carries no road tax.
+      taxClass: "not_applicable",
+      unitCost: gallons > 0 ? Number((totalCost / gallons).toFixed(4)) : 0,
+      totalCost: Number(totalCost.toFixed(2)),
+      pumpedBy, notes,
+    }),
+    transaction: {
+      id: uid(),
+      type: "issue",
+      date,
+      itemId: item.id,
+      itemName: item.name || "",
+      location: location || "",
+      quantity: qty,
+      totalCost: Number(totalCost.toFixed(2)),
+      batchLines,
+      issuedTo: unitNumber ? `Unit ${unitNumber}` : "",
+      equipmentId,
+      reference: fuelId,
+      notes: notes || `${item.fluidType === "def" ? "DEF" : "Fluid"} logged on the fuel screen`,
+      createdAt: now(),
+    },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FUEL TAX
+//
+// The county buys DYED diesel, which arrives untaxed, and owes tax on whatever
+// goes into something that drives on a road. It is remitted quarterly, so the
+// quarter's on-road gallons is a number the program has to be able to produce.
+//
+// WHICH tax is deliberately not decided here. Greg said federal; dyed fuel is
+// exempt from the federal excise and a local government may generally run it
+// on-highway for its own use, which points at a state tax instead. That is a
+// question for whoever prepares the return, not for this file — so the rate
+// table holds ANY NUMBER OF NAMED TAXES and the report totals each one. State,
+// federal, both, or something another county pays: all the same shape.
+//
+// Rates are DATED because they change and old records must keep the old rate.
+// A fuelling is taxed at the rate in force on the day it was pumped, not the
+// rate in force when the report is run — otherwise re-running last year's
+// return produces a different answer than it did last year.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const createFuelTaxRate = (overrides = {}) => ({
+  id:            uid(),
+  name:          "",          // "State motor fuel", "Federal excise" — the county's words
+  fuelType:      "diesel",    // which fuel it applies to
+  effectiveDate: today(),
+  ratePerGallon: 0,
+  notes:         "",
+  createdAt:     now(),
+  ...overrides,
+});
+
+// The rate in force for each named tax on a given date. Latest effective row on
+// or before the date wins, per name — the same rule as an employee's pay.
+export function fuelTaxRatesOn(rates = [], date, fuelType = "diesel") {
+  const best = new Map();
+  for (const r of rates || []) {
+    if (!r || !r.name) continue;
+    if ((r.fuelType || "diesel") !== fuelType) continue;
+    if (String(r.effectiveDate || "") > String(date || "")) continue;
+    const cur = best.get(r.name);
+    if (!cur || String(r.effectiveDate || "") > String(cur.effectiveDate || "")) best.set(r.name, r);
+  }
+  return [...best.values()];
+}
+
+// Calendar quarters. Fuel tax returns are filed on the calendar year wherever
+// this is likely to be used, even where the county's own books are not — Nebraska
+// runs 1 July to 30 June. Mixing the two is how a quarter gets filed twice.
+export const quarterOf = (date) => {
+  const [y, m] = String(date || "").split("-");
+  if (!y || !m) return "";
+  return `${y}-Q${Math.floor((Number(m) - 1) / 3) + 1}`;
+};
+
+export const quarterRange = (q) => {
+  const [y, qq] = String(q || "").split("-Q");
+  const n = Number(qq);
+  if (!y || !n) return null;
+  const startM = (n - 1) * 3 + 1;
+  const endM   = startM + 2;
+  const last   = new Date(Number(y), endM, 0).getDate();
+  return { start: `${y}-${String(startM).padStart(2,"0")}-01`, end: `${y}-${String(endM).padStart(2,"0")}-${last}` };
+};
+
+export const quarterLabel = (q) => {
+  const [y, qq] = String(q || "").split("-Q");
+  return y && qq ? `Q${qq} ${y}` : "";
+};
+
+// What is owed for a quarter, and the working that supports it.
+//
+// Every fuelling is priced at the rate in force ON ITS OWN DATE, so a rate that
+// changes mid-quarter is handled without anyone having to split the period by
+// hand. The per-unit breakdown is there so a machine classified wrongly can be
+// found — an off-road grader that has quietly been marked on-road shows up as
+// a line nobody recognises rather than as a total that is merely too big.
+export function fuelTaxReport(dispensing = [], rates = [], quarter, fuelType = "diesel") {
+  const range = quarterRange(quarter);
+  if (!range) return null;
+
+  const inQuarter = (dispensing || []).filter(d =>
+    (d.fuelType || "diesel") === fuelType &&
+    d.date >= range.start && d.date <= range.end);
+
+  const onRoad  = inQuarter.filter(d => d.taxClass === "on_road");
+  const offRoad = inQuarter.filter(d => d.taxClass !== "on_road");
+
+  const gal = list => list.reduce((s, d) => s + (Number(d.gallons) || 0), 0);
+
+  // Per named tax, summed a fuelling at a time so dated rates are respected.
+  const taxes = new Map();   // name → { name, gallons, amount, rates:Set }
+  let untaxed = 0;           // on-road gallons with no rate on file for their date
+  for (const d of onRoad) {
+    const applicable = fuelTaxRatesOn(rates, d.date, fuelType);
+    if (!applicable.length) { untaxed += Number(d.gallons) || 0; continue; }
+    for (const r of applicable) {
+      const cur = taxes.get(r.name) || { name: r.name, gallons: 0, amount: 0, rates: new Set() };
+      cur.gallons += Number(d.gallons) || 0;
+      cur.amount  += (Number(d.gallons) || 0) * (Number(r.ratePerGallon) || 0);
+      cur.rates.add(Number(r.ratePerGallon) || 0);
+      taxes.set(r.name, cur);
+    }
+  }
+
+  // Which machines, so a wrong classification is findable.
+  const byUnit = new Map();
+  for (const d of onRoad) {
+    const key = d.unitNumber || d.outsideVehicle || "Unassigned";
+    const cur = byUnit.get(key) || { unit: key, gallons: 0, fills: 0 };
+    cur.gallons += Number(d.gallons) || 0;
+    cur.fills   += 1;
+    byUnit.set(key, cur);
+  }
+
+  const lines = [...taxes.values()].map(t => ({
+    ...t,
+    rates: [...t.rates].sort((a, b) => a - b),
+    amount: Number(t.amount.toFixed(2)),
+  })).sort((a, b) => a.name.localeCompare(b.name));
+
+  return {
+    quarter, label: quarterLabel(quarter), range, fuelType,
+    onRoadGallons:  gal(onRoad),
+    offRoadGallons: gal(offRoad),
+    totalGallons:   gal(inQuarter),
+    fills: onRoad.length,
+    lines,
+    totalOwed: Number(lines.reduce((s, l) => s + l.amount, 0).toFixed(2)),
+    // On-road gallons the program could not price. Reported rather than
+    // silently dropped: a return that is short because a rate was missing is
+    // worse than one that refuses to be produced.
+    unratedGallons: untaxed,
+    byUnit: [...byUnit.values()].sort((a, b) => b.gallons - a.gallons),
+  };
+}
+
+// Quarters that actually have fuel in them, newest first.
+export const quartersWithFuel = (dispensing = []) =>
+  [...new Set((dispensing || []).map(d => quarterOf(d.date)).filter(Boolean))].sort().reverse();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FUEL COSTING — FIFO
+//
+// Greg: "FIFO but I do not want a other department fill up to straddle two
+// prices however we can make that work."
+//
+// So the tank keeps layers — gallons that arrived together at one price — and a
+// withdrawal takes the oldest gallons first. That is FIFO and it is what the
+// inventory module already does.
+//
+// The straddle solves itself in the presentation. A 500-gallon draw that takes
+// 300 at $2.98 and 200 at $3.21 is recorded as 500 gallons costing $1,536.00,
+// and shown as $3.072 a gallon — one price per unit, and the total exactly
+// right rather than approximately. The invoice does the same thing at month
+// scale, which is the one-line-per-department bill Greg described.
+//
+// NOTHING HERE IS STORED. The layers are rebuilt from the transaction history
+// every time. That is deliberate, and it is what makes Greg's answer to the
+// recosting question possible:
+//
+//   "If the invoice comes in at a different price than the delivery ticket,
+//    should Pinpoint go back and recost the fill-ups already logged?"  — "Yes"
+//
+// Correct the price on a delivery and every gallon that came out of it after
+// that moment reprices itself, with no migration and nothing left holding an
+// old number. A stored unit cost would have had to be hunted down and rewritten
+// in three places, and the one that got missed would be the one on the bill.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Draw `want` gallons off the front of a layer queue. MUTATES the queue, which
+// is the point — the caller is walking history forward and the tank empties as
+// it goes. Callers who only want a quote pass a copy.
+function drawFIFO(layers, want) {
+  const lines = [];
+  let need = Number(want) || 0, cost = 0;
+  while (need > 1e-9 && layers.length) {
+    const l = layers[0];
+    const take = Math.min(l.gallons, need);
+    lines.push({ gallons: take, unitCost: l.unitCost, cost: take * l.unitCost, date: l.date, ref: l.ref });
+    cost += take * l.unitCost;
+    l.gallons -= take;
+    need      -= take;
+    if (l.gallons <= 1e-9) layers.shift();
+  }
+  return { lines, cost, short: need > 1e-9 ? need : 0 };
+}
+
+// Rebuild every tank's layers from history, and cost every withdrawal on the way
+// through. One pass over all tanks at once, because a portable fill is a
+// withdrawal from one tank and a delivery into another and the two have to
+// happen in the same order they happened in real life.
+export function costFuel(tankTx = [], dispensing = []) {
+  const events = [];
+
+  for (const t of tankTx || []) {
+    if (t.type === "delivery" && t.tankId) {
+      events.push({ kind:"delivery", tankId:t.tankId, gallons:Math.abs(Number(t.gallons) || 0),
+                    unitCost:Number(t.unitCost) || 0, date:t.date, createdAt:t.createdAt, id:t.id, order:0 });
+    } else if (t.type === "portable_fill") {
+      events.push({ kind:"fill", tankId:t.sourceTankId, destId:t.destinationTankId || t.tankId,
+                    gallons:Math.abs(Number(t.gallons) || 0), date:t.date, createdAt:t.createdAt, id:t.id, order:1 });
+    }
+  }
+  for (const d of dispensing || []) {
+    events.push({ kind:"dispense", tankId:d.sourceTankId, gallons:Number(d.gallons) || 0,
+                  date:d.date, createdAt:d.createdAt, id:d.id, order:1 });
+  }
+
+  // Date, then arrivals before withdrawals, then the order they were entered.
+  //
+  // Arrivals first matters on the day a tank is refilled and drawn down again.
+  // It cannot change a price — FIFO takes the oldest gallons regardless — but
+  // without it a tank that ran to nearly empty reports a spurious shortfall.
+  events.sort((a, b) =>
+    String(a.date || "").localeCompare(String(b.date || "")) ||
+    (a.order - b.order) ||
+    String(a.createdAt || "").localeCompare(String(b.createdAt || "")) ||
+    String(a.id || "").localeCompare(String(b.id || "")));
+
+  const layers = new Map();   // tankId → layer[]  (gallons still in the tank)
+  const last   = new Map();   // tankId → the last price it is known to have paid
+  const queue  = id => { if (!layers.has(id)) layers.set(id, []); return layers.get(id); };
+
+  const forDispensing = new Map();
+  const forFills      = new Map();
+
+  const take = (tankId, gallons) => {
+    const g = Number(gallons) || 0;
+    const r = drawFIFO(queue(tankId), g);
+    // A tank with no recorded history — every tank, the day this goes live —
+    // still has to price what came out of it, and so does one drawn past what
+    // the book says it held. The last price it paid is the least wrong answer
+    // available, and the record says plainly that it was estimated.
+    if (r.short > 0) {
+      const fallback = last.get(tankId) || 0;
+      r.lines.push({ gallons:r.short, unitCost:fallback, cost:r.short * fallback, estimated:true });
+      r.cost += r.short * fallback;
+    }
+    return {
+      unitCost:  g > 0 ? r.cost / g : 0,
+      totalCost: r.cost,
+      lines:     r.lines,
+      estimated: r.short > 0,
+      shortGallons: r.short,
+    };
+  };
+
+  for (const e of events) {
+    if (e.kind === "delivery") {
+      if (e.gallons > 0) queue(e.tankId).push({ gallons:e.gallons, unitCost:e.unitCost, date:e.date, ref:e.id });
+      if (e.unitCost > 0) last.set(e.tankId, e.unitCost);
+    } else if (e.kind === "fill") {
+      const r = take(e.tankId, e.gallons);
+      forFills.set(e.id, r);
+      // Locked, per Greg. The portable carries the price it was filled at and
+      // keeps it however the tank it came out of moves afterwards. It follows a
+      // CORRECTION to that delivery, because a correction says the fuel never
+      // cost what the ticket claimed — which is a different thing from a later
+      // load arriving at a different price.
+      if (e.destId && e.gallons > 0) {
+        queue(e.destId).push({ gallons:e.gallons, unitCost:r.unitCost, date:e.date, ref:e.id });
+        last.set(e.destId, r.unitCost);
+      }
+    } else {
+      forDispensing.set(e.id, take(e.tankId, e.gallons));
+    }
+  }
+
+  return { dispensing:forDispensing, fills:forFills, layers, lastPrice:last };
+}
+
+const NO_COST = { unitCost:0, totalCost:0, lines:[], estimated:true, shortGallons:0 };
+
+// What one fuelling cost. Falls back rather than throwing, because a dispensing
+// record whose tank was deleted should show a dash, not a white screen.
+export const fuelCostOf = (costing, dispensingId) =>
+  costing?.dispensing?.get(dispensingId) || NO_COST;
+
+export const fillCostOf = (costing, tankTxId) =>
+  costing?.fills?.get(tankTxId) || NO_COST;
+
+// The layers still sitting in a tank, oldest first.
+export const tankLayers = (costing, tankId) => costing?.layers?.get(tankId) || [];
+
+// What the fuel in a tank is worth, and what it averages a gallon. The average
+// is what to show on a screen; it is not a price anything is charged at, since
+// the next withdrawal takes the oldest gallons and may well be cheaper.
+export function tankFuelValue(costing, tankId) {
+  const ls = tankLayers(costing, tankId);
+  const gallons = ls.reduce((s, l) => s + l.gallons, 0);
+  const value   = ls.reduce((s, l) => s + l.gallons * l.unitCost, 0);
+  return { gallons, value, average: gallons > 0 ? value / gallons : (costing?.lastPrice?.get(tankId) || 0) };
+}
+
+// What the NEXT withdrawal would cost, without recording it. This is what the
+// dispensing form shows while someone is still typing.
+export function quoteFuel(costing, tankId, gallons) {
+  const g = Number(gallons) || 0;
+  const copy = tankLayers(costing, tankId).map(l => ({ ...l }));
+  const r = drawFIFO(copy, g);
+  const fallback = costing?.lastPrice?.get(tankId) || 0;
+  const totalCost = r.cost + r.short * fallback;
+  if (r.short > 0) r.lines.push({ gallons:r.short, unitCost:fallback, cost:r.short * fallback, estimated:true });
+  return {
+    unitCost: g > 0 ? totalCost / g : fallback,
+    totalCost, lines:r.lines,
+    estimated: r.short > 0, shortGallons: r.short,
+  };
+}
+
+const to = (n, dp) => Number((Number(n) || 0).toFixed(dp));
+
+// A month of one department's fuel, as the one-line bill Greg described:
+// gallons, cost per unit, final cost.
+//
+// The unit price is the real blend of everything that went out, so the true
+// cost is exact. But an invoice showing 450 gallons at $2.9444 and a total of
+// $1,325.00 invites a phone call, because 450 × 2.9444 is $1,324.98.
+//
+// So the invoice is made to tie to ITSELF: the unit price is rounded to four
+// places and the amount billed is gallons times that rounded price. The
+// difference is never more than a couple of cents on a month, it is reported
+// as `rounding` rather than hidden, and it stays in the department fuel
+// account — which is where a rounding residual belongs, and is a far smaller
+// problem than an invoice whose own arithmetic does not work.
+export function departmentFuelBill(costing, entries = []) {
+  let gallons = 0, cost = 0, estimated = false;
+  for (const e of entries) {
+    const c = fuelCostOf(costing, e.id);
+    gallons += Number(e.gallons) || 0;
+    cost    += c.totalCost;
+    if (c.estimated) estimated = true;
+  }
+  const unitCost   = gallons > 0 ? to(cost / gallons, 4) : 0;
+  const billedCost = to(gallons * unitCost, 2);
+  return { gallons, cost, unitCost, billedCost, rounding: to(billedCost - cost, 2), estimated, entries };
+}
+
+// Refresh the stored cost on every fuelling, from the transaction history.
+//
+// The costing is derived — see costFuel — but five other screens read
+// `unitCost` and `totalCost` straight off the dispensing record, and threading
+// a costing object into every one of them is how one of them quietly gets
+// missed and keeps showing last month's number. So the derived figures are
+// written back onto the records from ONE place, every time anything that could
+// move them moves. The history stays the source of truth; the fields on the
+// record are a copy of it that is never allowed to be stale.
+//
+// Returns the SAME array when nothing changed, so an unrelated keystroke does
+// not re-render every screen that shows a fuel cost.
+export function recostFuelDispensing(tankTransactions = [], fuelDispensing = []) {
+  if (!fuelDispensing || !fuelDispensing.length) return fuelDispensing;
+  const costing = costFuel(tankTransactions, fuelDispensing);
+  let changed = false;
+  const next = fuelDispensing.map(f => {
+    const c         = fuelCostOf(costing, f.id);
+    const unitCost  = to(c.unitCost, 4);
+    const totalCost = to(c.totalCost, 2);
+    const est       = !!c.estimated;
+    if (f.unitCost === unitCost && f.totalCost === totalCost && !!f.costEstimated === est) return f;
+    changed = true;
+    return { ...f, unitCost, totalCost, costEstimated: est };
+  });
+  return changed ? next : fuelDispensing;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // INFRASTRUCTURE — ROADS
@@ -1362,20 +1993,60 @@ export const createInsuranceCert = (overrides = {}) => ({
 // Asked for and declined. Don't add them.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// A pay scale — the rate for a classification, from a date.
-// Rates come from the classification, not the individual (Q24). Rates change on
-// anniversary and by Board approval (Q18), and entries keep the rate in force
-// when they were made (Q19) — hence a dated series rather than a single number.
-export const createPayScale = (overrides = {}) => ({
+// One change to a person's pay.
+//
+// THE RATE LIVES ON THE PERSON, not on the classification. There was a pay
+// scale table — classification plus date gives a rate — and it was wrong for
+// how the county actually pays. Greg:
+//
+//   "We need to get rid of the pay scales as we have a step program when
+//    people are hired and their pay may go up for a few years but their
+//    classification stays the same."
+//
+// Two Equipment Operators on different steps earn different money, so the
+// classification cannot be what sets the rate. Rates are typed in, dated, and
+// the one in force on any day is the latest row on or before it.
+//
+// The REASON is not decoration. It is what lets the program know a six-month
+// review is coming, count anniversaries, and write the right row alongside a
+// classification change. The list is editable in Settings.
+export const createRateChange = (overrides = {}) => ({
   id:             uid(),
-  classification: "",
   effectiveDate:  today(),
   hourlyRate:     0,
-  approvedBy:     "",           // "Board 2026-07-01", "anniversary", …
-  notes:          "",
+  reason:         "",           // see RATE_CHANGE_REASONS
+  note:           "",           // "Board 8/19, effective 7/1", "3% FY2026"
   createdAt:      now(),
   ...overrides,
 });
+
+// How pay moves here, in Greg's words:
+//
+//   "When a person is hired they have a starting wage and then after 6 months
+//    they get a review and a raise if the review is good, then at their
+//    anniversary they get a pay bump to the next step and then the next 7
+//    anniversaries. There is also typically a COLA when a new fiscal year
+//    rolls around."
+//
+// "Certification earned" covers the common case of somebody hired without a
+// CDL starting as a Laborer and moving up to Equipment Operator once they have
+// it — a promotion triggered by a certificate rather than by a date.
+export const RATE_CHANGE_REASONS = [
+  "Starting wage",
+  "Six-month review",
+  "Step increase",
+  "COLA",
+  "Promotion",
+  "Certification earned",
+  "Board action",
+  "Correction",
+  "Other",
+];
+
+// Overtime is ALWAYS time and a half. Derived, never typed — one number on the
+// record means nobody can enter an overtime rate that disagrees with the
+// straight-time one.
+export const OVERTIME_MULTIPLIER = 1.5;
 
 // One line of an employee's benefit loading. Fringe varies by person (Q20) —
 // insurance elections and years of service — but the components are standard.
@@ -1421,8 +2092,11 @@ export const createEmployeeAssignment = (overrides = {}) => ({
   id:             uid(),
   effectiveDate:  today(),
   classification: "",
-  rateOverride:   null,   // null = use the classification's pay scale
   notes:          "",
+  // No rate here. A classification says what somebody DOES; what they are paid
+  // is a separate dated history on the person. The two used to be one field
+  // with an override bolted on, which was the model admitting it had the
+  // relationship wrong.
   ...overrides,
 });
 
@@ -1438,8 +2112,10 @@ export const createEmployee = (overrides = {}) => ({
                                  // hidden from dropdowns (Q34)
   phone:             "",
   email:             "",
-  // Classification history — drives which pay scale applies on a given date
+  // What they DO, dated. No longer what sets their pay.
   assignments:       [],         // createEmployeeAssignment[]
+  // What they are PAID, dated. See createRateChange.
+  rateHistory:       [],         // createRateChange[]
   // Benefit loading, dated
   fringeProfiles:    [],         // createFringeProfile[]
   // Blade operators are assigned a machine (Q29)
@@ -1455,6 +2131,12 @@ export const createEmployee = (overrides = {}) => ({
 // ── Rate resolution ───────────────────────────────────────────────────────────
 // The whole point of the dated series. Given an employee and a date, work out
 // what they were paid then — never what they're paid now.
+// A local date as yyyy-mm-dd. Deliberately NOT toISOString(), which converts to
+// UTC first and can hand back yesterday for anyone west of Greenwich — which is
+// everybody here.
+const iso = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+
 const latestOnOrBefore = (list, date, key = "effectiveDate") =>
   (list || [])
     .filter(x => x[key] && x[key] <= date)
@@ -1464,22 +2146,80 @@ export function resolveClassification(employee, date) {
   return latestOnOrBefore(employee?.assignments, date);
 }
 
-export function resolveHourlyRate(employee, date, payScales) {
+// What somebody earned on a given day.
+//
+// The latest rate row on or before that date — nothing else. Entries made in
+// the past keep the rate that was in force then, which is the whole reason this
+// is a dated history rather than one number on the record.
+export function resolveHourlyRate(employee, date) {
+  const change     = latestOnOrBefore(employee?.rateHistory, date);
   const assignment = resolveClassification(employee, date);
-  if (!assignment) return { rate: 0, source: "none", classification: "" };
-  if (assignment.rateOverride !== null && assignment.rateOverride !== undefined && assignment.rateOverride !== "") {
-    return { rate: Number(assignment.rateOverride), source: "override", classification: assignment.classification };
-  }
-  const scale = latestOnOrBefore(
-    (payScales || []).filter(s => s.classification === assignment.classification),
-    date
-  );
   return {
-    rate: scale ? Number(scale.hourlyRate) : 0,
-    source: scale ? "scale" : "none",
-    classification: assignment.classification,
-    scaleDate: scale?.effectiveDate || null,
+    rate:           change ? Number(change.hourlyRate) || 0 : 0,
+    overtimeRate:   change ? round2((Number(change.hourlyRate) || 0) * OVERTIME_MULTIPLIER) : 0,
+    source:         change ? "history" : "none",
+    reason:         change?.reason || "",
+    effectiveDate:  change?.effectiveDate || null,
+    classification: assignment?.classification || "",
   };
+}
+
+const round2 = (n) => Number((Number(n) || 0).toFixed(2));
+
+// Time and a half, from whatever they earn that day.
+export const overtimeRateFor = (employee, date) =>
+  resolveHourlyRate(employee, date).overtimeRate;
+
+// The rate history, newest first, with the step between each row worked out.
+export function rateHistory(employee) {
+  const rows = [...(employee?.rateHistory || [])]
+    .sort((a, b) => String(b.effectiveDate).localeCompare(String(a.effectiveDate)));
+  return rows.map((r, i) => {
+    const previous = rows[i + 1];
+    return {
+      ...r,
+      change: previous ? round2(Number(r.hourlyRate) - Number(previous.hourlyRate)) : null,
+      overtimeRate: round2((Number(r.hourlyRate) || 0) * OVERTIME_MULTIPLIER),
+    };
+  });
+}
+
+// Who is coming up for a review or an anniversary.
+//
+// The program FLAGS these and raises nobody's pay by itself — Greg's call, and
+// the right one: payroll owns the decision, and software that quietly changed a
+// wage would be software nobody trusted.
+//
+// Both are measured from the HIRE DATE, not from the current classification. A
+// Laborer who gets their CDL and becomes an Operator at four months still has
+// their six-month review when it falls due.
+export function payReviewDue(employee, asOf = today(), windowDays = 30) {
+  if (!employee?.hireDate || employee.active === false) return null;
+  const hire = new Date(employee.hireDate + "T00:00:00");
+  const now  = new Date(asOf + "T00:00:00");
+  if (Number.isNaN(hire.getTime()) || Number.isNaN(now.getTime())) return null;
+
+  const reasons = new Set((employee.rateHistory || []).map(r => r.reason));
+  const days = (a, b) => Math.round((a - b) / 86400000);
+
+  // The six-month review, once, and only until it has been recorded.
+  const sixMonth = new Date(hire); sixMonth.setMonth(sixMonth.getMonth() + 6);
+  if (!reasons.has("Six-month review")) {
+    const away = days(sixMonth, now);
+    if (away <= windowDays) return { kind: "Six-month review", date: iso(sixMonth), daysAway: away };
+  }
+
+  // Then the anniversary. Eight steps after the review is the pattern, but the
+  // program counts nothing and simply keeps flagging the date — a step someone
+  // did not take is not the program's business.
+  const anniversary = new Date(hire);
+  anniversary.setFullYear(now.getFullYear());
+  if (anniversary < now) anniversary.setFullYear(now.getFullYear() + 1);
+  const away = days(anniversary, now);
+  const years = anniversary.getFullYear() - hire.getFullYear();
+  if (away <= windowDays)
+    return { kind: "Anniversary", date: iso(anniversary), daysAway: away, years };
+  return null;
 }
 
 // Fringe as dollars per hour at a given wage, plus the effective percentage.
@@ -1502,15 +2242,18 @@ export function resolveFringe(employee, date, hourlyRate) {
 }
 
 // Everything needed to cost an hour of this person's time on this date.
-export function laborRateFor(employee, date, payScales) {
-  const { rate, source, classification, scaleDate } = resolveHourlyRate(employee, date, payScales);
+// Everything an hour of somebody's time costs, on a given date.
+export function laborRateFor(employee, date) {
+  const { rate, overtimeRate, source, classification, reason, effectiveDate } =
+    resolveHourlyRate(employee, date);
   const fringe = resolveFringe(employee, date, rate);
   return {
     classification,
     hourlyRate: rate,
     rateSource: source,
-    scaleDate,
-    overtimeRate: rate * 1.5,          // 1.5x, over 40/week Mon–Sun (Q15, Q16)
+    rateReason: reason,
+    rateEffective: effectiveDate,
+    overtimeRate,                      // 1.5×, over 40/week Mon–Sun (Q15, Q16)
     fringePerHour: fringe.perHour,
     fringePercent: fringe.percent,
     fringeLines: fringe.lines,
@@ -1538,31 +2281,182 @@ export const createCertification = (overrides = {}) => ({
 // SETTINGS / LOOKUPS
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const createStorageLocation = (overrides = {}) => ({
+// A commodity group.
+//
+// ONE LIST, USED TWICE. A group is both a KIND of thing and a PLACE things are
+// kept, because that is exactly what it is in R&B and Greg wants staff to see
+// the list they already know.
+//
+//   item.categoryId    -> a group. What the thing IS. A transfer never changes it.
+//   batch.location     -> a group CODE. Where it is. A transfer does change it.
+//
+// On day one every item's category and location are the same group, so the
+// system looks identical to R&B. From then on they can diverge, and that
+// divergence is the entire point:
+//
+//   R&B:      an oil filter sent to Kenesaw is REASSIGNED from 133 FILTERS to
+//             7 KENESAW SHED. It arrives, and stops being a filter.
+//   Pinpoint: its category stays 133 FILTERS. Its batch moves to location 7.
+//
+// The TYPE changes what a group can do, so it is recorded rather than guessed:
+//
+//   area        part of the main shop — the sign shop, the parts room, the
+//               filter racks. There is no "Main Shop" group; the shop is where
+//               things are unless a group says otherwise, so its areas cover it.
+//   building    a satellite shed, or a floor of the shop. Kenesaw, Pauline, Office.
+//   machine     gear that lives on a unit — an extinguisher on 327, tools in the
+//               welding trailer. NOT the same as a part FITTING that machine:
+//               a filter that fits 327 is compatibility, recorded on the item.
+//   stockpile   crushed concrete, crushed asphalt, gravel.
+export const createInventoryGroup = (overrides = {}) => ({
   id:              uid(),
-  // The legacy code the inventory export uses. Stock is held against this, so
-  // it is the identity — the name is a label people can change freely.
+  // The legacy commodity group number. Stock is held against this, and items
+  // point at the group by id, so both need to stay stable when a name changes.
   code:            "",
-  name:            "",           // Main Shop | Pauline | Kenesaw | Roseland | Holstein | Wanda Stockpile | etc.
-  // True when the name was guessed from what is stored there rather than told
-  // to us, so the screen can ask someone to confirm it.
-  nameInferred:    false,
-  type:            "shed",       // shed | stockpile | portable_tank
-  itemCount:       0,            // at crosswalk — indicative, not live
+  name:            "",
+  type:            "area",       // area | building | machine | stockpile
+  // Shelves exist in the shop and nowhere else. A group with none never asks.
+  shelves:         [],           // ["A1","A2","B1", …]
+  equipmentId:     null,         // when type is machine — which unit in the fleet
+  unitNumber:      "",
   active:          true,
   notes:           "",
   ...overrides,
 });
 
-// A location's display label: its name if it has one, otherwise the bare code
-// so it is still selectable rather than showing as blank.
-export const locationLabel = (loc) =>
-  !loc ? "" : (loc.name ? `${loc.code ? loc.code + " — " : ""}${loc.name}` : `Location ${loc.code || "?"}`);
+export const INVENTORY_GROUP_TYPES = [
+  ["area",      "Shop area"],
+  ["building",  "Building"],
+  ["machine",   "Machine"],
+  ["stockpile", "Stockpile"],
+];
 
-// Find the location record for a code, so an item's stored code can be shown
-// with whatever name the county has since given it.
-export const locationFor = (code, locations = []) =>
-  locations.find(l => String(l.code) === String(code)) || null;
+export const groupTypeLabel = (t) =>
+  (INVENTORY_GROUP_TYPES.find(([v]) => v === t) || [null, "Shop area"])[1];
+
+// Where an item is, and how much is at each place.
+//
+// Read from the batches rather than stored on the item, so it cannot disagree
+// with the stock it describes.
+export function stockByLocation(itemId, batches = []) {
+  const m = new Map();
+  for (const b of batches) {
+    if (b.itemId !== itemId || b.status !== "open") continue;
+    const qty = Number(b.quantityRemaining) || 0;
+    if (qty <= 0) continue;
+    const key = String(b.location ?? "");
+    const cur = m.get(key) || { location: key, shelf: b.shelf || "", qty: 0, value: 0 };
+    cur.qty   += qty;
+    cur.value += qty * (Number(b.unitCost) || 0);
+    if (!cur.shelf && b.shelf) cur.shelf = b.shelf;
+    m.set(key, cur);
+  }
+  return [...m.values()].sort((a, b) => b.qty - a.qty);
+}
+
+// Everything held at one location, for a count sheet.
+//
+// By where the stock IS, not by what it is. A count sheet built from categories
+// would miss a filter that has been moved to Kenesaw, and nothing would reveal
+// the miss. Every batch has a location, so every unit lands on exactly one sheet.
+export function stockAtLocation(locationCode, items = [], batches = []) {
+  const held = new Map();
+  for (const b of batches) {
+    if (b.status !== "open" || String(b.location) !== String(locationCode)) continue;
+    const qty = Number(b.quantityRemaining) || 0;
+    if (qty <= 0) continue;
+    const cur = held.get(b.itemId) || { itemId: b.itemId, qty: 0, value: 0, shelf: b.shelf || "" };
+    cur.qty   += qty;
+    cur.value += qty * (Number(b.unitCost) || 0);
+    if (!cur.shelf && b.shelf) cur.shelf = b.shelf;
+    held.set(b.itemId, cur);
+  }
+  return [...held.values()]
+    .map(h => ({ ...h, item: items.find(i => i.id === h.itemId) || null }))
+    .filter(h => h.item);
+}
+
+// Move a quantity of one item from one location to another.
+//
+// Returns a new batch array. Kept here as a pure function rather than inline in
+// the reducer so it can be tested on its own — this is the one piece of the
+// inventory model where getting it subtly wrong still looks right in the
+// totals, and the county-wide figure is exactly the figure nobody checks.
+//
+// The rules:
+//   · Take from the oldest batches at the source first, so cost stays FIFO.
+//   · Land the same quantity at the destination at the same unit cost. A
+//     transfer is not a purchase; it must never change what the county paid.
+//   · Carry the original receipt date, so transferred stock keeps its place in
+//     the FIFO queue instead of jumping to the back.
+//   · Move what is there. Asking to move more than exists moves everything
+//     available rather than inventing stock — the shortfall is returned so the
+//     caller can say so.
+export function transferStock(batches, { itemId, fromLocation, toLocation, quantity, toShelf = "", ref = "" }) {
+  const src = batches
+    .filter(b => b.itemId === itemId
+              && String(b.location) === String(fromLocation)
+              && b.status === "open"
+              && (b.quantityRemaining || 0) > 0)
+    .sort((a, b) => String(a.receiptDate).localeCompare(String(b.receiptDate)));
+
+  let toMove = Math.abs(Number(quantity) || 0);
+  let next = batches;
+  const landed = [];
+
+  for (const b of src) {
+    if (toMove <= 0) break;
+    const take = Math.min(toMove, b.quantityRemaining || 0);
+    if (take <= 0) continue;
+    const left = (b.quantityRemaining || 0) - take;
+    next = next.map(x => x.id === b.id
+      ? { ...x, quantityRemaining: left, status: left <= 0 ? "depleted" : "open" }
+      : x);
+    landed.push({
+      ...b,
+      id:                `${b.id}-t${landed.length}-${uid()}`,
+      location:          toLocation,
+      shelf:             toShelf,
+      quantityReceived:  take,
+      quantityRemaining: take,
+      totalCost:         take * (Number(b.unitCost) || 0),
+      status:            "open",
+      transferredFrom:   fromLocation,
+      transferRef:       ref,
+    });
+    toMove -= take;
+  }
+
+  return { batches: [...next, ...landed], moved: Math.abs(Number(quantity) || 0) - toMove, short: toMove };
+}
+
+// A group's display label. Always leads with the code, because staff know the
+// numbers — "put it in 134" is a thing people say.
+export const groupLabel = (g) =>
+  !g ? "" : (g.name ? `${g.code ? g.code + " — " : ""}${g.name}` : `Group ${g.code || "?"}`);
+
+// Find a group by its CODE. Batches store the code, so this is how a batch is
+// turned back into something with a name and a type.
+export const groupByCode = (code, groups = []) =>
+  groups.find(g => String(g.code) === String(code)) || null;
+
+// Find a group by its ID. Items store the id for their category, so renaming a
+// group or changing its code never orphans an item.
+export const groupById = (id, groups = []) =>
+  groups.find(g => g.id === id) || null;
+
+// What an item IS, for display. Falls back to the raw legacy group name, which
+// every crosswalked item carries, so a dangling reference shows something
+// recognisable rather than a dash.
+export const categoryName = (item, groups = []) => {
+  if (!item) return "—";
+  const g = groupById(item.categoryId, groups);
+  return g ? groupLabel(g) : (item.commodityGroup || "—");
+};
+
+// Where a batch is, for display.
+export const locationName = (code, groups = []) =>
+  groupLabel(groupByCode(code, groups)) || (code ? `Group ${code}` : "—");
 
 export const createTownship = (overrides = {}) => ({
   id:              uid(),
@@ -1941,8 +2835,11 @@ export const LOOKUP_DEFS = [
   { key:"pmTasks",         label:"PM Tasks", module:"Equipment",
     values:["Oil & Filter","Grease","Hydraulic Service","Air Filter","Fuel Filter","Annual Inspection","Tire Rotation","Coolant","Other"] },
   { key:"classifications", label:"Job Classifications", module:"Employees",
-    hint:"Each has a pay scale",
+    hint:"What somebody does. Pay is separate — it lives on the person",
     values:["Laborer","Operator II","Operator III","Road Foreman","Shop Foreman","Mechanic","Bridge Inspector","Sign Tech","Parts Manager","Office Manager","Accountant"] },
+  { key:"rateChangeReasons", label:"Reasons Pay Changes", module:"Employees",
+    hint:"Six-month review and Step increase are what let the program flag who is due",
+    values:[...RATE_CHANGE_REASONS] },
   { key:"certificationTypes", label:"Certification Types", module:"Employees",
     hint:"Warned 90 days before expiry",
     values:["CDL","DOT Medical Card","Bridge Inspector Licence","Superintendent Licence","Pesticide Applicator","CPR","Flagger","First Aid","Specialised Training"] },
@@ -1974,21 +2871,16 @@ export const DEFAULT_LOOKUPS = LOOKUP_DEFS.reduce((acc, d) => {
 }, {});
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DEFAULT STORAGE LOCATIONS (loaded into settings on first run)
+// STORAGE LOCATION TYPES
 // ─────────────────────────────────────────────────────────────────────────────
-export const DEFAULT_STORAGE_LOCATIONS = [
-  { name: "Main Shop",        type: "shed" },
-  { name: "Pauline Shed",     type: "shed" },
-  { name: "Kenesaw Shed",     type: "shed" },
-  { name: "Roseland Shed",    type: "shed" },
-  { name: "Holstein Shed",    type: "shed" },
-  { name: "Wanda Stockpile",         type: "stockpile" },
-  { name: "Adams Central Stockpile", type: "stockpile" },
-  { name: "Portable Tank 1",  type: "portable_tank" },
-  { name: "Portable Tank 2",  type: "portable_tank" },
-  { name: "Portable Tank 3",  type: "portable_tank" },
-].map(l => createStorageLocation(l));
-
+// There is deliberately no default list of locations. A county's buildings are
+// its own; seeding "Kenesaw Shed" into every install would bake one county's
+// yard into everybody's software. Locations arrive from the inventory crosswalk
+// on first run, and are edited in Settings from then on.
+//
+// The TYPE matters because it changes what the location can do: a building has
+// shelves, a machine ties to a unit in the fleet, a stockpile is measured by
+// volume rather than counted.
 // ─────────────────────────────────────────────────────────────────────────────
 // DEFAULT TOWNSHIPS
 // ─────────────────────────────────────────────────────────────────────────────

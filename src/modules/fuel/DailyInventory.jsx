@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { Field, SectionCard, Table, KPICard, inp, btn, fmt, DateField } from "../../components/shared.jsx";
+import { useUnsavedForm } from "../../components/unsaved.jsx";
 import { createDailyInventory, bookClosing, dailyVariance, ustMonthlyReconciliation,
          gaugeCheck, lastGaugeCheck,
          UST_VARIANCE_PERCENT, UST_VARIANCE_CONSTANT } from "../../data/schema.js";
@@ -292,6 +293,7 @@ function DayForm({ tank, records, tankTx, dispensing, onSave, onCancel }) {
     gaugeCheckStick: "",
     gaugeCheckMonitor: "",
   });
+  useUnsavedForm(form, "what you have entered");
   const set = (k,v) => setForm(f => ({ ...f, [k]: v }));
 
   // What the system already knows moved on that date.

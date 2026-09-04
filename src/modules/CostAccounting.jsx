@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
-import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm, DateField, titleCase } from "../components/shared.jsx";
+import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm, DateField, titleCase, MoneyField } from "../components/shared.jsx";
+import { useUnsavedForm, useNavigationGuard } from "../components/unsaved.jsx";
 import { createLaborEntry, createEquipmentEntry, createMaterialEntry, createContractorEntry, createEngineeringEntry, uid, today } from "../data/schema.js";
 import { FEMA_EQUIPMENT_RATES } from "../data/femaRates.js";
 
@@ -79,6 +80,7 @@ function StatusChip({ status }) {
 
 // ── Module Shell ──────────────────────────────────────────────────────────────
 export default function CostAccounting({ db, dispatch }) {
+  const go = useNavigationGuard();
   const [tab, setTab] = useState("enter");
 
   const TABS = [
@@ -92,7 +94,7 @@ export default function CostAccounting({ db, dispatch }) {
     <div>
       <div style={{ display:"flex", gap:2, marginBottom:24, borderBottom:"1px solid #ddd" }}>
         {TABS.map(t=>(
-          <button key={t.id} onClick={()=>setTab(t.id)} style={{
+          <button key={t.id} onClick={() => go(() => setTab(t.id))} style={{
             background:"transparent", border:"none", padding:"8px 14px 10px",
             fontWeight:tab===t.id?700:400, fontSize:13, cursor:"pointer",
             color:tab===t.id?"#1a5a3a":"#666",
@@ -344,6 +346,7 @@ function LaborEntries({ project, employees, dispatch }) {
 
   const blankForm = () => ({ date:today(), employeeId:"", employeeName:"", classification:"", straightTimeHours:0, straightTimeRate:0, overtimeHours:0, overtimeRate:0, fringeRate:0, notes:"" });
   const [form, setForm] = useState(blankForm());
+  useUnsavedForm(form, "what you have entered");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
   const fillEmployee = id => {
@@ -403,9 +406,9 @@ function LaborEntries({ project, employees, dispatch }) {
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr 1fr", gap:12, marginBottom:12 }}>
             <Field label="ST Hours"><input type="number" min="0" step="0.25" value={form.straightTimeHours} onChange={e=>set("straightTimeHours",parseFloat(e.target.value)||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
-            <Field label="ST Rate ($/hr)"><input type="number" min="0" step="0.01" value={form.straightTimeRate} onChange={e=>set("straightTimeRate",parseFloat(e.target.value)||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+            <Field label="ST Rate ($/hr)"><MoneyField value={form.straightTimeRate} onChange={v=>set("straightTimeRate",v||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
             <Field label="OT Hours"><input type="number" min="0" step="0.25" value={form.overtimeHours} onChange={e=>set("overtimeHours",parseFloat(e.target.value)||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
-            <Field label="OT Rate ($/hr)"><input type="number" min="0" step="0.01" value={form.overtimeRate} onChange={e=>set("overtimeRate",parseFloat(e.target.value)||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+            <Field label="OT Rate ($/hr)"><MoneyField value={form.overtimeRate} onChange={v=>set("overtimeRate",v||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
             <Field label="Fringe Rate (%)"><input type="number" min="0" step="0.1" value={form.fringeRate} onChange={e=>set("fringeRate",parseFloat(e.target.value)||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
             <Field label="Cost"><div style={{ ...inp, margin:0, background:"#fff", fontFamily:"monospace", fontWeight:700, color:"#1a6b35", fontSize:13 }}>{fmtSm(cost)}</div></Field>
           </div>
@@ -456,6 +459,7 @@ function EquipmentEntries({ project, equipment, dispatch }) {
 
   const blankForm = () => ({ date:today(), equipmentId:"", equipmentName:"", unitNumber:"", hoursOperated:0, femaRate:0, operatorName:"", notes:"" });
   const [form, setForm] = useState(blankForm());
+  useUnsavedForm(form, "what you have entered");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
   const fillUnit = id => {
@@ -504,7 +508,7 @@ function EquipmentEntries({ project, equipment, dispatch }) {
               </select>
             </Field>
             <Field label="Hours Operated"><input type="number" min="0" step="0.25" value={form.hoursOperated} onChange={e=>set("hoursOperated",parseFloat(e.target.value)||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
-            <Field label="FEMA Rate ($/hr)"><input type="number" min="0" step="0.01" value={form.femaRate} onChange={e=>set("femaRate",parseFloat(e.target.value)||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+            <Field label="FEMA Rate ($/hr)"><MoneyField value={form.femaRate} onChange={v=>set("femaRate",v||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
             <Field label="Total Cost"><div style={{ ...inp, margin:0, background:"#fff", fontFamily:"monospace", fontWeight:700, color:"#1a3a5c" }}>{fmtSm(cost)}</div></Field>
             <Field label="Operator"><input type="text" value={form.operatorName} onChange={e=>set("operatorName",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
           </div>
@@ -545,6 +549,7 @@ function MaterialEntries({ project, invItems, invBatches, dispatch }) {
 
   const blankForm = () => ({ date:today(), itemId:"", itemName:"", quantity:0, unitOfMeasure:"", unitCost:0, notes:"" });
   const [form, setForm] = useState(blankForm());
+  useUnsavedForm(form, "what you have entered");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
   const selectedItem = invItems.find(i=>i.id===form.itemId);
@@ -619,7 +624,7 @@ function MaterialEntries({ project, invItems, invBatches, dispatch }) {
           {!form.itemId && (
             <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr", gap:12, marginBottom:12 }}>
               <Field label="Item Description"><input type="text" value={form.itemName} onChange={e=>set("itemName",e.target.value)} style={{ ...inp, margin:0 }} placeholder="Description of material…" /></Field>
-              <Field label="Unit Cost (manual)"><input type="number" min="0" step="0.01" value={form.unitCost} onChange={e=>set("unitCost",parseFloat(e.target.value)||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+              <Field label="Unit Cost (manual)"><MoneyField value={form.unitCost} onChange={v=>set("unitCost",v||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
             </div>
           )}
           {fifo && (
@@ -666,6 +671,7 @@ function ContractorEntries({ project, vendors, dispatch }) {
 
   const blankForm = () => ({ date:today(), vendorId:"", vendorName:"", invoiceNumber:"", description:"", amount:0, expenditureCode:"", notes:"" });
   const [form, setForm] = useState(blankForm());
+  useUnsavedForm(form, "what you have entered");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
   const fillVendor = id => {
@@ -714,7 +720,7 @@ function ContractorEntries({ project, vendors, dispatch }) {
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"3fr 1fr 1fr", gap:12, marginBottom:12 }}>
             <Field label="Work Description"><input type="text" value={form.description} onChange={e=>set("description",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
-            <Field label="Amount ($)"><input type="number" min="0" step="0.01" value={form.amount} onChange={e=>set("amount",parseFloat(e.target.value)||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+            <Field label="Amount ($)"><MoneyField value={form.amount} onChange={v=>set("amount",v||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
             <Field label="Expenditure Code"><input type="text" value={form.expenditureCode} onChange={e=>set("expenditureCode",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
           </div>
           <div style={{ display:"flex", gap:10 }}>
@@ -753,6 +759,7 @@ function EngineeringEntries({ project, vendors, dispatch }) {
 
   const blankForm = () => ({ date:today(), vendorId:"", firmName:"", invoiceNumber:"", phase:"design", amount:0, expenditureCode:"", notes:"" });
   const [form, setForm] = useState(blankForm());
+  useUnsavedForm(form, "what you have entered");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
   const fillFirm = id => {
@@ -805,7 +812,7 @@ function EngineeringEntries({ project, vendors, dispatch }) {
             </Field>
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-            <Field label="Amount ($)"><input type="number" min="0" step="0.01" value={form.amount} onChange={e=>set("amount",parseFloat(e.target.value)||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+            <Field label="Amount ($)"><MoneyField value={form.amount} onChange={v=>set("amount",v||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
             <Field label="Expenditure Code"><input type="text" value={form.expenditureCode} onChange={e=>set("expenditureCode",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
           </div>
           <div style={{ display:"flex", gap:10, marginTop:12 }}>
@@ -988,6 +995,7 @@ function ByProjectTab({ db }) {
 }
 
 function ProjectCostDetail({ project: p, onBack }) {
+  const go = useNavigationGuard();
   const [tab, setTab] = useState("labor");
   const t = projectTotals(p);
   const TABS = [
@@ -1017,7 +1025,7 @@ function ProjectCostDetail({ project: p, onBack }) {
 
       <div style={{ display:"flex", borderBottom:"1px solid #ddd", marginBottom:20 }}>
         {TABS.map(([id,label,icon])=>(
-          <button key={id} onClick={()=>setTab(id)} style={{ background:"transparent", border:"none", padding:"8px 14px 10px", fontWeight:tab===id?700:400, fontSize:13, cursor:"pointer", color:tab===id?"#1a5a3a":"#666", borderBottom:tab===id?"2px solid #1a5a3a":"2px solid transparent", marginBottom:-1, display:"inline-flex", alignItems:"center", gap:6 }}>
+          <button key={id} onClick={() => go(() => setTab(id))} style={{ background:"transparent", border:"none", padding:"8px 14px 10px", fontWeight:tab===id?700:400, fontSize:13, cursor:"pointer", color:tab===id?"#1a5a3a":"#666", borderBottom:tab===id?"2px solid #1a5a3a":"2px solid transparent", marginBottom:-1, display:"inline-flex", alignItems:"center", gap:6 }}>
             <Icon name={icon} size={12} color={tab===id?"#1a5a3a":"#888"} />{label}
           </button>
         ))}

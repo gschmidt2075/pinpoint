@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { Icon } from "../../components/shared.jsx";
+import { useNavigationGuard } from "../../components/unsaved.jsx";
 import { TanksTab } from "./Tanks.jsx";
 import { FuelLogTab } from "./Dispensing.jsx";
 import { FuelBilling } from "./Billing.jsx";
+import { FuelTaxTab } from "./FuelTax.jsx";
 import { DailyInventoryTab } from "./DailyInventory.jsx";
 
 // ── Fuel ──────────────────────────────────────────────────────────────────────
@@ -20,6 +22,7 @@ import { DailyInventoryTab } from "./DailyInventory.jsx";
 // The rule underneath everything here: fuel is never created except by a
 // delivery. A transfer moves gallons and carries their cost with them.
 export default function Fuel({ db, dispatch }) {
+  const go = useNavigationGuard();
   const [tab, setTab] = useState("log");
 
   const dispensing = db.fuelDispensing    || [];
@@ -33,13 +36,14 @@ export default function Fuel({ db, dispatch }) {
     { id:"tanks",   label:"Tanks",          icon:"building-warehouse" },
     { id:"daily",   label:"Daily Inventory", icon:"clipboard-check" },
     { id:"billing", label:"Department Billing", icon:"file-invoice" },
+    { id:"tax",     label:"Fuel Tax",           icon:"receipt-tax" },
   ];
 
   return (
     <div>
       <div style={{ display:"flex", gap:2, marginBottom:24, borderBottom:"1px solid #ddd" }}>
         {TABS.map(t=>(
-          <button key={t.id} onClick={()=>setTab(t.id)} style={{
+          <button key={t.id} onClick={() => go(() => setTab(t.id))} style={{
             background:"transparent", border:"none", padding:"8px 14px 10px",
             fontWeight: tab===t.id?700:400, fontSize:13, cursor:"pointer",
             color: tab===t.id?"#1a5a3a":"#666",
@@ -55,17 +59,28 @@ export default function Fuel({ db, dispatch }) {
       {tab==="log" && (
         <FuelLogTab
           dispensing={dispensing} units={units} tanks={tanks} tankTx={tankTx}
-          departments={db?.lookups?.fuelDepartments || []} dispatch={dispatch} />
+          departments={db?.lookups?.fuelDepartments || []}
+          employees={db.employees || []}
+          invItems={db.inventoryItems || []} invBatches={db.inventoryBatches || []}
+          invGroups={db.inventoryGroups || []}
+          dispatch={dispatch} />
       )}
       {tab==="tanks"   && (
         <TanksTab tanks={tanks} tankTx={tankTx} dispensing={dispensing}
-          vendors={vendors} fuelGLCode={db.countyInfo?.fuelGLCode || "302.09"} dispatch={dispatch} />
+          vendors={vendors} fuelGLCode={db.countyInfo?.fuelGLCode || "302.09"}
+          invItems={db.inventoryItems || []} invBatches={db.inventoryBatches || []}
+          invGroups={db.inventoryGroups || []} dispatch={dispatch} />
       )}
       {tab==="daily" && (
         <DailyInventoryTab tanks={tanks} tankTx={tankTx} dispensing={dispensing}
           records={db.dailyInventory || []} dispatch={dispatch} />
       )}
-      {tab==="billing" && <FuelBilling dispensing={dispensing} dispatch={dispatch} />}
+      {tab==="billing" && <FuelBilling dispensing={dispensing} tankTx={tankTx}
+          countyInfo={db.countyInfo || {}} dispatch={dispatch} />}
+      {tab==="tax" && (
+        <FuelTaxTab dispensing={dispensing} rates={db.fuelTaxRates || []}
+          units={units} dispatch={dispatch} />
+      )}
     </div>
   );
 }

@@ -1,6 +1,9 @@
 import { useState, useMemo } from "react";
-import { Field, SectionCard, Table, inp, btn, fmtSm, DateField, SearchSelect, titleCase } from "../../components/shared.jsx";
-import { today, fmtDate, tankUnitCost, reconciliationStatus } from "./shared.js";
+import { Field, SectionCard, Table, inp, btn, fmtSm, DateField, SearchSelect, titleCase, MoneyField } from "../../components/shared.jsx";
+import { useUnsavedForm } from "../../components/unsaved.jsx";
+import { today, fmtDate, reconciliationStatus } from "./shared.js";
+import { costFuel, quoteFuel, tankFuelValue } from "../../data/schema.js";
+import { DEFOnHand } from "./DEF.jsx";
 import { CLAIM_CYCLES } from "../FundAccounting.jsx";
 
 // Tanks: what is in them, what went in, what came out, and whether the
@@ -15,6 +18,7 @@ import { CLAIM_CYCLES } from "../FundAccounting.jsx";
 function DeliveryInvoices({ tankTx, dispatch }) {
   const [openId, setOpenId] = useState(null);
   const [form, setForm] = useState({ invoicedAmount:"", invoiceNumber:"", date: today() });
+  useUnsavedForm(form, "what you have entered");
 
   const waiting = (tankTx || [])
     .filter(t => t.type === "delivery" && t.expenditureId && t.invoiceStatus === "expected")
@@ -66,9 +70,7 @@ function DeliveryInvoices({ tankTx, dispatch }) {
               <DateField value={form.date} onChange={v=>setForm(f=>({...f,date:v}))} />
             </Field>
             <Field label="Invoice total" required>
-              <input type="number" min="0" step="0.01" value={form.invoicedAmount}
-                onChange={e=>setForm(f=>({...f,invoicedAmount:e.target.value}))}
-                style={{ ...inp, margin:0, fontFamily:"monospace", borderColor: differs ? "#d97706" : undefined }} />
+              <MoneyField value={form.invoicedAmount} onChange={v=>setForm(f=>({...f,invoicedAmount:v}))} style={{ ...inp, margin:0, fontFamily:"monospace", borderColor: differs ? "#d97706" : undefined }} />
             </Field>
             <button
               onClick={()=>{ dispatch({ type:"RECONCILE_FUEL_DELIVERY", payload:{
@@ -104,11 +106,13 @@ function DeliveryInvoices({ tankTx, dispatch }) {
   );
 }
 
-export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode = "302.09", dispatch }) {
+export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode = "302.09",
+                          invItems = [], invBatches = [], invGroups = [], dispatch }) {
   const [selectedTankId, setSelectedTankId] = useState(null);
   const [txForm, setTxForm] = useState({ type:"delivery", date: today(), tankId:"", sourceTankId:"",
     gallons:"", vendorId:"", vendorName:"", invoiceNumber:"", unitCost:"", dipReading:"", notes:"",
-    deliveryTicket:"", bidReference:"", claimCycleId:"", glCode: fuelGLCode });
+    deliveryTicket:"", claimCycleId:"", glCode: fuelGLCode });
+  useUnsavedForm(txForm, "this tank entry");
   const setTx = (k,v) => setTxForm(f=>({...f,[k]:v}));
 
   // Open the form already set to the job being done, rather than opening a
@@ -131,11 +135,11 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
   const exportTankTx = () => {
     const esc = v => { const t = v==null?"":String(v); return /[",\n]/.test(t) ? `"${t.replace(/"/g,'""')}"` : t; };
     const rows = [
-      ["Date","Type","Tank","Gallons","From Tank","Vendor","Delivery Ticket","Bid Ref",
+      ["Date","Type","Tank","Gallons","From Tank","Vendor","Delivery Ticket",
        "Invoice #","$/gal","Amount","Invoice Status","Invoiced","Dip/Monitor Reads","Variance","Notes"],
       ...[...(tankTx||[])].sort((a,b)=>String(a.date).localeCompare(String(b.date))).map(t=>[
         t.date, t.type, t.tankName, t.gallons, t.sourceTankName, t.vendorName,
-        t.deliveryTicket, t.bidReference, t.invoiceNumber, t.unitCost, t.deliveryCost,
+        t.deliveryTicket, t.invoiceNumber, t.unitCost, t.deliveryCost,
         t.invoiceStatus, t.invoicedAmount, t.dipReading, t.variance, t.notes,
       ]),
     ];
@@ -173,12 +177,62 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
   const isFill    = txForm.type === "portable_fill";
   const isReading = txForm.type === "dip_reading" || txForm.type === "monitor_reading";
   const srcTank = tanks.find(t=>t.id===txForm.sourceTankId);
-  const fillCost = isFill ? tankUnitCost(txForm.sourceTankId, tankTx) : 0;
+
+  // Fuel is FIFO, so what a portable fill costs is what the oldest gallons in
+  // the source tank cost — not the price of the last load into it. The portable
+  // then keeps that price until it is filled again, whatever the shop tank does
+  // afterwards. Greg's call, and the right one: the fuel on the truck is the
+  // fuel that was put on the truck.
+  const costing  = costFuel(tankTx, dispensing);
+  const fillQuote = isFill && txForm.sourceTankId
+    ? quoteFuel(costing, txForm.sourceTankId, parseFloat(txForm.gallons) || 0)
+    : null;
+  const fillCost = fillQuote?.unitCost || 0;
   const fillShort = isFill && srcTank && (parseFloat(txForm.gallons)||0) > (srcTank.currentLevel||0);
 
+  // "Fill portable" fills a PORTABLE. Offering the whole list invites somebody
+  // to transfer the main shop diesel into the Kenesaw shed, which is not what
+  // the button says and not a thing that happens.
+  const portables = tanks.filter(t => t.tankType === "portable" && t.status !== "out_of_service");
+  const destinations = (isFill ? portables : tanks.filter(t => t.status !== "out_of_service"))
+    .filter(t => t.id !== txForm.sourceTankId);
+
+  // More fuel than the tank holds. A 1,000 gallon delivery into an 800 gallon
+  // tank is either a typo or fuel on the ground; either way somebody should be
+  // told before it is recorded as stock on hand.
+  const destTank = tanks.find(t => t.id === txForm.tankId);
+  const incoming = parseFloat(txForm.gallons) || 0;
+  const wouldHold = (destTank?.currentLevel || 0) + incoming;
+  const overfill = !isReading && destTank && destTank.capacityGallons > 0 &&
+                   wouldHold > destTank.capacityGallons;
+  const overBy = overfill ? wouldHold - destTank.capacityGallons : 0;
+
+  // What is missing before this can be saved, in words.
+  //
+  // A READING has no gallons — the number it carries is `dipReading`. The
+  // check here used to demand `gallons` whatever the type, so pressing Save on
+  // a reading returned immediately and did nothing at all. Silently: no error,
+  // no record, no explanation. Greg: "The reading for measuring tanks does not
+  // log anywhere. If you hit save it does nothing."
+  //
+  // Returning early without saying why is the fault underneath that bug, so
+  // this names what is wanted rather than just refusing.
+  const missing = (() => {
+    const want = [];
+    if (!txForm.date)   want.push("a date");
+    if (!txForm.tankId) want.push("a tank");
+    if (isReading) {
+      if (txForm.dipReading === "" || txForm.dipReading === null) want.push("what the tank reads");
+    } else if (!txForm.gallons) {
+      want.push("how many gallons");
+    }
+    if (isFill && !txForm.sourceTankId) want.push("the tank it comes out of");
+    return want;
+  })();
+  const blocked = missing.length > 0 || (isFill && fillShort);
+
   const handleTxSave = () => {
-    if (!txForm.date||!txForm.tankId||!txForm.gallons) return;
-    if (isFill && (!txForm.sourceTankId || fillShort)) return;
+    if (blocked) return;
     const tank = tanks.find(t=>t.id===txForm.tankId);
     const gals = parseFloat(txForm.gallons)||0;
     // A transfer inherits the source tank's cost; a delivery sets its own.
@@ -203,7 +257,7 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
         code: txForm.glCode,
         description: `${gals.toLocaleString()} gal ${tank?.fuelType||"fuel"} — ${tank?.name||""}`.trim(),
         amount: deliveryCost,
-        notes: txForm.bidReference ? `Bid ${txForm.bidReference}` : "",
+        notes: "",
       }],
       totalAmount: deliveryCost,
       status: "entered",
@@ -218,7 +272,7 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
       gallons: (txForm.type==="dip_reading"||txForm.type==="monitor_reading") ? 0 : gals,
       vendorName:txForm.vendorName, vendorId: txForm.vendorId || null,
       invoiceNumber:txForm.invoiceNumber,
-      deliveryTicket: txForm.deliveryTicket, bidReference: txForm.bidReference,
+      deliveryTicket: txForm.deliveryTicket,
       expenditureId: expenditure?.id || null,
       // An invoice number typed at delivery means the paper came with the
       // truck — there is nothing left to chase. Only a blank one is expected.
@@ -238,7 +292,7 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
     }});
     setTxForm({ type:"delivery", date: today(), tankId:"", sourceTankId:"", gallons:"",
       vendorId:"", vendorName:"", invoiceNumber:"", unitCost:"", dipReading:"", notes:"",
-      deliveryTicket:"", bidReference:"", claimCycleId:"", glCode: fuelGLCode });
+      deliveryTicket:"", claimCycleId:"", glCode: fuelGLCode });
     setShowTxForm(false);
   };
 
@@ -297,7 +351,7 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
             <Field label={isFill ? "Tank being filled" : "Tank"}>
               <select value={txForm.tankId} onChange={e=>setTx("tankId",e.target.value)} style={{ ...inp, margin:0 }}>
                 <option value="">Select…</option>
-                {tanks.filter(t=>t.id!==txForm.sourceTankId).map(t=><option key={t.id} value={t.id}>{t.name} ({t.currentLevel?.toFixed(0)||0} gal)</option>)}
+                {destinations.map(t=><option key={t.id} value={t.id}>{t.name} ({t.currentLevel?.toFixed(0)||0} gal)</option>)}
               </select>
             </Field>
             {(txForm.type==="dip_reading"||txForm.type==="monitor_reading")
@@ -305,13 +359,25 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
               : <Field label="Gallons"><input type="number" min="0" step="1" value={txForm.gallons} onChange={e=>setTx("gallons",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
             }
           </div>
+          {overfill && (
+            <div style={{ marginBottom:12, background:"#fdecea", border:"1px solid #f5c6c6",
+                          borderRadius:6, padding:"10px 13px", fontSize:12.5, color:"#8c1b18" }}>
+              <strong>{destTank.name} only holds {destTank.capacityGallons.toLocaleString()} gallons.</strong>{" "}
+              It has {(destTank.currentLevel||0).toLocaleString(undefined,{maximumFractionDigits:0})} in it,
+              so {incoming.toLocaleString()} more would put it{" "}
+              {overBy.toLocaleString(undefined,{maximumFractionDigits:0})} gallons over.
+              <div style={{ marginTop:4, color:"#a5544f" }}>
+                Check the ticket. Recording this leaves the tank showing more fuel than it can physically contain.
+              </div>
+            </div>
+          )}
           {isFill && (
             <div style={{ marginBottom:12 }}>
               <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:12 }}>
                 <Field label="Fill from" required>
                   <select value={txForm.sourceTankId} onChange={e=>setTx("sourceTankId",e.target.value)} style={{ ...inp, margin:0 }}>
                     <option value="">Select the tank it comes out of…</option>
-                    {tanks.filter(t=>t.id!==txForm.tankId).map(t=>(
+                    {tanks.filter(t=>t.id!==txForm.tankId && t.tankType!=="portable" && t.status!=="out_of_service").map(t=>(
                       <option key={t.id} value={t.id}>{t.name} ({t.currentLevel?.toFixed(0)||0} gal on hand)</option>
                     ))}
                   </select>
@@ -369,10 +435,7 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
                   <input type="text" value={txForm.deliveryTicket} onChange={e=>setTx("deliveryTicket",e.target.value)}
                     placeholder="From the driver" style={{ ...inp, margin:0, fontFamily:"monospace" }} />
                 </Field>
-                <Field label="Bid Reference">
-                  <input type="text" value={txForm.bidReference} onChange={e=>setTx("bidReference",e.target.value)}
-                    placeholder="Which bid" style={{ ...inp, margin:0, fontFamily:"monospace" }} />
-                </Field>
+                <div />
               </div>
 
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:12, marginBottom:12 }}>
@@ -425,12 +488,17 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
           )}
           <div style={{ display:"flex", gap:10 }}>
             <Field label="Notes" style={{ flex:1 }}><input type="text" value={txForm.notes} onChange={e=>setTx("notes",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
-            <button onClick={handleTxSave}
-              disabled={isFill && (!txForm.sourceTankId || fillShort)}
+            <button onClick={handleTxSave} disabled={blocked}
+              title={missing.length ? `Still needs ${missing.join(", ")}` : undefined}
               style={{ ...btn.primary, marginTop:20,
-                       opacity: (isFill && (!txForm.sourceTankId || fillShort)) ? 0.45 : 1,
-                       cursor:  (isFill && (!txForm.sourceTankId || fillShort)) ? "not-allowed" : "pointer" }}>Save</button>
+                       opacity: blocked ? 0.45 : 1,
+                       cursor:  blocked ? "not-allowed" : "pointer" }}>Save</button>
           </div>
+          {missing.length > 0 && (
+            <div style={{ marginTop:8, fontSize:12, color:"#8c1b18" }}>
+              Still needs {missing.join(", ")}.
+            </div>
+          )}
         </div>
       )}
 
@@ -477,6 +545,24 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
                   <div style={{ height:"100%", width:`${pct}%`, background:barColor, borderRadius:4, transition:"width 0.3s" }} />
                 </div>
               )}
+              {/* What the fuel in it is worth, and what the next gallon out of it
+                  will cost. Those are two different numbers under FIFO — the
+                  average is the whole tank, the next gallon is the oldest layer
+                  — and showing only one of them is how somebody comes to think
+                  the price is wrong. */}
+              {(() => {
+                const v = tankFuelValue(costing, t.id);
+                const next = quoteFuel(costing, t.id, 1).unitCost;
+                if (!v.value && !next) return null;
+                return (
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, color:"#888", marginTop:8 }}>
+                    <span>Value {fmtSm(v.value)}</span>
+                    <span title="FIFO — the oldest gallons go out first" style={{ fontFamily:"monospace" }}>
+                      next ${next.toFixed(4)}/gal
+                    </span>
+                  </div>
+                );
+              })()}
               {pct < 20 && t.capacityGallons > 0 && (
                 <div style={{ fontSize:11, color:"#c0392b", fontWeight:600, marginTop:6 }}>Low — order fuel</div>
               )}
@@ -548,6 +634,12 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
           emptyMessage={selectedTank ? `Nothing recorded against ${selectedTank.name} yet` : "No tank transactions yet"}
         />
       </SectionCard>
+
+      {/* DEF is not a tank at Adams County — it is jugs on a shelf at every
+          shop — but "what have we got, and where" is the same question these
+          tank cards answer, so it belongs on the same screen. A county with a
+          bulk DEF tank sees that here too. */}
+      <DEFOnHand items={invItems} batches={invBatches} groups={invGroups} tanks={tanks} />
     </div>
   );
 }
