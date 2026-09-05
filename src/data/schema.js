@@ -2501,6 +2501,17 @@ export const categoryName = (item, groups = []) => {
 };
 
 // Where a batch is, for display.
+// The place, without the filing number.
+//
+// `locationName` gives "90 — FUEL", which is right in the parts room where the
+// number IS how people refer to a shelf. On an operational screen — how many
+// jugs are at each shop — the number is noise. Greg: "I don't like the fact
+// that the main shop inventory is under the 90-Fuel."
+export const placeName = (code, groups = []) => {
+  const g = groupByCode(code, groups);
+  return g?.name || (code ? `Group ${code}` : "—");
+};
+
 export const locationName = (code, groups = []) =>
   groupLabel(groupByCode(code, groups)) || (code ? `Group ${code}` : "—");
 

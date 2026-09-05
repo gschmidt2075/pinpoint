@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { Icon, Field, Table, inp, btn, fmtSm, DateField, MoneyField, SearchSelect } from "../../components/shared.jsx";
 import { useUnsavedForm } from "../../components/unsaved.jsx";
-import { fluidItems, fluidOnHand, locationName, groupLabel,
+import { fluidItems, fluidOnHand, locationName, placeName, groupLabel,
          issueFluidToMachine, buildFIFOLines } from "../../data/schema.js";
 import { today, fmtDate } from "./shared.js";
 
@@ -57,8 +57,8 @@ export function DEFTab({ items = [], batches = [], groups = [], tanks = [], unit
       if (!ids.has(t.itemId)) continue;
       rows.push({
         date: t.date, kind: t.type, qty: t.quantity, cost: t.totalCost,
-        where: t.type === "transfer" ? `${locationName(t.fromLocation, groups)} → ${locationName(t.toLocation, groups)}`
-                                     : locationName(t.location, groups),
+        where: t.type === "transfer" ? `$`
+                                     : placeName(t.location, groups),
         who: t.issuedTo || t.vendorName || "", notes: t.notes || "", id: t.id,
       });
     }
@@ -160,7 +160,7 @@ export function DEFTab({ items = [], batches = [], groups = [], tanks = [], unit
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12 }}>
             {stock.byLocation.map(l => (
               <div key={l.location} style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:"14px 16px" }}>
-                <div style={{ fontSize:13, fontWeight:700 }}>{locationName(l.location, groups) || "Unassigned"}</div>
+                <div style={{ fontSize:13, fontWeight:700 }}>{placeName(l.location, groups) || "Unassigned"}</div>
                 <div style={{ display:"flex", alignItems:"baseline", gap:8, marginTop:8 }}>
                   <span style={{ fontSize:24, fontWeight:700, fontFamily:"monospace",
                                  color: l.containers <= 2 ? "#c0392b" : "#1a3a5c" }}>{l.containers}</span>
@@ -231,6 +231,12 @@ const placeOptions = (groups) =>
              .map(g => ({ value: g.code, label: groupLabel(g) }));
 
 // ── Received ──────────────────────────────────────────────────────────────────
+// NOTE — this does NOT create a claim. Nothing in the Inventory module does;
+// only a fuel delivery reaches Fund Accounting today. Greg has asked for
+// everything the county receives and pays for to go through it, so this form
+// will change when that is settled. Recorded here rather than left as a
+// surprise, because a receiving screen that looks complete and quietly skips
+// the accounting is worse than one that says so.
 function ReceiveForm({ defItems, groups, dispatch, onDone }) {
   const [form, setForm] = useState({ ...EMPTY_RECEIVE, itemId: defItems[0]?.id || "" });
   useUnsavedForm(form, "this DEF delivery");
@@ -374,7 +380,7 @@ function MoveForm({ defItems, stock, groups, batches, dispatch, onDone }) {
             <option value="">Select…</option>
             {here.map(l => (
               <option key={l.location} value={l.location}>
-                {locationName(l.location, groups)} ({l.containers})
+                {placeName(l.location, groups)} ({l.containers})
               </option>
             ))}
           </select>
@@ -398,7 +404,7 @@ function MoveForm({ defItems, stock, groups, batches, dispatch, onDone }) {
       </div>
       {tooMany && (
         <div style={{ fontSize:11.5, color:"#8c1b18", marginTop:10 }}>
-          {locationName(form.from, groups)} only has {have}. Count it, or move fewer.
+          {placeName(form.from, groups)} only has {have}. Count it, or move fewer.
         </div>
       )}
       {missing.length > 0 && !tooMany && (
@@ -475,7 +481,7 @@ function UseForm({ defItems, stock, groups, batches, units, employees, dispatch,
             <option value="">Wherever it is</option>
             {here.map(l => (
               <option key={l.location} value={l.location}>
-                {locationName(l.location, groups)} ({l.containers})
+                {placeName(l.location, groups)} ({l.containers})
               </option>
             ))}
           </select>
@@ -523,7 +529,7 @@ function UseForm({ defItems, stock, groups, batches, units, employees, dispatch,
           {draft.dispensing.containers} {draft.dispensing.containers === 1 ? "jug" : "jugs"} ·{" "}
           {draft.gallons.toFixed(1)} gal · <strong>{fmtSm(draft.totalCost)}</strong> onto unit{" "}
           {draft.dispensing.unitNumber || "—"}, off the shelf at{" "}
-          {locationName(draft.transaction.location, groups) || "wherever it was"}.
+          {placeName(draft.transaction.location, groups) || "wherever it was"}.
         </div>
       )}
     </div>
