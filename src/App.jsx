@@ -762,7 +762,6 @@ function baseReducer(state, action) {
     case "UPDATE_SIGN":     return { ...state, signs:      state.signs.map(s      => s.id === action.payload.id ? action.payload : s) };
     case "ADD_SIGN_HISTORY":return { ...state, signHistory:[...state.signHistory, action.payload] };
 
-    // ── Vendors ────────────────────────────────────────────────────────────
     // ── Employees ──────────────────────────────────────────────────────────
     // There is no pay scale table. Rates live on the person as a dated history
     // — see createRateChange. The old table said the CLASSIFICATION set the
@@ -820,9 +819,11 @@ function baseReducer(state, action) {
     case "UPDATE_VENDOR":   return { ...state, vendors: state.vendors.map(v => v.id === action.payload.id ? action.payload : v) };
     case "DELETE_VENDOR":   return { ...state, vendors: state.vendors.map(v => v.id === action.payload ? { ...v, active: false } : v) };
 
-    // ── Employees ──────────────────────────────────────────────────────────
-    case "ADD_EMPLOYEE":    return { ...state, employees: [...state.employees, action.payload] };
-    case "UPDATE_EMPLOYEE": return { ...state, employees: state.employees.map(e => e.id === action.payload.id ? action.payload : e) };
+    // ADD_EMPLOYEE and UPDATE_EMPLOYEE were declared a second time here, below
+    // the ones that already handle them. A duplicate `case` is dead — the first
+    // wins — so this pair did nothing, silently, and would have kept doing
+    // nothing if somebody had "fixed" a bug by editing it. Found by eslint,
+    // which was configured in this project and had never been run.
     case "DELETE_EMPLOYEE": return { ...state, employees: state.employees.map(e => e.id === action.payload ? { ...e, active: false } : e) };
 
     // ── Settings ───────────────────────────────────────────────────────────
