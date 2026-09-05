@@ -293,3 +293,81 @@ the factory.
 regex. It behaved correctly, but the file registered as binary to grep, to
 diffs, and to anything that trims stray control bytes on save. Rewritten with
 escape sequences — same range, same behaviour, and the file is text again.
+
+
+---
+
+# DEF, and additives
+
+Rebuilt 2026-09-05 after Greg tried the first version.
+
+## DEF has its own tab
+
+> *"I can't seem to figure out how the DEF jugs get distributed to a shop and
+> where they get logged. They are usually not used when they fuel their machines
+> so I don't want it under the Log Fuel option."*
+
+The first design put DEF on the fuel log and was wrong twice over. It assumed a
+jug goes in at the same moment as a tank of diesel — it does not — and it only
+answered the LAST of three questions. A jug is bought, carried out to a shed,
+and poured in some week later. **The middle step had no home at all**, which is
+why he could not find it.
+
+The tab owns all three:
+
+| | |
+|---|---|
+| **Receive** | a delivery arrives, onto a shelf, with vendor and cost |
+| **Move to a shed** | jugs from the shop out to Kenesaw — the missing step |
+| **Log into a machine** | off the shelf and onto the machine's cost, one entry |
+
+Underneath these are an ordinary receipt, transfer and issue, so DEF stays one
+item with a batch per shed and nothing invents a second way to hold stock.
+
+DEF is **removed** from the fuel log — not hidden, deleted, along with the code
+behind it.
+
+## Additives go on the delivery
+
+> *"The BG products are fuel additives that go directly into the tanks... It
+> isn't worth a screen but there needs to be a way to cost it out into the
+> fuel."*
+> *"The fuel additive is added at the same time of delivery."*
+
+So it is a small optional block at the foot of the **delivery** form, not a
+screen and not a separate event. Its cost joins **that load's** gallons:
+
+```
+5,000 gal @ $3.50  +  $100 of BG   →   5,000 gal @ $3.52
+```
+
+Fuel already in the tank was not treated and is not charged for it. FIFO still
+runs, so the older untreated gallons go out first at their own price.
+
+There is deliberately **no way to dose a tank that is already full.** It would
+be a second screen for something the county does not do, and a second way to
+record one event is how two people record it differently. An earlier version had
+it; it was removed rather than left as an unused alternative.
+
+## Which products
+
+A mark on the inventory item — `fluidType` of `def` or `additive` — because Greg
+said only *some* of the BG range are additives. Not a guess from the description,
+which is exactly the mistake the crosswalk rules made first time round.
+
+## What the tests hold
+
+- The treated load costs more and **the fuel already in the tank does not**
+- FIFO order is unchanged — untreated gallons still go first
+- **No gallons are created**: a quart of BG does not make 5,000 gallons 5,000.25
+- The money balances: value left in the tank plus value issued equals fuel
+  bought plus additive bought
+- A jug of additive cannot enter a tank without leaving inventory
+
+## One bug this move nearly caused
+
+The reducer took the inventory issue only when the tank transaction's type was
+`additive`. Moving the additive onto a delivery meant that check stopped
+matching, and the additive would have gone into the fuel **without ever coming
+off the shelf** — with nothing on any screen to show it. It is now keyed on the
+issue being present rather than on the type.

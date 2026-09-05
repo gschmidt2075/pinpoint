@@ -13,13 +13,13 @@
 
 import { transferStock, stockByLocation, stockAtLocation, categoryName, createInventoryItem,
          groupByCode, groupById, groupLabel, locationName } from "../src/data/schema.js";
-import { parseCSV, crosswalkInventory } from "../src/data/crosswalk.js";
+import { parseCSV, crosswalkInventory, fluidRuleFor, FLUID_RULES } from "../src/data/crosswalk.js";
 import { readFileSync } from "node:fs";
 import { INITIAL_INVENTORY_ITEMS as ITEMS,
          INITIAL_INVENTORY_BATCHES as BATCHES,
          INITIAL_INVENTORY_TRANSACTIONS as TXS,
          INITIAL_INVENTORY_GROUPS as GROUPS,
-         INVENTORY_EXCEPTIONS as EXCEPTIONS } from "../src/data/inventoryData.js";
+         INVENTORY_EXCEPTIONS as EXCEPTIONS, INITIAL_TANK_OPENINGS } from "../src/data/inventoryData.js";
 
 let passed = 0;
 const failures = [];
@@ -86,7 +86,21 @@ ok(spread.length > 0, `${spread.length} items are held in more than one place at
 }
 
 // Ties to the legacy Cost On Hand for every row with a positive quantity.
-close(BATCHES.reduce((s, b) => s + b.totalCost, 0), 1554890.75, "opening value ties to the old system");
+//
+// The figure USED to be the whole $1,554,890.75. Fuel now leaves the catalog
+// for the tanks, so the catalog alone is less than R&B's total — and the check
+// worth having is not the old number but the relationship:
+//
+//     what is in the catalog  +  what went to the tanks  =  what R&B had
+//
+// That proves nothing was lost, only moved. A rule that wrongly routed a part
+// out of inventory would still balance here, which is why the routing itself is
+// pinned row by row above; this one catches anything DROPPED.
+const CATALOG_VALUE = BATCHES.reduce((s, b) => s + b.totalCost, 0);
+const TANK_VALUE    = (INITIAL_TANK_OPENINGS || []).reduce((s, t) => s + t.totalCost, 0);
+close(CATALOG_VALUE, 1499252.86, "the catalog opens at what is really on the shelves");
+close(TANK_VALUE,      55637.89, "and the tanks hold the fuel that used to be counted twice");
+close(CATALOG_VALUE + TANK_VALUE, 1554890.75, "together they tie to R&B to the penny — nothing lost, moved");
 
 // Nothing carries a negative quantity into the opening balance.
 ok(BATCHES.every(b => b.quantityRemaining >= 0), "no batch opens with a negative quantity");
@@ -233,7 +247,7 @@ console.log("\nCrosswalk");
 {
   const csv = readFileSync(new URL("./fixtures/crosswalk-sample.csv", import.meta.url), "utf8");
   const { records } = parseCSV(csv);
-  eq(records.length, 18, "every row parses, including the ones with inch marks in them");
+  eq(records.length, 26, "every row parses, including the ones with inch marks in them");
 
   // The parser bug that lost 1,093 of 2,375 rows: a quote is only special at
   // the START of a field. `Stihl 36"` is data, not the beginning of a quote.
@@ -292,8 +306,18 @@ console.log("\nCrosswalk");
   eq(out.groups.find(g => g.code === "1").name, "SHOP TOOLS", "the majority name wins a collision");
 
   // The opening balance is the sum of what is really there.
-  const expected = 500 + 200 + 100 + 60 + 20 + 1016.99 + 631.38 + 200 + 100 + 20 + 129 + 54.21 + 3303.30 + 2500;
+  //
+  // The DEF rows and the DEF filter and cap are IN it — DEF is stock, it just
+  // happens to be merged onto one item. The three fuel rows are NOT: their
+  // $27,608.66 belongs to the tanks, and adding it here is the double count the
+  // routing exists to prevent.
+  const stock = 500 + 200 + 100 + 60 + 20 + 1016.99 + 631.38 + 200 + 100 + 20 + 129 + 54.21 + 3303.30 + 2500;
+  const def   = 505.18 + 202.86 + 173.80;      // one item, three sheds
+  const parts = 126.45 + 39.98;                // the DEF filter and the DEF cap
+  const expected = stock + def + parts;
   close(out.summary.openingValue, expected, "the opening value is every good row, and only those");
+  ok(out.summary.openingValue < expected + 1 && !String(out.summary.openingValue).includes("27608"),
+     "and the tanks' fuel is nowhere in it");
 }
 
 // ── The import ───────────────────────────────────────────────────────────────
@@ -484,6 +508,112 @@ console.log("\nMoney fields");
   const third = commit("5.555");
   eq(shown(third), "5.55", "a third decimal settles to two");
   eq(Number(shown(third)), third, "and what is stored is exactly what is shown");
+}
+
+// ── Fuel and fluids in the inventory file ────────────────────────────────────
+//
+// R&B carried the tanks' contents AND the DEF jugs as ordinary stock. Greg,
+// 2026-09-05: "Yes, the fuel should be tracked in the fuel module" and "One
+// Item with as many batches as necessary."
+//
+// The rules are regexes over a description, which is the kind of thing that
+// works on the sixteen examples somebody thought of and fails on the
+// seventeenth. So the real descriptions from the county's own file are pinned
+// here, including every near miss.
+{
+  console.log("\nTelling fuel from parts");
+  const is = (desc, part, want, uom = "EACH") =>
+    eq((fluidRuleFor(desc, part, uom) || { id:"stock" }).id, want, `${uom.padEnd(6)} ${desc.slice(0, 38)}`);
+
+  // The eight rows that ARE the tanks, exactly as the county's file has them.
+  is("Diesel Exhaust Fluid", "DEF-26", "def", "EACH");
+  is("Diesel Fuel Kenesaw",  "DIESEL26-07",  "diesel", "GALLON");
+  is("Diesel Fuel Hastings", "DIESEL26-12",  "diesel", "GALLON");
+  is("Diesel Fuel 402",      "DIESEL26-402", "diesel", "GALLON");
+  is("Unleaded Fuel Hastings", "GAS26", "unleaded", "GALLON");
+  // R&B records the Pauline tank as EACH. The description saves it.
+  is("Diesel Fuel Pauline", "DIESEL26-11", "diesel", "EACH");
+  // And a county that writes it differently is still caught, on the unit.
+  is("Dyed Diesel #2", "D2", "diesel", "GAL");
+
+  // ── The twelve that were WRONGLY routed on the first run ─────────────────
+  //
+  // Taking a row out of the catalog is the destructive direction: a part sent
+  // to a tank simply vanishes from inventory. My first rule set did that to
+  // 2,478 quarts of engine oil and four chemicals. Every one is pinned here.
+  is("Diesel Oil Kenesaw",  "15W40-26",  "stock", "QUART");
+  is("Diesel Oil Holstein", "15W40-26",  "stock", "QUART");
+  is("Diesel Oil Roseland", "15W40-26",  "stock", "QUART");
+  is("Diesel Oil Pauline",  "15W40-26",  "stock", "QUART");
+  is("Diesel Oil 430",      "15W40-26",  "stock", "QUART");
+  is("15W40 Diesel Oil",    "15W40-26B", "stock", "QUART");
+  is("(E5A) BG Diesel Oil Conditionr",  "11232", "stock", "EACH");
+  is("(E5A) BG Diesel System Cleaner",  "24532", "stock", "EACH");
+  is("(E5A) BG Diesel Thaw",            "25632", "stock", "QUART");
+  is("(E5B) BG HD Diesel Flush Kit",    "9255",  "stock", "EACH");
+
+  // The near misses — all real rows from the county's file. Every one of these
+  // contains the word DEF or DIESEL and none of them is fuel.
+  is("(A1C) WIX Def Filter RE554498", "A1C", "stock");
+  is("(C3C) WIX DEF Supply Filter", "C3C", "stock");
+  is("(C3F) GRADALL (MB) DEF Cap", "C3F", "stock");
+  is("(D4C) WIX Def/Hyd Breather", "D4C", "stock");
+  is("(B5A) VOLVO DEF Filter", "B5A", "stock");
+  is("(BC8) Diesel Fuel Nozzle", "045710", "stock");
+  is("(BC4) VOLVO Diesel Fuel Cap", "17204527", "stock");
+  is("Diesel Fuel Cap", "MDSMGC537", "stock");
+  is("1500 GAL Fuel Tank/Meter", "7-00", "stock");
+  is("Diesel Fuel Conditioner", "DFC-1", "stock");
+  // "Fuel" plus gallons and STILL not fuel — the exclusions have to win.
+  is("Diesel Fuel Tank 100 Gallon", "TK-100", "stock", "GALLON");
+
+  // The one that actually caught me out: "Diesel Exhaust Fluid" contains the
+  // word diesel, and with the diesel rule first it was routed to a tank. DEF
+  // must be tested first, and this is the assertion that keeps it there.
+  eq(FLUID_RULES[0].id, "def", "DEF is tested before diesel, or DEF becomes fuel");
+}
+
+{
+  console.log("\nWhat the crosswalk does with them");
+  const csv = readFileSync(new URL("./fixtures/crosswalk-sample.csv", import.meta.url), "utf8");
+  const out = crosswalkInventory(parseCSV(csv).records);
+
+  const def = out.items.filter(i => i.fluidType === "def");
+  eq(def.length, 1, "DEF is ONE item, not one per shed");
+  eq(def[0].name, "Diesel Exhaust Fluid", "named for what it is");
+  eq(def[0].partNumber, "DEF-26", "keeping the commonest part number");
+  eq(def[0].commodityGroup, "FUEL", "categorised by the group that is not a place");
+  eq(def[0].unitGallons, 0, "container size left blank — an export cannot know it");
+
+  const defBatches = out.batches.filter(b => b.itemId === def[0].id);
+  eq(defBatches.length, 3, "with one opening balance per shed");
+  eq([...new Set(defBatches.map(b => b.location))].sort().join(","), "7,9,90",
+     "at the sheds it was actually held at");
+
+  // The filter and the cap are ordinary stock and must survive.
+  ok(out.items.some(i => /Def Filter/i.test(i.name)), "the DEF filter is still a part");
+  ok(out.items.some(i => /DEF Cap/i.test(i.name)),    "and so is the DEF cap");
+  ok(!out.items.some(i => i.fluidType === "def" && /filter|cap/i.test(i.name)),
+     "neither of them was mistaken for fluid");
+
+  // Fuel is out of the catalog entirely.
+  eq(out.items.filter(i => /Diesel Fuel (Kenesaw|Hastings)|Unleaded Gasoline/i.test(i.name)).length, 0,
+     "no tank's fuel is left in the catalog");
+  eq(out.tankOpenings.length, 3, "it comes out as tank opening balances");
+  close(out.summary.tankOpeningGallons, 7753.6, "carrying their gallons");
+  close(out.summary.tankOpeningValue, 27608.66, "and their value");
+
+  // The double count this exists to prevent.
+  ok(!out.batches.some(b => out.tankOpenings.some(t => t.partNumber === b.itemName)),
+     "and none of it is also an inventory batch");
+  ok(out.summary.openingValue < out.summary.tankOpeningValue + out.summary.openingValue,
+     "fuel value is reported apart from the opening inventory, never added to it");
+
+  const kinds = new Set(out.exceptions.map(e => e.kind));
+  ok(kinds.has("Fuel — moved to the Fuel module"), "every routed row is reported, not dropped quietly");
+  ok(kinds.has("Fluid merged from several part numbers"), "and so is every merge");
+  ok(kinds.has("Fluid rows disagree on unit of measure"), "EA against GAL on the same fluid is flagged");
+  ok(kinds.has("Container size needed"), "and somebody is asked for the gallons per jug");
 }
 
 // ── Result ───────────────────────────────────────────────────────────────────

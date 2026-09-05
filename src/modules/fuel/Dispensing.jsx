@@ -2,15 +2,13 @@ import { useState, useMemo } from "react";
 import { Field, Table, KPICard, inp, btn, fmtSm, DateField, titleCase } from "../../components/shared.jsx";
 import { useUnsavedForm } from "../../components/unsaved.jsx";
 import { today, fmtDate } from "./shared.js";
-import { costFuel, quoteFuel, fluidItems, fluidOnHand, issueFluidToMachine,
-         locationName } from "../../data/schema.js";
+import { costFuel, quoteFuel } from "../../data/schema.js";
 
 // The pump log. Every fuelling: which machine or which department, how much,
 // from which tank, and the meter reading — which is the record every PM
 // interval in the system is measured against.
 
-export function FuelLogTab({ dispensing, units, tanks, tankTx, departments, employees = [],
-                             invItems = [], invBatches = [], invGroups = [], dispatch }) {
+export function FuelLogTab({ dispensing, units, tanks, tankTx, departments, employees = [], dispatch }) {
   const [showForm, setShowForm] = useState(false);
   const EMPTY = {
     date: today(), consumer:"county_equipment",
@@ -18,8 +16,6 @@ export function FuelLogTab({ dispensing, units, tanks, tankTx, departments, empl
     departmentName:"", outsideVehicle:"", outsideOdometer:"",
     fuelType:"diesel", gallons:"", pumpedBy:"", taxClass:"",
     sourceTankId:"", notes:"",
-    // DEF only — which jug, off which shelf, how many.
-    fluidItemId:"", fluidLocation:"", containers:"",
   };
   const [form, setForm] = useState(EMPTY);
   useUnsavedForm(form, "this fuel log");
@@ -44,31 +40,10 @@ export function FuelLogTab({ dispensing, units, tanks, tankTx, departments, empl
     document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
   };
 
-  // ── DEF ────────────────────────────────────────────────────────────────────
-  //
-  // Not a tank. Jugs on a shelf at every shop, poured in whole, logged here
-  // because this is where the person already is — Greg's call. A bulk DEF tank
-  // would appear in the tank list like any other and needs none of this.
-  const isDEF     = form.fuelType === "def";
-  const defStock  = useMemo(() => fluidOnHand(invItems, invBatches, "def"), [invItems, invBatches]);
-  const defChoices = useMemo(() => fluidItems(invItems, "def"), [invItems]);
-  const defItem   = defChoices.find(i => i.id === form.fluidItemId) || (defChoices.length === 1 ? defChoices[0] : null);
-  const defTanks  = tanks.filter(t => (t.fuelType || "") === "def" && t.status !== "out_of_service");
-  // Only shelves that actually have some.
-  const defPlaces = defStock.byLocation.filter(l => !defItem || l.items.includes(defItem.id));
-
-  const defDraft = (isDEF && defItem && form.containers)
-    ? issueFluidToMachine({
-        item: defItem, location: form.fluidLocation || "all",
-        containers: parseFloat(form.containers) || 0, batches: invBatches,
-        date: form.date, equipmentId: form.equipmentId,
-        unitNumber: units.find(u => u.id === form.equipmentId)?.unitNumber || "",
-        meterReading: parseFloat(form.meterReading) || 0,
-        meterType: units.find(u => u.id === form.equipmentId)?.meterType || "hours",
-        pumpedBy: form.pumpedBy, notes: form.notes,
-      })
-    : null;
-
+  // DEF used to be logged on this screen. It is not any more — Greg: "They are
+  // usually not used when they fuel their machines so I don't want it under the
+  // Log Fuel option." It has its own tab, which also covers receiving jugs and
+  // carrying them out to a shed, which is the step that had no home before.
   const isOutside     = form.consumer === "other_department";
   const selectedUnit  = units.find(u=>u.id===form.equipmentId);
 
@@ -117,26 +92,11 @@ export function FuelLogTab({ dispensing, units, tanks, tankTx, departments, empl
   const unitCost  = quote.unitCost;
   const totalCost = quote.totalCost;
 
-  const canSave = isDEF
-    ? Boolean(form.date && form.equipmentId && defDraft?.ok)
-    : Boolean(form.date && gallons > 0 && (isOutside ? form.departmentName : form.equipmentId));
+  const canSave = Boolean(form.date && gallons > 0 &&
+    (isOutside ? form.departmentName : form.equipmentId));
 
   const handleSave = () => {
     if (!canSave) return;
-
-    // DEF is one dispatch carrying two records — the entry against the machine
-    // and the issue off the shelf. They travel together on purpose: a jug
-    // poured into a machine that never leaves the shelf count is how the shelf
-    // count stops meaning anything, quietly, over months.
-    if (isDEF) {
-      dispatch({ type:"ADD_FUEL_DISPENSING",
-                 payload: defDraft.dispensing,
-                 transaction: defDraft.transaction });
-      setForm({ ...EMPTY, date: form.date, fuelType: "def",
-                fluidItemId: form.fluidItemId, fluidLocation: form.fluidLocation,
-                pumpedBy: form.pumpedBy });
-      return;
-    }
 
     dispatch({ type:"ADD_FUEL_DISPENSING", payload:{
       id:`${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
@@ -254,7 +214,6 @@ export function FuelLogTab({ dispensing, units, tanks, tankTx, departments, empl
                     <select value={form.fuelType} onChange={e=>setFuelType(e.target.value)} style={{ ...inp, margin:0 }}>
                       <option value="diesel">Diesel</option>
                       <option value="unleaded">Unleaded</option>
-                      <option value="def">DEF</option>
                     </select>
                   )}
                 </Field>
@@ -269,47 +228,18 @@ export function FuelLogTab({ dispensing, units, tanks, tankTx, departments, empl
                     </select>
                   </Field>
                 )}
-                {isDEF ? (
-                  <>
-                    <Field label="Jugs" required>
-                      <input type="number" min="0" step="1" value={form.containers}
-                             onChange={e=>set("containers",e.target.value)}
-                             style={{ ...inp, margin:0, fontFamily:"monospace" }} />
-                      {defItem?.unitGallons > 0 && (
-                        <div style={{ fontSize:10.5, color:"#888", marginTop:3 }}>
-                          {defItem.unitGallons} gal each
-                          {form.containers ? ` · ${((parseFloat(form.containers)||0) * defItem.unitGallons).toFixed(1)} gal` : ""}
-                        </div>
-                      )}
-                    </Field>
-                    <Field label="Off Which Shelf">
-                      <select value={form.fluidLocation} onChange={e=>set("fluidLocation",e.target.value)}
-                              style={{ ...inp, margin:0 }}>
-                        <option value="">Wherever it is</option>
-                        {defPlaces.map(l => (
-                          <option key={l.location} value={l.location}>
-                            {locationName(l.location, invGroups)} ({l.containers})
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
-                  </>
-                ) : (
-                  <>
-                    <Field label="Gallons" required><input type="number" min="0" step="0.1" value={form.gallons} onChange={e=>set("gallons",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
-                    <Field label="Tank">
-                      <select value={form.sourceTankId} onChange={e=>set("sourceTankId",e.target.value)} style={{ ...inp, margin:0 }}>
-                        <option value="">Not specified</option>
-                        {usableTanks.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
-                      </select>
-                      {usableTanks.length === 0 && (
-                        <div style={{ fontSize:11, color:"#c0392b", marginTop:4 }}>
-                          No tank holds {form.fuelType}.
-                        </div>
-                      )}
-                    </Field>
-                  </>
-                )}
+                <Field label="Gallons" required><input type="number" min="0" step="0.1" value={form.gallons} onChange={e=>set("gallons",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
+                <Field label="Tank">
+                  <select value={form.sourceTankId} onChange={e=>set("sourceTankId",e.target.value)} style={{ ...inp, margin:0 }}>
+                    <option value="">Not specified</option>
+                    {usableTanks.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                  {usableTanks.length === 0 && (
+                    <div style={{ fontSize:11, color:"#c0392b", marginTop:4 }}>
+                      No tank holds {form.fuelType}.
+                    </div>
+                  )}
+                </Field>
                 <Field label="Pumped By">
                   {crew.length > 0 ? (
                     <select value={form.pumpedBy} onChange={e=>set("pumpedBy",e.target.value)} style={{ ...inp, margin:0 }}>
@@ -356,56 +286,13 @@ export function FuelLogTab({ dispensing, units, tanks, tankTx, departments, empl
                 </Field>
               </div>
 
-              {isDEF && defChoices.length === 0 && (
-                <div style={{ background:"#fef3cd", border:"1px solid #f0d080", borderRadius:5, padding:"8px 11px", marginBottom:12, fontSize:11, color:"#7a4f00" }}>
-                  No DEF in the catalog yet. Add the jug as an inventory item and set its
-                  fluid to DEF and how many gallons one jug holds — then it can be logged here.
-                </div>
-              )}
-
-              {isDEF && defChoices.length > 1 && (
-                <div style={{ marginBottom:12 }}>
-                  <Field label="Which DEF">
-                    <select value={form.fluidItemId} onChange={e=>set("fluidItemId",e.target.value)}
-                            style={{ ...inp, margin:0, maxWidth:340 }}>
-                      <option value="">Select…</option>
-                      {defChoices.map(i => (
-                        <option key={i.id} value={i.id}>{i.name} ({i.unitGallons} gal)</option>
-                      ))}
-                    </select>
-                  </Field>
-                </div>
-              )}
-
-              {isDEF && defDraft && !defDraft.ok && form.containers && (
-                <div style={{ background:"#fdecea", border:"1px solid #f0b4b4", borderRadius:5, padding:"8px 11px", marginBottom:12, fontSize:11.5, color:"#8c1b18" }}>
-                  {defDraft.reason}
-                </div>
-              )}
-
-              {isDEF && defDraft?.ok && (
-                <div style={{ background:"#f4f7fa", border:"1px solid #dbe4ec", borderRadius:5, padding:"8px 11px", marginBottom:12, fontSize:11.5, color:"#40607d" }}>
-                  {defDraft.dispensing.containers} {defDraft.dispensing.containers === 1 ? "jug" : "jugs"} ·{" "}
-                  {defDraft.gallons.toFixed(1)} gal · <strong>{fmtSm(defDraft.totalCost)}</strong> onto unit{" "}
-                  {defDraft.dispensing.unitNumber || "—"}, and off the shelf at{" "}
-                  {locationName(defDraft.transaction.location, invGroups) || "wherever it was"}.
-                </div>
-              )}
-
-              {isDEF && defTanks.length > 0 && (
-                <div style={{ fontSize:11, color:"#888", marginBottom:12 }}>
-                  This county also has a bulk DEF tank. Log from the tank instead by choosing it
-                  under Tank — jugs and bulk both end up on the machine the same way.
-                </div>
-              )}
-
-              {!isDEF && form.sourceTankId && !unitCost && (
+              {form.sourceTankId && !unitCost && (
                 <div style={{ background:"#fef3cd", border:"1px solid #f0d080", borderRadius:5, padding:"8px 11px", marginBottom:12, fontSize:11, color:"#7a4f00" }}>
                   No delivery cost recorded for {selectedTank?.name} yet — log a delivery on the Tanks tab so fuel can be costed and billed.
                 </div>
               )}
 
-              {!isDEF && form.sourceTankId && unitCost > 0 && quote.estimated && (
+              {form.sourceTankId && unitCost > 0 && quote.estimated && (
                 <div style={{ background:"#fef3cd", border:"1px solid #f0d080", borderRadius:5, padding:"8px 11px", marginBottom:12, fontSize:11, color:"#7a4f00" }}>
                   This takes {quote.shortGallons.toLocaleString(undefined,{maximumFractionDigits:0})} gallons
                   more than {selectedTank?.name} is recorded as holding, so part of the cost is
@@ -413,7 +300,7 @@ export function FuelLogTab({ dispensing, units, tanks, tankTx, departments, empl
                 </div>
               )}
 
-              {!isDEF && quote.lines.length > 1 && !quote.estimated && (
+              {quote.lines.length > 1 && !quote.estimated && (
                 <div style={{ background:"#f4f7fa", border:"1px solid #dbe4ec", borderRadius:5, padding:"8px 11px", marginBottom:12, fontSize:11, color:"#40607d" }}>
                   This draws from {quote.lines.length} deliveries —{" "}
                   {quote.lines.map((l,i) => (

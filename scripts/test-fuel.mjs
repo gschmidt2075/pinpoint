@@ -12,7 +12,7 @@ import { costFuel, fuelCostOf, fillCostOf, quoteFuel, tankLayers,
          tankFuelValue, departmentFuelBill, createFuelTaxRate, fuelTaxRatesOn,
          quarterOf, quarterRange, fuelTaxReport, quartersWithFuel,
          buildFIFOLines, fluidItems, fluidOnHand, issueFluidToMachine,
-         createInventoryItem, createInventoryBatch } from "../src/data/schema.js";
+         createInventoryItem, createInventoryBatch, additiveEffect } from "../src/data/schema.js";
 
 let passed = 0;
 const failures = [];
@@ -386,6 +386,64 @@ const batch = (o) => createInventoryBatch({ itemId:"def-jug", status:"open", ...
   close(r.totalCost, 5*12 + 1*14, "and the cost follows that order");
   ok(r.canFulfill, "six of ten can be met");
   eq(buildFIFOLines("def-jug", "133", 20, batches).short, 10, "and a shortfall is reported, not rounded away");
+}
+
+
+// ── Fuel additive ────────────────────────────────────────────────────────────
+//
+// Greg: "The BG products are fuel additives that go directly into the tanks...
+// there needs to be a way to cost it out into the fuel."
+//
+// Cost in, no gallons in. The county does not buy additive for its own sake, it
+// buys it to put in the diesel, and the diesel is what gets charged to a
+// machine — so the cost has to reach the machine through the fuel.
+
+{
+  console.log("\nAdditive dosed into a delivery — the normal case");
+  //
+  // Greg: "The fuel additive is added at the same time of delivery."
+  //
+  // So it rides with THAT load's gallons. Fuel already in the tank was not
+  // treated and must not be charged for it.
+  const tx = [
+    del({ id:"d1", tankId:"T", date:"2026-07-01", gallons:1000, unitCost:3.00, createdAt:"1" }),
+    del({ id:"d2", tankId:"T", date:"2026-07-10", gallons:5000, unitCost:3.50,
+          additiveCost:100, additiveQty:2, createdAt:"2" }),
+  ];
+  const c = costFuel(tx, []);
+  const layers = tankLayers(c, "T");
+  close(layers[0].unitCost, 3.00, "the fuel already in the tank is untouched");
+  close(layers[1].unitCost, 3.52, "the treated load carries the additive — $100 over 5,000 gallons");
+
+  const eff = additiveEffect(c, "d2");
+  ok(eff.onDelivery, "recorded as having gone in with the delivery");
+  close(eff.perGallon, 0.02, "two cents a gallon");
+
+  // FIFO still runs: the untreated fuel goes out first, at its own price.
+  const c2 = costFuel(tx, [
+    { id:"f1", sourceTankId:"T", date:"2026-07-12", gallons:1000, createdAt:"3" },
+    { id:"f2", sourceTankId:"T", date:"2026-07-13", gallons:1000, createdAt:"4" },
+  ]);
+  close(fuelCostOf(c2, "f1").unitCost, 3.00, "the older gallons still go first, untreated");
+  close(fuelCostOf(c2, "f2").unitCost, 3.52, "and the treated ones follow at the treated price");
+
+  // The money has to balance.
+  const v = tankFuelValue(c2, "T");
+  close(v.value + fuelCostOf(c2,"f1").totalCost + fuelCostOf(c2,"f2").totalCost,
+        1000*3 + 5000*3.5 + 100,
+        "value left plus value issued equals fuel bought plus additive bought");
+}
+
+{
+  console.log("\nAdditive follows the fuel into a portable");
+  const tx = [
+    del({ id:"d1", tankId:"T", date:"2026-07-01", gallons:1000, unitCost:3.00,
+          additiveCost:100, createdAt:"1" }),
+    fill({ id:"p1", sourceTankId:"T", destinationTankId:"402F", date:"2026-07-03", gallons:100, createdAt:"2" }),
+  ];
+  const c = costFuel(tx, [{ id:"f1", sourceTankId:"402F", date:"2026-07-10", gallons:50, createdAt:"4" }]);
+  close(fillCostOf(c, "p1").unitCost, 3.10, "the portable is filled at the treated price");
+  close(fuelCostOf(c, "f1").unitCost, 3.10, "and the machine it feeds pays it too");
 }
 
 console.log(failures.length ? `\n${failures.length} failed, ${passed} passed\n`

@@ -2,8 +2,8 @@ import { useState, useMemo } from "react";
 import { Field, SectionCard, Table, inp, btn, fmtSm, DateField, SearchSelect, titleCase, MoneyField } from "../../components/shared.jsx";
 import { useUnsavedForm } from "../../components/unsaved.jsx";
 import { today, fmtDate, reconciliationStatus } from "./shared.js";
-import { costFuel, quoteFuel, tankFuelValue } from "../../data/schema.js";
-import { DEFOnHand } from "./DEF.jsx";
+import { costFuel, quoteFuel, tankFuelValue, fluidItems, buildFIFOLines,
+         locationName } from "../../data/schema.js";
 import { CLAIM_CYCLES } from "../FundAccounting.jsx";
 
 // Tanks: what is in them, what went in, what came out, and whether the
@@ -109,7 +109,8 @@ function DeliveryInvoices({ tankTx, dispatch }) {
 export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode = "302.09",
                           invItems = [], invBatches = [], invGroups = [], dispatch }) {
   const [selectedTankId, setSelectedTankId] = useState(null);
-  const [txForm, setTxForm] = useState({ type:"delivery", date: today(), tankId:"", sourceTankId:"",
+  const [txForm, setTxForm] = useState({ additiveItemId:"", additiveLocation:"", additiveQty:"",
+    type:"delivery", date: today(), tankId:"", sourceTankId:"",
     gallons:"", vendorId:"", vendorName:"", invoiceNumber:"", unitCost:"", dipReading:"", notes:"",
     deliveryTicket:"", claimCycleId:"", glCode: fuelGLCode });
   useUnsavedForm(txForm, "this tank entry");
@@ -173,6 +174,20 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
     return CLAIM_CYCLES.filter(c => c.date >= t).slice(0, 8);
   }, []);
   const deliveryTotal = (parseFloat(txForm.gallons)||0) * (parseFloat(txForm.unitCost)||0);
+
+  // Additive dosed into the load as it arrives. Greg: "The fuel additive is
+  // added at the same time of delivery." So its cost joins THIS load's gallons
+  // and rides with them — fuel already in the tank was not treated.
+  const additiveChoices = fluidItems(invItems, "additive");
+  const additiveItem = additiveChoices.find(i => i.id === txForm.additiveItemId) || null;
+  const additiveQty  = parseFloat(txForm.additiveQty) || 0;
+  const additivePick = (additiveItem && additiveQty > 0)
+    ? buildFIFOLines(additiveItem.id, txForm.additiveLocation || "all", additiveQty, invBatches)
+    : null;
+  const additiveCost  = additivePick?.canFulfill ? additivePick.totalCost : 0;
+  const additiveShort = additivePick ? !additivePick.canFulfill : false;
+  const additivePerGal = (additiveCost && parseFloat(txForm.gallons) > 0)
+    ? additiveCost / parseFloat(txForm.gallons) : 0;
 
   const isFill    = txForm.type === "portable_fill";
   const isReading = txForm.type === "dip_reading" || txForm.type === "monitor_reading";
@@ -283,14 +298,33 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
       reconciledDate: (isDelivery && txForm.invoiceNumber.trim()) ? txForm.date : "",
       expenditure,
       deliveryCost, unitCost:perGal,
+      // The additive rides with this load. costFuel folds it into the layer, so
+      // the treated gallons cost more and the untreated ones in the tank do not.
+      additiveItemId:   isDelivery && additiveCost ? additiveItem.id : null,
+      additiveItemName: isDelivery && additiveCost ? additiveItem.name : "",
+      additiveQty:      isDelivery && additiveCost ? additiveQty : 0,
+      additiveCost:     isDelivery && additiveCost ? Number(additiveCost.toFixed(2)) : 0,
       sourceTankId: isFill ? txForm.sourceTankId : null,
       sourceTankName: isFill ? (srcTank?.name||"") : "",
       destinationTankId: isFill ? txForm.tankId : null,
       dipReading:parseFloat(txForm.dipReading)||0,
       variance: (txForm.type==="dip_reading"||txForm.type==="monitor_reading") ? (parseFloat(txForm.dipReading)||0) - ((tank?.currentLevel)||0) : 0,
       notes:txForm.notes, createdAt:new Date().toISOString(),
-    }});
-    setTxForm({ type:"delivery", date: today(), tankId:"", sourceTankId:"", gallons:"",
+    },
+    // Off the shelf at the same moment. Same rule as DEF into a machine: the
+    // issue travels with the transaction so additive cannot go into a tank
+    // without leaving inventory.
+    transaction: (isDelivery && additiveCost) ? {
+      id: `${txId}-add`, type:"issue", date: txForm.date,
+      itemId: additiveItem.id, itemName: additiveItem.name,
+      location: txForm.additiveLocation || "", quantity: additiveQty,
+      totalCost: Number(additiveCost.toFixed(2)), batchLines: additivePick.batchLines,
+      issuedTo: tank?.name || "", reference: txId,
+      notes: `Additive into ${tank?.name || "a tank"} with delivery`,
+      createdAt: new Date().toISOString(),
+    } : null});
+    setTxForm({ additiveItemId:"", additiveLocation:"", additiveQty:"",
+      type:"delivery", date: today(), tankId:"", sourceTankId:"", gallons:"",
       vendorId:"", vendorName:"", invoiceNumber:"", unitCost:"", dipReading:"", notes:"",
       deliveryTicket:"", claimCycleId:"", glCode: fuelGLCode });
     setShowTxForm(false);
@@ -437,6 +471,54 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
                 </Field>
                 <div />
               </div>
+
+              {/* Additive, dosed into the load as it lands.
+                  Optional and quiet — most deliveries do not get treated, so it
+                  sits at the bottom of the delivery form rather than being a
+                  question everybody has to answer. WHICH products can go in is
+                  a mark on the item, because Greg said only some of the BG
+                  range are additives. */}
+              {additiveChoices.length > 0 && (
+                <div style={{ borderTop:"1px solid #e4e4e0", paddingTop:12, marginBottom:12 }}>
+                  <div style={{ fontSize:12, fontWeight:600, color:"#555", marginBottom:8 }}>
+                    Additive with this load <span style={{ fontWeight:400, color:"#aaa" }}>— optional</span>
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"2fr 1.2fr 0.8fr 2fr", gap:12, alignItems:"end" }}>
+                    <Field label="Product">
+                      <select value={txForm.additiveItemId} onChange={e=>setTx("additiveItemId",e.target.value)}
+                              style={{ ...inp, margin:0 }}>
+                        <option value="">None</option>
+                        {additiveChoices.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Off which shelf">
+                      <select value={txForm.additiveLocation} onChange={e=>setTx("additiveLocation",e.target.value)}
+                              style={{ ...inp, margin:0 }} disabled={!txForm.additiveItemId}>
+                        <option value="">Wherever it is</option>
+                        {[...new Set(invBatches
+                            .filter(b => b.itemId === txForm.additiveItemId && b.status === "open" && b.quantityRemaining > 0)
+                            .map(b => b.location))]
+                          .map(loc => <option key={loc} value={loc}>{locationName(loc, invGroups)}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="How many">
+                      <input type="number" min="0" step="any" value={txForm.additiveQty}
+                             onChange={e=>setTx("additiveQty",e.target.value)}
+                             style={{ ...inp, margin:0, fontFamily:"monospace" }} disabled={!txForm.additiveItemId} />
+                    </Field>
+                    <div style={{ fontSize:11.5, paddingBottom:9, lineHeight:1.5,
+                                  color: additiveShort ? "#8c1b18" : "#40607d" }}>
+                      {additiveShort
+                        ? `Only ${additiveQty - additivePick.short} on the shelf. Count it, or take it from somewhere else.`
+                        : additiveCost > 0
+                        ? <>{fmtSm(additiveCost)} onto {(parseFloat(txForm.gallons)||0).toLocaleString()} gallons —{" "}
+                            <strong>{additivePerGal < 0.01 ? `${(additivePerGal*100).toFixed(2)}¢` : fmtSm(additivePerGal)} a gallon</strong>,
+                            carried by this load only.</>
+                        : txForm.additiveItemId ? "How many went in?" : ""}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:12, marginBottom:12 }}>
                 <Field label="Bid Price ($/gal)" required>
@@ -635,11 +717,9 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
         />
       </SectionCard>
 
-      {/* DEF is not a tank at Adams County — it is jugs on a shelf at every
-          shop — but "what have we got, and where" is the same question these
-          tank cards answer, so it belongs on the same screen. A county with a
-          bulk DEF tank sees that here too. */}
-      <DEFOnHand items={invItems} batches={invBatches} groups={invGroups} tanks={tanks} />
+      {/* DEF used to hang off the bottom of this screen. It has its own tab
+          now — Greg could not find how a jug reaches a shed, and the answer was
+          that this panel only ever showed the stock, never the movements. */}
     </div>
   );
 }

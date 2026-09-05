@@ -360,7 +360,14 @@ export const createInventoryItem = (overrides = {}) => ({
   // size to be changeable and for bulk to be possible if the county ever goes
   // that way or another county already has. A bulk DEF tank is just a tank with
   // fuelType "def" and needs nothing here.
-  fluidType:       "",            // "" | def | (whatever a county adds)
+  // "" — an ordinary part, issued at a counter like anything else
+  // "def" — jugs on a shelf, moved between shops and poured into machines.
+  //         Lives on the DEF tab, which owns receiving, distributing and use.
+  // "additive" — goes into a TANK, not a machine. Greg: "The BG products are
+  //         fuel additives that go directly into the tanks... there needs to be
+  //         a way to cost it out into the fuel." Not every BG product, so it is
+  //         a per-item mark rather than a guess from the description.
+  fluidType:       "",            // "" | def | additive
   unitGallons:     0,             // gallons in ONE catalog unit — 2.5 for a jug
   // Reorder point. These were being written by the crosswalk and read by the
   // Inventory screen but were never on the factory, so an item added by hand
@@ -977,6 +984,23 @@ export const createTankTransaction = (overrides = {}) => ({
   unitCost:        0,
   // Dispense (fuel to equipment)
   fuelDispensingId: null,        // links to fuel dispensing entry
+  // Additive — a BG product or similar, added to the fuel.
+  //
+  // Greg: "The fuel additive is added at the same time of delivery... it should
+  // probably be under the delivery tab."
+  //
+  // So it lives ON a delivery, and its cost joins that load's own gallons and
+  // rides with them: treat 5,000 gallons at $3.50 with $100 of BG and the layer
+  // is 5,000 gallons at $3.52. Fuel already in the tank was not treated and is
+  // not charged for it.
+  //
+  // There is deliberately no way to dose a tank that is already full. It would
+  // be a second screen for a thing the county does not do, and a second way to
+  // record one event is how two people record it differently.
+  additiveItemId:  null,         // the inventory item it came off the shelf as
+  additiveItemName: "",
+  additiveQty:     0,            // containers issued
+  additiveCost:    0,            // what those containers cost, FIFO
   // Portable fill
   sourceTankId:    null,         // fixed tank that was drawn from
   destinationTankId: null,       // portable tank being filled
@@ -1228,6 +1252,12 @@ export const DEFAULT_FUEL_DEPARTMENTS = [
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Catalog items that are logged at the machine rather than issued at a counter.
+export const FLUID_TYPES = [
+  { value: "",         label: "Ordinary part" },
+  { value: "def",      label: "DEF — poured into machines" },
+  { value: "additive", label: "Fuel additive — goes into a tank" },
+];
+
 export const fluidItems = (items = [], fluidType = "def") =>
   (items || []).filter(i => i && i.active !== false && (i.fluidType || "") === fluidType);
 
@@ -1534,7 +1564,8 @@ export function costFuel(tankTx = [], dispensing = []) {
   for (const t of tankTx || []) {
     if (t.type === "delivery" && t.tankId) {
       events.push({ kind:"delivery", tankId:t.tankId, gallons:Math.abs(Number(t.gallons) || 0),
-                    unitCost:Number(t.unitCost) || 0, date:t.date, createdAt:t.createdAt, id:t.id, order:0 });
+                    unitCost:Number(t.unitCost) || 0, additiveCost:Number(t.additiveCost) || 0,
+                    date:t.date, createdAt:t.createdAt, id:t.id, order:0 });
     } else if (t.type === "portable_fill") {
       events.push({ kind:"fill", tankId:t.sourceTankId, destId:t.destinationTankId || t.tankId,
                     gallons:Math.abs(Number(t.gallons) || 0), date:t.date, createdAt:t.createdAt, id:t.id, order:1 });
@@ -1584,10 +1615,21 @@ export function costFuel(tankTx = [], dispensing = []) {
     };
   };
 
+  const additives = new Map();   // tankTx id → how it was applied
+
   for (const e of events) {
     if (e.kind === "delivery") {
-      if (e.gallons > 0) queue(e.tankId).push({ gallons:e.gallons, unitCost:e.unitCost, date:e.date, ref:e.id });
-      if (e.unitCost > 0) last.set(e.tankId, e.unitCost);
+      // Additive dosed into the load as it lands rides with that load's gallons
+      // and nothing else — fuel already in the tank was not treated.
+      const treated = e.gallons > 0 && e.additiveCost
+        ? e.unitCost + e.additiveCost / e.gallons
+        : e.unitCost;
+      if (e.gallons > 0) queue(e.tankId).push({ gallons:e.gallons, unitCost:treated, date:e.date, ref:e.id });
+      if (treated > 0) last.set(e.tankId, treated);
+      if (e.additiveCost) additives.set(e.id, {
+        applied: e.gallons > 0, gallons: e.gallons, cost: e.additiveCost,
+        perGallon: e.gallons > 0 ? e.additiveCost / e.gallons : 0, onDelivery: true,
+      });
     } else if (e.kind === "fill") {
       const r = take(e.tankId, e.gallons);
       forFills.set(e.id, r);
@@ -1605,7 +1647,7 @@ export function costFuel(tankTx = [], dispensing = []) {
     }
   }
 
-  return { dispensing:forDispensing, fills:forFills, layers, lastPrice:last };
+  return { dispensing:forDispensing, fills:forFills, additives, layers, lastPrice:last };
 }
 
 const NO_COST = { unitCost:0, totalCost:0, lines:[], estimated:true, shortGallons:0 };
@@ -1617,6 +1659,10 @@ export const fuelCostOf = (costing, dispensingId) =>
 
 export const fillCostOf = (costing, tankTxId) =>
   costing?.fills?.get(tankTxId) || NO_COST;
+
+// How an additive landed — over how many gallons, and what it added per gallon.
+export const additiveEffect = (costing, tankTxId) =>
+  costing?.additives?.get(tankTxId) || null;
 
 // The layers still sitting in a tank, oldest first.
 export const tankLayers = (costing, tankId) => costing?.layers?.get(tankId) || [];

@@ -5,6 +5,7 @@ import { TanksTab } from "./Tanks.jsx";
 import { FuelLogTab } from "./Dispensing.jsx";
 import { FuelBilling } from "./Billing.jsx";
 import { FuelTaxTab } from "./FuelTax.jsx";
+import { DEFTab } from "./DEF.jsx";
 import { DailyInventoryTab } from "./DailyInventory.jsx";
 
 // ── Fuel ──────────────────────────────────────────────────────────────────────
@@ -34,6 +35,7 @@ export default function Fuel({ db, dispatch }) {
   const TABS = [
     { id:"log",     label:"Dispensing Log", icon:"droplet" },
     { id:"tanks",   label:"Tanks",          icon:"building-warehouse" },
+    { id:"def",     label:"DEF",            icon:"bottle" },
     { id:"daily",   label:"Daily Inventory", icon:"clipboard-check" },
     { id:"billing", label:"Department Billing", icon:"file-invoice" },
     { id:"tax",     label:"Fuel Tax",           icon:"receipt-tax" },
@@ -60,10 +62,7 @@ export default function Fuel({ db, dispatch }) {
         <FuelLogTab
           dispensing={dispensing} units={units} tanks={tanks} tankTx={tankTx}
           departments={db?.lookups?.fuelDepartments || []}
-          employees={db.employees || []}
-          invItems={db.inventoryItems || []} invBatches={db.inventoryBatches || []}
-          invGroups={db.inventoryGroups || []}
-          dispatch={dispatch} />
+          employees={db.employees || []} dispatch={dispatch} />
       )}
       {tab==="tanks"   && (
         <TanksTab tanks={tanks} tankTx={tankTx} dispensing={dispensing}
@@ -77,6 +76,12 @@ export default function Fuel({ db, dispatch }) {
       )}
       {tab==="billing" && <FuelBilling dispensing={dispensing} tankTx={tankTx}
           countyInfo={db.countyInfo || {}} dispatch={dispatch} />}
+      {tab==="def" && (
+        <DEFTab items={db.inventoryItems || []} batches={db.inventoryBatches || []}
+          groups={db.inventoryGroups || []} tanks={tanks} units={units}
+          employees={db.employees || []} transactions={db.inventoryTransactions || []}
+          dispensing={dispensing} dispatch={dispatch} />
+      )}
       {tab==="tax" && (
         <FuelTaxTab dispensing={dispensing} rates={db.fuelTaxRates || []}
           units={units} dispatch={dispatch} />

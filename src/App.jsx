@@ -676,11 +676,33 @@ function baseReducer(state, action) {
       const stored = { ...tx };
       delete stored.expenditure;   // the claim lives in expenditures, not on the tank record
 
+      // A delivery can carry an ADDITIVE, which comes off the shelf. Same rule
+      // as DEF into a machine: the issue travels with the transaction, so a jug
+      // of BG cannot go into a tank without leaving inventory.
+      //
+      // Keyed on the transaction being PRESENT rather than on the tank
+      // transaction's type — the additive now rides on a delivery, and a check
+      // for type "additive" silently stopped taking it off the shelf the moment
+      // it moved. Nothing about that failure would have been visible.
+      let inventoryBatches      = state.inventoryBatches;
+      let inventoryTransactions = state.inventoryTransactions;
+      if (action.transaction) {
+        const it = action.transaction;
+        (it.batchLines || []).forEach(line => {
+          inventoryBatches = inventoryBatches.map(b => {
+            if (b.id !== line.batchId) return b;
+            const left = Math.max(0, (b.quantityRemaining || 0) - line.quantity);
+            return { ...b, quantityRemaining: left, status: left <= 0 ? "depleted" : "open" };
+          });
+        });
+        inventoryTransactions = [...inventoryTransactions, it];
+      }
+
       return {
         ...state,
         tanks: tanksAfter,
         tankTransactions: [...state.tankTransactions, stored],
-        expenditures,
+        expenditures, inventoryBatches, inventoryTransactions,
       };
     }
 
@@ -1101,7 +1123,12 @@ const auditedReducer = withAudit(reducer);
 //   1  inventory rebuilt: one item per part number, stock per location  (2026-08-23)
 //   2  the commodity group became the single source of truth for both what a
 //      thing is and where it is; Inventory Usual Location dropped  (2026-08-26)
-const SEED_VERSION = 2;
+// v3: fuel routed out of the inventory catalog to the tanks, and DEF merged
+// from five shed rows onto one item. Without a bump, anyone already testing
+// keeps the old catalog in localStorage — five DEF items and $55,637.89 of
+// diesel counted twice — and would have no idea why the screens disagree with
+// what the program now does.
+const SEED_VERSION = 3;
 const RESEED = ["inventoryItems", "inventoryBatches", "inventoryTransactions",
                 "inventoryGroups", "inventoryExceptions",
                 // Removed by the v2 rebuild — delete so they cannot linger.

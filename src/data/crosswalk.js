@@ -154,6 +154,86 @@ export function classifyGroup(name) {
 
 const isPlace = (kind) => kind !== "area";
 
+// ── Bulk fuel and shelf fluids ───────────────────────────────────────────────
+//
+// R&B carried three things in the inventory file that do not belong there as
+// ordinary stock, and Greg settled both cases on 2026-09-05:
+//
+//   "Yes, the fuel should be tracked in the fuel module."
+//   "One Item with as many batches as necessary."
+//
+// BULK FUEL. Every tank's contents were also inventory rows — $35,815 of diesel
+// across eight rows matching the eight tanks. Left alone that is a double
+// count: the Fuel module tracks the same gallons, and a gallon pumped draws the
+// tank down while the inventory row sits still forever. These rows are routed
+// OUT of the catalog and reported as tank opening balances instead.
+//
+// SHELF FLUIDS. DEF came across as five separate catalog items, one per shed,
+// because R&B put the shed in the part number — DEF-26, DEF26-07, DEF26-08.
+// That is the duplication the commodity-group model exists to remove: one item,
+// a batch per place. So fluid rows are keyed by WHAT THEY ARE rather than by
+// part number, and merge.
+//
+// These rules are vocabulary, not Adams County. No shed names, no part numbers,
+// no unit numbers — a county whose file says "GASOLENE" or "UREA" gets the same
+// treatment. Nothing is dropped silently: every routed row is counted in the
+// summary and listed in the exceptions, so a rule that misfires is visible
+// rather than a quietly missing item.
+// ORDER MATTERS, and it caught me out: "Diesel Exhaust Fluid" contains the word
+// diesel, so with diesel first it was routed to a tank instead of the shelf.
+// DEF is therefore tested FIRST, and the diesel rule also excludes EXHAUST —
+// two defences, because this is the kind of mistake that ends up as $500 of DEF
+// silently added to a fuel tank's opening balance.
+// Everything that has a fuel word in it and is NOT the fuel.
+//
+// The first version of this had only the obvious ones and it took twelve rows
+// out of the county's catalog that had no business leaving it: 2,478 quarts of
+// "Diesel Oil" — engine oil — and four BG chemicals, one of them at $216 a
+// unit. Every entry below is a real row from the file.
+const TANK_EXCLUDE =
+  /\b(EXHAUST|OIL|LUBE|LUBRICANT|GREASE|CONDITION\w*|CLEANER|THAW|FLUSH|KIT|ADDITIVE|TREATMENT|STABILIZER|ANTI-?GEL|FILTER|CAP|NOZZLE|HOSE|GASKET|BREATHER|SEAL|SENDER|GAUGE|PUMP|TANK|METER|LINE|ELEMENT)\b/i;
+
+// A gallon-ish unit of measure. Bulk fuel is bought and held by the gallon;
+// oil is bought by the quart. Not proof on its own — one of the county's real
+// fuel rows is recorded as EACH — but decisive alongside the description.
+const GALLON_UOM = /^(GAL|GALLON|GALLONS|GA)$/i;
+
+export const FLUID_RULES = [
+  {
+    id: "def", label: "DEF", disposition: "fluid", fluidType: "def",
+    match:   /\bDEF\b|DIESEL\s+EXHAUST\s+FLUID|\bUREA\b/i,
+    exclude: /\b(FILTER|CAP|HOSE|BREATHER|SUPPLY|GASKET|SEAL|SENDER|GAUGE|PUMP|HEATER|INJECTOR|SENSOR|LINE)\b/i,
+  },
+  {
+    id: "diesel", label: "Diesel", disposition: "tank",
+    match:   /\bDIESEL\b|\bDYED\s*(FUEL|DIESEL)\b/i,
+    exclude: TANK_EXCLUDE,
+  },
+  {
+    id: "unleaded", label: "Unleaded", disposition: "tank",
+    match:   /\b(UNLEADED|GASOLINE|GASOLENE|PETROL)\b/i,
+    exclude: TANK_EXCLUDE,
+  },
+];
+
+// Which rule, if any, a row is. Exclusions win — "WIX DEF Filter" is a filter,
+// and a filter is ordinary stock however the description reads.
+export function fluidRuleFor(description, partNumber = "", unitOfMeasure = "", rules = FLUID_RULES) {
+  const text = `${description || ""} ${partNumber || ""}`;
+  const uom  = clean(unitOfMeasure);
+  for (const r of rules) {
+    if (r.exclude && r.exclude.test(text)) continue;
+    if (!r.match.test(text)) continue;
+    // Taking a row OUT of the catalog is the destructive direction — a part
+    // wrongly routed to a tank simply vanishes from inventory. So a tank rule
+    // has to clear a second bar: the row must say FUEL, or be measured in
+    // gallons. "Diesel Oil Kenesaw", 420 QUART, satisfies neither.
+    if (r.disposition === "tank" && !/\bFUEL\b/i.test(text) && !GALLON_UOM.test(uom)) continue;
+    return r;
+  }
+  return null;
+}
+
 // Match Python's string ordering, so the CLI and the browser agree on ids.
 const byString = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -233,17 +313,47 @@ export function crosswalkInventory(records) {
     });
   }
 
-  // ── Items: ONE per part number ─────────────────────────────────────────────
+  // ── Items: ONE per part number, except for fuel and fluids ────────────────
+  //
+  // Bulk fuel leaves the catalog entirely and becomes a tank opening balance.
+  // Fluids merge on WHAT THEY ARE rather than on part number, so DEF's five
+  // shed rows become one item with five batches instead of five items.
   const byPart = new Map(), linesOf = new Map();
+  const tankOpenings = [];
+  const fluidKey = new Map();   // item key → the rule that made it
+
   records.forEach((r, i) => {
     const part = clean(r["Inventory #"]);
+    const desc = clean(r["Inventory Description"]);
     if (!part) {
       flag(i + 2, "No part number",
         "Row has no Inventory #, so it cannot be merged or looked up. Skipped.",
-        "", clean(r["Inventory Description"]));
+        "", desc);
       return;
     }
-    const key = part.toUpperCase();
+
+    const rule = fluidRuleFor(desc, part, r["Unit Of Measure"]);
+
+    // Bulk fuel — out of the catalog, into the Fuel module.
+    if (rule && rule.disposition === "tank") {
+      const qty = num(r["Quan On Hand"]);
+      const val = num(r["Cost On Hand"]);
+      const loc = clean(r["Commodity Group"]);
+      tankOpenings.push({
+        csvRow: i + 2, partNumber: part, description: desc,
+        fuel: rule.id, location: loc, locationName: groupName.get(loc) || loc,
+        gallons: qty, totalCost: round(val, 2),
+        unitCost: qty > 0 ? round(val / qty, 4) : 0,
+      });
+      flag(i + 2, "Fuel — moved to the Fuel module",
+        `${fmtNum(qty)} gallons of ${rule.label.toLowerCase()} carrying ${fmtMoney(val)} at ` +
+        `${groupName.get(loc) || loc}. Kept OUT of inventory so the same gallons are not ` +
+        `counted twice — set it as the tank's opening balance instead.`, part, desc);
+      return;
+    }
+
+    const key = (rule && rule.disposition === "fluid") ? `FLUID:${rule.id}` : part.toUpperCase();
+    if (rule && rule.disposition === "fluid") fluidKey.set(key, rule);
     if (!byPart.has(key)) { byPart.set(key, []); linesOf.set(key, []); }
     byPart.get(key).push(r);
     linesOf.get(key).push(i + 2);
@@ -254,7 +364,11 @@ export function crosswalkInventory(records) {
 
   keys.forEach((key, idx) => {
     const group = byPart.get(key), lines = linesOf.get(key), first = group[0];
-    const part = clean(first["Inventory #"]);
+    const rule = fluidKey.get(key) || null;
+    // A merged fluid has several part numbers — R&B put the shed in them. Take
+    // the commonest, which is the shop's, and keep the rest on the record.
+    const part = rule ? (commonest(group.map(r => clean(r["Inventory #"]))) || clean(first["Inventory #"]))
+                      : clean(first["Inventory #"]);
     const pick = (field) => commonest(group.map(r => clean(r[field])));
 
     const name   = pick("Inventory Description") || part;
@@ -308,6 +422,11 @@ export function crosswalkInventory(records) {
       commodityGroup: groupName.get(catCode) || "",
       glAccountCode: gl, unitOfMeasure: uom,
       fitsEquipment: [], shelfLocation: "",
+      // Set by a fluid rule: this item is logged at the machine on the fuel
+      // screen rather than issued at a counter. The container size cannot be
+      // read from an R&B export, so it is flagged for somebody to enter.
+      fluidType: rule ? (rule.fluidType || "") : "",
+      unitGallons: 0,
       standardCost: round(num(pick("Standard Cost")), 2),
       primaryVendor: vendor, receivingMode: "standard",
       trackStockLevel: false, minimumQuantity: 0, active: true,
@@ -315,6 +434,25 @@ export function crosswalkInventory(records) {
     });
     if (!gl)  flag(lines[0], "No GL code", "Nothing to charge a purchase to.", part, name);
     if (!uom) flag(lines[0], "No unit of measure", "Quantities have no unit.", part, name);
+
+    if (rule) {
+      const parts = [...new Set(group.map(r => clean(r["Inventory #"])).filter(Boolean))].sort(byString);
+      const uoms  = [...new Set(group.map(r => uomOf(r["Unit Of Measure"])).filter(Boolean))].sort(byString);
+      stats["fluids merged onto one item"] = (stats["fluids merged onto one item"] || 0) + 1;
+      if (parts.length > 1)
+        flag(lines[0], "Fluid merged from several part numbers",
+          `${list(parts)} are all ${quote(name)} at different places. Merged into one item with ` +
+          `${group.length} opening balances — one per shed — and kept ${quote(part)} as the number.`,
+          part, name);
+      if (uoms.length > 1)
+        flag(lines[0], "Fluid rows disagree on unit of measure",
+          `${list(uoms)} across the same fluid, at similar prices, so at least one is wrong. ` +
+          `Kept ${quote(uom)}.`, part, name);
+      flag(lines[0], "Container size needed",
+        `${quote(name)} is logged on the fuel screen a container at a time. Open the item and ` +
+        `enter how many gallons ONE container holds, or its cost per gallon will be wrong.`,
+        part, name);
+    }
 
     // ── One opening batch per row — that is one per LOCATION ──────────────────
     group.forEach((r, j) => {
@@ -373,7 +511,7 @@ export function crosswalkInventory(records) {
   for (const g of groups) typeCounts[g.type] = (typeCounts[g.type] || 0) + 1;
 
   return {
-    ok: true, error: "", items, batches, transactions, groups, exceptions,
+    ok: true, error: "", items, batches, transactions, groups, exceptions, tankOpenings,
     summary: {
       rows: records.length,
       items: items.length,
@@ -382,6 +520,12 @@ export function crosswalkInventory(records) {
       groups: groups.length,
       typeCounts,
       openingValue: round(batches.reduce((s, b) => s + b.totalCost, 0), 2),
+      // Reported separately and NOT added to openingValue — it is the same
+      // money the Fuel module will be holding, and adding it here is the double
+      // count this routing exists to prevent.
+      tankOpenings: tankOpenings.length,
+      tankOpeningGallons: round(tankOpenings.reduce((s, t) => s + t.gallons, 0), 1),
+      tankOpeningValue: round(tankOpenings.reduce((s, t) => s + t.totalCost, 0), 2),
       exceptions: exceptions.length,
       exceptionKinds: countBy(exceptions.map(e => e.kind)),
       stats,

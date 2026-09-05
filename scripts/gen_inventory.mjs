@@ -56,7 +56,11 @@ writeFileSync("src/data/inventoryData.js",
   js(out.batches,      "INITIAL_INVENTORY_BATCHES") + "\n\n" +
   js(out.transactions, "INITIAL_INVENTORY_TRANSACTIONS") + "\n\n" +
   js(out.groups,       "INITIAL_INVENTORY_GROUPS") + "\n\n" +
-  js(out.exceptions,   "INVENTORY_EXCEPTIONS") + "\n",
+  js(out.exceptions,   "INVENTORY_EXCEPTIONS") + "\n\n" +
+  "// Bulk fuel found in the inventory file. NOT catalog items — the same gallons\n" +
+  "// are held by the Fuel module, and carrying them in both places is a double\n" +
+  "// count. These are the tanks' opening balances.\n" +
+  js(out.tankOpenings, "INITIAL_TANK_OPENINGS") + "\n",
   "utf8");
 
 const s = out.summary;
@@ -64,5 +68,14 @@ console.log(`\nWrote ${s.items} items (from ${s.rows} rows), ${s.batches} openin
 console.log(`  ${s.groups} groups — ` +
   Object.entries(s.typeCounts).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${v} ${k}`).join(", "));
 console.log(`  opening value: $${s.openingValue.toLocaleString("en-US", { minimumFractionDigits: 2 })}`);
+if (s.tankOpenings) {
+  console.log(`\n  ${s.tankOpenings} fuel rows routed OUT of inventory to the tanks:`);
+  console.log(`     ${s.tankOpeningGallons.toLocaleString("en-US")} gallons, ` +
+    `$${s.tankOpeningValue.toLocaleString("en-US", { minimumFractionDigits: 2 })} ` +
+    `— reported apart from the opening inventory, never added to it`);
+  for (const t of out.tankOpenings)
+    console.log(`     ${t.fuel.padEnd(9)} ${t.locationName.padEnd(16)} ` +
+      `${t.gallons.toLocaleString("en-US").padStart(9)} gal @ $${t.unitCost}`);
+}
 console.log(`\n${s.exceptions} exceptions flagged for review:`);
 for (const [kind, n] of Object.entries(s.exceptionKinds)) console.log(`  ${String(n).padStart(4)}  ${kind}`);

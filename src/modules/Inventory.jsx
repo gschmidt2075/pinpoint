@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { Icon, Field, SectionCard, Table, KPICard, StatusBadge, SearchSelect, inp, btn, fmt, fmtSm, DateField, titleCase, MoneyField } from "../components/shared.jsx";
 import { groupLabel, groupByCode, groupTypeLabel, categoryName, locationName,
-         INVENTORY_GROUP_TYPES, buildFIFOLines } from "../data/schema.js";
+         INVENTORY_GROUP_TYPES, buildFIFOLines, FLUID_TYPES } from "../data/schema.js";
 import { useUnsavedGuard, useNavigationGuard, useUnsavedForm } from "../components/unsaved.jsx";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -816,7 +816,9 @@ function ItemForm({ item, locations, categories = [], equipment, onSave, onCance
       legacyNumber:    form.legacyNumber || form.partNumber,
       shelfLocation:   (form.shelfLocation || "").trim().toUpperCase(),
       minimumQuantity: form.trackStockLevel ? (parseFloat(form.minimumQuantity)||0) : "",
-      unitGallons:     form.fluidType ? (parseFloat(form.unitGallons)||0) : 0,
+      // Only DEF has a container size. An additive is costed by what it cost,
+      // not by how many gallons it is.
+      unitGallons:     form.fluidType === "def" ? (parseFloat(form.unitGallons)||0) : 0,
     });
   };
 
@@ -915,33 +917,34 @@ function ItemForm({ item, locations, categories = [], equipment, onSave, onCance
           )}
         </div>
 
-        {/* ── Logged at the machine ──
+        {/* ── Fluids ──
             DEF is bought in jugs and poured into a machine whole. Marking the
             item here is what puts it on the fuel screen, where the person
             holding the jug already is — Greg's call, and the reason it gets
             logged at all. Nothing about DEF is hardcoded: the container size is
             typed, and a county with a bulk tank does not need this at all. */}
         <div style={{ borderTop:"1px solid #eee", paddingTop:16, marginTop:4 }}>
-          <label style={{ display:"flex", alignItems:"center", gap:9, cursor:"pointer", marginBottom:form.fluidType?14:0 }}>
-            <input type="checkbox" checked={!!form.fluidType}
-                   onChange={e=>set("fluidType", e.target.checked ? "def" : "")}
-                   style={{ width:16, height:16, cursor:"pointer" }} />
-            <span style={{ fontSize:13, fontWeight:600, color:"#1a1a1a" }}>This is DEF</span>
-            <span style={{ fontSize:12, color:"#888" }}>— logged on the fuel screen, against a machine</span>
-          </label>
-          {form.fluidType && (
-            <div style={{ display:"grid", gridTemplateColumns:"200px 1fr", gap:16, alignItems:"end" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"260px 200px 1fr", gap:16, alignItems:"end" }}>
+            <Field label="Fluid">
+              <select value={form.fluidType} onChange={e=>set("fluidType", e.target.value)} style={inp}>
+                {FLUID_TYPES.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+              </select>
+            </Field>
+            {form.fluidType === "def" && (
               <Field label="Gallons per container">
                 <input type="number" min="0" step="any" value={form.unitGallons}
                   onChange={e=>set("unitGallons",e.target.value)}
                   style={{ ...inp, fontFamily:"monospace" }} placeholder="2.5" />
               </Field>
-              <div style={{ fontSize:12, color:"#888", paddingBottom:10, lineHeight:1.6 }}>
-                What ONE of these holds. Stock is counted in containers; the fuel log turns
-                that into gallons and puts the cost on the machine.
-              </div>
+            )}
+            <div style={{ fontSize:12, color:"#888", paddingBottom:10, lineHeight:1.6 }}>
+              {form.fluidType === "def"
+                ? "Stock is counted in containers; the DEF tab turns that into gallons and puts the cost on the machine."
+                : form.fluidType === "additive"
+                ? "Poured into a tank on the Tanks screen. Its cost spreads over the fuel already in that tank, so every gallon drawn afterwards carries a share."
+                : "An ordinary part, issued at the counter like anything else."}
             </div>
-          )}
+          </div>
         </div>
 
         {/* ── Low stock tracking ── */}
