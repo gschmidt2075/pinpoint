@@ -17,7 +17,7 @@ import { DEFAULT_TOWNSHIPS, DEFAULT_LOOKUPS, DEFAULT_TANKS, nextWorkOrderNumber,
          DEFAULT_ROLES, createRole, createUser, MODULES, ROOT_ROLE_ID,
          accessTo, canView, canEdit, hasCapability,
          createAuditEntry, AUDITED, diffRecords, transferStock,
-         resolveHourlyRate, recostFuelDispensing } from "./data/schema.js";
+         resolveHourlyRate, recostFuelDispensing, reconcileReceipt } from "./data/schema.js";
 import { INITIAL_INVENTORY_ITEMS, INITIAL_INVENTORY_BATCHES, INITIAL_INVENTORY_TRANSACTIONS,
          INITIAL_INVENTORY_GROUPS, INVENTORY_EXCEPTIONS } from "./data/inventoryData.js";
 import { Icon } from "./components/shared.jsx";
@@ -331,7 +331,7 @@ function baseReducer(state, action) {
       // Note it is keyed on the claim being PRESENT, not on the transaction
       // type — a crosswalk opening balance passes none and correctly creates no
       // claim, because the county did not buy that stock this year.
-      const expenditures = action.expenditure
+      let expenditures = action.expenditure
         ? [...state.expenditures, action.expenditure]
         : state.expenditures;
 
@@ -398,11 +398,19 @@ function baseReducer(state, action) {
           const oldUnitCost = oldBatch?.unitCost ?? 0;
           const rateChanged = Math.abs(oldUnitCost - tx.newUnitCost) > 0.0001;
 
-          batches = batches.map(b =>
-            b.id === tx.batchId
-              ? { ...b, unitCost: tx.newUnitCost, totalCost: tx.newUnitCost * b.quantityReceived, invoiceStatus: "final", invoiceRef: tx.invoiceRef || b.invoiceRef }
-              : b
-          );
+          // The claim this receipt created has to move with the batch.
+          // Restating the stock and leaving the money at the estimate is how
+          // the two drift apart — and the claim is the number the Board sees.
+          const done = reconcileReceipt({
+            batch: oldBatch,
+            expenditure: expenditures.find(e => e.sourceReceiptId === tx.batchId) || null,
+            invoicedAmount: tx.newUnitCost * (oldBatch?.quantityReceived || 0),
+            invoiceRef: tx.invoiceRef,
+            date: tx.date,
+          });
+          batches = batches.map(b => b.id === tx.batchId ? (done.batch || b) : b);
+          if (done.expenditure)
+            expenditures = expenditures.map(e => e.id === done.expenditure.id ? done.expenditure : e);
 
           // If the invoice rate differs from what was estimated, any project that
           // already consumed this batch now carries a stale cost. Flag those
@@ -860,23 +868,6 @@ function baseReducer(state, action) {
       return { ...state, townships: (state.townships || []).filter(t => t.id !== action.payload) };
 
     // Commodity groups. Greg: "we will need to be able to add/remove/edit codes."
-    // The invoice landed and disagreed with the ticket. The batch's unit cost
-    // moves — which reprices everything issued from it, because inventory is
-    // FIFO off the batches — and the claim line moves with it. Doing one
-    // without the other is how the stock and the money drift apart.
-    case "RECONCILE_RECEIPT": {
-      const { batch, expenditure } = action.payload;
-      return {
-        ...state,
-        inventoryBatches: batch
-          ? state.inventoryBatches.map(b => b.id === batch.id ? batch : b)
-          : state.inventoryBatches,
-        expenditures: expenditure
-          ? state.expenditures.map(e => e.id === expenditure.id ? expenditure : e)
-          : state.expenditures,
-      };
-    }
-
     case "ADD_INVENTORY_GROUP":
       return { ...state, inventoryGroups: [...(state.inventoryGroups || []), action.payload] };
     case "UPDATE_INVENTORY_GROUP": {

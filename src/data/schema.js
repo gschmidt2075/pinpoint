@@ -1303,6 +1303,26 @@ export function receiptExpenditure({
 
 // (round2 already exists above — one definition, not two.)
 
+// One invoice, several tickets. Split it across them by what they were
+// estimated at, and give the LAST one the rounding residual so the parts add
+// up to the invoice exactly. A pro-rata split that is a cent out is a claim
+// that does not tie to the paper it came from.
+export function allocateInvoice(batches = [], invoiceTotal) {
+  const total = Number(invoiceTotal) || 0;
+  const rows  = batches.filter(Boolean);
+  const est   = rows.reduce((s, b) => s + (Number(b.totalCost) || 0), 0);
+  if (!rows.length || total <= 0) return rows.map(b => ({ batch: b, amount: Number(b.totalCost) || 0 }));
+
+  let assigned = 0;
+  return rows.map((b, i) => {
+    const share = i === rows.length - 1
+      ? round2(total - assigned)                       // the last one absorbs the residual
+      : round2(est > 0 ? total * ((Number(b.totalCost) || 0) / est) : total / rows.length);
+    assigned = round2(assigned + share);
+    return { batch: b, amount: share };
+  });
+}
+
 // What changes when the invoice finally lands and disagrees with the ticket.
 //
 // The claim amount moves, the batch's unit cost moves, and because inventory is

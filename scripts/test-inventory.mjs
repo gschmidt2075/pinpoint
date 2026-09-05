@@ -14,7 +14,8 @@
 import { transferStock, stockByLocation, stockAtLocation, categoryName, createInventoryItem,
          groupByCode, groupById, groupLabel, locationName } from "../src/data/schema.js";
 import { parseCSV, crosswalkInventory, fluidRuleFor, FLUID_RULES } from "../src/data/crosswalk.js";
-import { receiptExpenditure, reconcileReceipt, claimCycleFor } from "../src/data/schema.js";
+import { receiptExpenditure, reconcileReceipt, claimCycleFor,
+         allocateInvoice } from "../src/data/schema.js";
 import { readFileSync } from "node:fs";
 import { INITIAL_INVENTORY_ITEMS as ITEMS,
          INITIAL_INVENTORY_BATCHES as BATCHES,
@@ -695,6 +696,37 @@ console.log("\nMoney fields");
   eq(claimCycleFor("2026-09-15", cycles).id, "b", "the day of a cycle counts as that cycle");
   eq(claimCycleFor("2026-08-01", cycles).id, "a", "something early lands on the first one");
   eq(claimCycleFor("2027-01-01", cycles).id, "c", "and something past the end lands on the last");
+}
+
+{
+  console.log("\nOne invoice covering several tickets");
+  const rows = [
+    { id:"b1", totalCost: 1000, quantityReceived: 50 },
+    { id:"b2", totalCost:  500, quantityReceived: 25 },
+    { id:"b3", totalCost:  333.33, quantityReceived: 16 },
+  ];
+  const est = 1833.33;
+
+  const same = allocateInvoice(rows, est);
+  close(same.reduce((s,r)=>s+r.amount, 0), est, "an invoice that agrees splits back to the estimates");
+
+  // The awkward one: a total that does not divide cleanly.
+  const inv = 2000;
+  const share = allocateInvoice(rows, inv);
+  close(share.reduce((s,r)=>s+r.amount, 0), inv,
+        "the parts add to the invoice EXACTLY — a claim a cent out does not tie to its paper");
+  ok(share[0].amount > share[1].amount, "split by what each ticket was estimated at");
+  close(share[0].amount, 1090.91, "the biggest ticket takes the biggest share");
+
+  // No total entered means the estimates stand.
+  const none = allocateInvoice(rows, 0);
+  close(none.reduce((s,r)=>s+r.amount, 0), est, "no invoice total leaves the estimates alone");
+
+  // And a nasty one that would expose naive rounding: three equal thirds.
+  const thirds = allocateInvoice(
+    [{ id:"a", totalCost:100 }, { id:"b", totalCost:100 }, { id:"c", totalCost:100 }], 100);
+  close(thirds.reduce((s,r)=>s+r.amount, 0), 100, "three equal tickets against $100 still add to $100");
+  close(thirds[2].amount, 33.34, "the last one carries the residual rather than losing a cent");
 }
 
 // ── Result ───────────────────────────────────────────────────────────────────

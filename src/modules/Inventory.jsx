@@ -2,7 +2,8 @@ import { useState, useMemo } from "react";
 import { Icon, Field, SectionCard, Table, KPICard, StatusBadge, SearchSelect, inp, btn, fmt, fmtSm, DateField, titleCase, MoneyField } from "../components/shared.jsx";
 import { groupLabel, groupByCode, groupTypeLabel, categoryName, locationName,
          INVENTORY_GROUP_TYPES, buildFIFOLines, FLUID_TYPES,
-         receiptExpenditure, claimCycleFor, reconcileReceipt } from "../data/schema.js";
+         receiptExpenditure, claimCycleFor, reconcileReceipt,
+         allocateInvoice } from "../data/schema.js";
 import { CLAIM_CYCLES } from "./FundAccounting.jsx";
 import { useUnsavedGuard, useNavigationGuard, useUnsavedForm } from "../components/unsaved.jsx";
 
@@ -1369,16 +1370,29 @@ function ScaleTicket({ db, dispatch, onDone }) {
   const [reconBatchIds, setReconBatchIds] = useState([]);
   const [reconInvoice,  setReconInvoice]  = useState("");
   const [reconDate,     setReconDate]     = useState(new Date().toISOString().split("T")[0]);
+  // What the invoice actually says. Blank means "it agreed with the tickets" —
+  // which is the common case and should not need typing. Until this existed the
+  // reconcile screen could record an invoice NUMBER but never a different
+  // price, so the whole point of reconciling was missing.
+  const [reconTotal,    setReconTotal]    = useState("");
 
   const toggleReconBatch = (id) =>
     setReconBatchIds(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
 
+  const selectedBatches = pendingBatches.filter(b => reconBatchIds.includes(b.id));
+  const estimatedTotal  = selectedBatches.reduce((s, b) => s + (b.totalCost || 0), 0);
+  const invoicedTotal   = parseFloat(reconTotal) || 0;
+  const reconDifference = invoicedTotal ? invoicedTotal - estimatedTotal : 0;
+
   const handleReconcile = () => {
     if (!reconBatchIds.length || !reconInvoice) return;
     const todayStr = new Date().toISOString().split("T")[0];
-    reconBatchIds.forEach(batchId => {
-      const batch = pendingBatches.find(b => b.id === batchId);
-      if (!batch) return;
+    // One invoice covering several tickets is split across them by what each
+    // was estimated at, and the last absorbs the rounding so the parts add to
+    // the invoice exactly.
+    const shares = allocateInvoice(selectedBatches, invoicedTotal);
+    shares.forEach(({ batch, amount }) => {
+      const qty = Number(batch.quantityReceived) || 0;
       dispatch({
         type: "ADD_INVENTORY_TRANSACTION",
         payload: {
@@ -1387,15 +1401,15 @@ function ScaleTicket({ db, dispatch, onDone }) {
           date:       reconDate || todayStr,
           itemId:     batch.itemId,
           itemName:   batch.itemName,
-          batchId,
-          newUnitCost: batch.unitCost,
+          batchId:    batch.id,
+          newUnitCost: qty > 0 ? amount / qty : batch.unitCost,
           invoiceRef: reconInvoice,
           notes:      `Invoice reconciliation — ${reconInvoice}`,
           createdAt:  new Date().toISOString(),
         },
       });
     });
-    setReconBatchIds([]); setReconInvoice(""); setReconDate(todayStr);
+    setReconBatchIds([]); setReconInvoice(""); setReconTotal(""); setReconDate(todayStr);
   };
 
   return (
@@ -1553,14 +1567,39 @@ function ScaleTicket({ db, dispatch, onDone }) {
               <div style={{ background:"#fff", border:"1px solid #ddd", borderRadius:8, padding:22, marginBottom:16 }}>
                 <div style={{ fontWeight:700, fontSize:13, marginBottom:4 }}>Match Invoice to Scale Tickets</div>
                 <div style={{ fontSize:12, color:"#888", marginBottom:14 }}>Check the tickets covered by this invoice, enter the invoice number, then reconcile all at once.</div>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16, marginBottom:16 }}>
                   <Field label="Invoice #" required>
                     <input type="text" value={reconInvoice} onChange={e=>setReconInvoice(e.target.value)} style={{ ...inp, fontFamily:"monospace" }} placeholder="Invoice number…" />
                   </Field>
                   <Field label="Invoice Date">
                     <DateField value={reconDate} onChange={v => setReconDate(v)} />
                   </Field>
+                  <Field label="Invoice Total">
+                    <MoneyField value={reconTotal} onChange={v=>setReconTotal(v)} />
+                    <div style={{ fontSize:11, color:"#888", marginTop:4 }}>
+                      Leave blank if it agreed with the tickets.
+                    </div>
+                  </Field>
                 </div>
+
+                {reconBatchIds.length > 0 && (
+                  <div style={{ background: Math.abs(reconDifference) > 0.005 ? "#fef3cd" : "#f4f7fa",
+                                border: `1px solid ${Math.abs(reconDifference) > 0.005 ? "#f0d080" : "#dbe4ec"}`,
+                                borderRadius:6, padding:"10px 13px", marginBottom:14, fontSize:12,
+                                color: Math.abs(reconDifference) > 0.005 ? "#7a4f00" : "#40607d", lineHeight:1.6 }}>
+                    {reconBatchIds.length} ticket{reconBatchIds.length!==1?"s":""} estimated at{" "}
+                    <strong>{fmtSm(estimatedTotal)}</strong>
+                    {invoicedTotal > 0 ? (
+                      <>, invoiced at <strong>{fmtSm(invoicedTotal)}</strong> —{" "}
+                        {Math.abs(reconDifference) > 0.005
+                          ? <><strong>{reconDifference > 0 ? "+" : ""}{fmtSm(reconDifference)}</strong>.
+                              The tickets and their claim lines will both be restated, and anything
+                              already issued from them reprices.</>
+                          : <>they agree.</>}
+                      </>
+                    ) : <>. No invoice total entered, so the estimates stand.</>}
+                  </div>
+                )}
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                   <div style={{ fontSize:12, color:"#888" }}>
                     {reconBatchIds.length === 0 ? "No tickets selected" : `${reconBatchIds.length} ticket${reconBatchIds.length!==1?"s":""} selected`}
