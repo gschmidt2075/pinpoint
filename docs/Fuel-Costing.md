@@ -371,3 +371,58 @@ The reducer took the inventory issue only when the tank transaction's type was
 matching, and the additive would have gone into the fuel **without ever coming
 off the shelf** — with nothing on any screen to show it. It is now keyed on the
 issue being present rather than on the type.
+
+---
+
+# The opening balance, and the year-end value
+
+Settled with Greg, 2026-09-05.
+
+## Two numbers on the tank, not a clever match
+
+The plan had been to carry the old system's fuel rows across as tank opening
+balances, matching a commodity group to a tank. Greg:
+
+> *"I would rather just have an opening balance when the tank is created and
+> what the opening value is too."*
+
+He is right. The match needed a rule for the portables, which are named after
+trucks that get sold, and nobody could have checked it afterwards. Two numbers
+typed once by the person who knows beats a clever guess.
+
+`openingDate`, `openingGallons`, `openingValue` on the tank, entered in
+**Settings → Fuel Tanks**. **Value, not price per gallon** — value is what the
+closing inventory sheet says, and the price is worked out from it.
+
+The opening balance becomes the tank's first FIFO layer, ordered before every
+delivery, so the fuel that was already there goes out first. Without one, the
+first draw prices at the estimated fallback and says so.
+
+## Fuel on hand is an AS-AT figure
+
+> *"I'm assuming there will be a way to export the value for the end of year
+> count."*
+
+`fuelValuation(tankTx, dispensing, tanks, asOf)` costs history **up to that day
+and stops**. Re-running it next year for this year gives this year's answer.
+
+That is the whole difference between a closing balance and a report that totals
+current stock under an old heading — the second one drifts every time fuel
+arrives, and by the time anybody notices, the year it claims to describe is
+long closed. There is a test that runs the same date twice and a third time for
+a later date, and requires the first two to agree and the third not to.
+
+A tank whose opening balance is dated after the valuation is **not in it** — it
+did not exist yet as far as that date is concerned.
+
+## What it refuses to hide
+
+- **A tank with no opening balance** — named on the screen, with the
+  consequence stated: the gallons come from deliveries alone, so whatever was
+  already in the tank is missing from the figure.
+- **Fuel nothing has priced** — no opening balance and no delivery behind it.
+  The gallons may be right; the value is short, and it says so rather than
+  printing a confident total.
+
+On the **Fuel → Fuel On Hand** tab. Export and print, alongside the year-end
+inventory count — the tanks are stock too.

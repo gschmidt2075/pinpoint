@@ -85,7 +85,7 @@ export function FuelLogTab({ dispensing, units, tanks, tankTx, departments, empl
   // tank cost, which is not the price of the last load and can be a blend of
   // two. The quote is what it would cost if it were saved now; nothing is taken
   // out of the tank until it is.
-  const costing   = useMemo(() => costFuel(tankTx, dispensing), [tankTx, dispensing]);
+  const costing   = useMemo(() => costFuel(tankTx, dispensing, tanks), [tankTx, dispensing, tanks]);
   const gallons   = parseFloat(form.gallons) || 0;
   const quote     = form.sourceTankId ? quoteFuel(costing, form.sourceTankId, gallons)
                                       : { unitCost:0, totalCost:0, lines:[], estimated:false };

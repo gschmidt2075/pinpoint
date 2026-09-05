@@ -8,13 +8,13 @@ import { InvoicePanel, periodLabel } from "./Invoice.jsx";
 // cost. Reconciled weekly, billed on the 1st. Revenue is recognised when the
 // check arrives, not when the bill goes out.
 
-export function FuelBilling({ dispensing, tankTx = [], countyInfo = {}, dispatch }) {
+export function FuelBilling({ dispensing, tankTx = [], tanks = [], countyInfo = {}, dispatch }) {
   const outside = dispensing.filter(f => f.consumer === "other_department");
 
   // FIFO, from the tank history. The stored figures on each record are kept in
   // step by the reducer, but the bill is built from the costing so that a month
   // total is the sum of the layers rather than the sum of eight rounded rows.
-  const costing = useMemo(() => costFuel(tankTx, dispensing), [tankTx, dispensing]);
+  const costing = useMemo(() => costFuel(tankTx, dispensing, tanks), [tankTx, dispensing, tanks]);
   const [invoice, setInvoice] = useState(null);
 
   const periods = [...new Set(outside.map(f => f.billingPeriod || (f.date||"").slice(0,7)).filter(Boolean))]

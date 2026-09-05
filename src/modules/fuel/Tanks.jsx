@@ -198,7 +198,7 @@ export function TanksTab({ tanks, tankTx, dispensing, vendors = [], fuelGLCode =
   // then keeps that price until it is filled again, whatever the shop tank does
   // afterwards. Greg's call, and the right one: the fuel on the truck is the
   // fuel that was put on the truck.
-  const costing  = costFuel(tankTx, dispensing);
+  const costing  = costFuel(tankTx, dispensing, tanks);
   const fillQuote = isFill && txForm.sourceTankId
     ? quoteFuel(costing, txForm.sourceTankId, parseFloat(txForm.gallons) || 0)
     : null;

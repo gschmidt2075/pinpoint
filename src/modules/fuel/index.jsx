@@ -6,6 +6,7 @@ import { FuelLogTab } from "./Dispensing.jsx";
 import { FuelBilling } from "./Billing.jsx";
 import { FuelTaxTab } from "./FuelTax.jsx";
 import { DEFTab } from "./DEF.jsx";
+import { YearEndTab } from "./YearEnd.jsx";
 import { DailyInventoryTab } from "./DailyInventory.jsx";
 
 // ── Fuel ──────────────────────────────────────────────────────────────────────
@@ -39,6 +40,7 @@ export default function Fuel({ db, dispatch }) {
     { id:"daily",   label:"Daily Inventory", icon:"clipboard-check" },
     { id:"billing", label:"Department Billing", icon:"file-invoice" },
     { id:"tax",     label:"Fuel Tax",           icon:"receipt-tax" },
+    { id:"yearend", label:"Fuel On Hand",       icon:"calendar-stats" },
   ];
 
   return (
@@ -74,13 +76,17 @@ export default function Fuel({ db, dispatch }) {
         <DailyInventoryTab tanks={tanks} tankTx={tankTx} dispensing={dispensing}
           records={db.dailyInventory || []} dispatch={dispatch} />
       )}
-      {tab==="billing" && <FuelBilling dispensing={dispensing} tankTx={tankTx}
+      {tab==="billing" && <FuelBilling dispensing={dispensing} tankTx={tankTx} tanks={tanks}
           countyInfo={db.countyInfo || {}} dispatch={dispatch} />}
       {tab==="def" && (
         <DEFTab items={db.inventoryItems || []} batches={db.inventoryBatches || []}
           groups={db.inventoryGroups || []} tanks={tanks} units={units}
           employees={db.employees || []} transactions={db.inventoryTransactions || []}
           dispensing={dispensing} dispatch={dispatch} />
+      )}
+      {tab==="yearend" && (
+        <YearEndTab tanks={tanks} tankTx={tankTx} dispensing={dispensing}
+          countyInfo={db.countyInfo || {}} />
       )}
       {tab==="tax" && (
         <FuelTaxTab dispensing={dispensing} rates={db.fuelTaxRates || []}

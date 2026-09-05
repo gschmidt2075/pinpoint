@@ -12,7 +12,8 @@ import { costFuel, fuelCostOf, fillCostOf, quoteFuel, tankLayers,
          tankFuelValue, departmentFuelBill, createFuelTaxRate, fuelTaxRatesOn,
          quarterOf, quarterRange, fuelTaxReport, quartersWithFuel,
          buildFIFOLines, fluidItems, fluidOnHand, issueFluidToMachine,
-         createInventoryItem, createInventoryBatch, additiveEffect } from "../src/data/schema.js";
+         createInventoryItem, createInventoryBatch, additiveEffect,
+         createTank, fuelValuation } from "../src/data/schema.js";
 
 let passed = 0;
 const failures = [];
@@ -444,6 +445,78 @@ const batch = (o) => createInventoryBatch({ itemId:"def-jug", status:"open", ...
   const c = costFuel(tx, [{ id:"f1", sourceTankId:"402F", date:"2026-07-10", gallons:50, createdAt:"4" }]);
   close(fillCostOf(c, "p1").unitCost, 3.10, "the portable is filled at the treated price");
   close(fuelCostOf(c, "f1").unitCost, 3.10, "and the machine it feeds pays it too");
+}
+
+
+// ── Opening balance, and the year-end value ──────────────────────────────────
+//
+// Greg: "I would rather just have an opening balance when the tank is created
+// and what the opening value is too." And: "I'm assuming there will be a way to
+// export the value for the end of year count."
+
+{
+  console.log("\nA tank that starts with fuel in it");
+  const t = createTank({ id:"T", name:"Main Shop Diesel", fuelType:"diesel",
+                         openingDate:"2026-07-01", openingGallons:5000, openingValue:17500 });
+  const c = costFuel([], [], [t]);
+  close(tankFuelValue(c, "T").gallons, 5000, "the gallons are there from day one");
+  close(tankFuelValue(c, "T").value, 17500, "and so is the value");
+  close(quoteFuel(c, "T", 100).unitCost, 3.50, "priced at value over gallons");
+
+  // The opening fuel goes out FIRST, before anything delivered later.
+  const c2 = costFuel(
+    [del({ id:"d1", tankId:"T", date:"2026-08-01", gallons:1000, unitCost:4.00, createdAt:"1" })],
+    [{ id:"f1", sourceTankId:"T", date:"2026-08-05", gallons:100, createdAt:"2" }], [t]);
+  close(fuelCostOf(c2, "f1").unitCost, 3.50, "and it is drawn before the newer, dearer load");
+  ok(!fuelCostOf(c2, "f1").estimated, "nothing is estimated once an opening balance exists");
+
+  // Which is the whole point: without one, the first draw is a guess.
+  const bare = costFuel([], [{ id:"f9", sourceTankId:"T", date:"2026-08-05", gallons:100 }], []);
+  ok(fuelCostOf(bare, "f9").estimated, "with no opening balance the same draw is only estimated");
+}
+
+{
+  console.log("\nThe year-end value");
+  const tanks = [
+    createTank({ id:"A", name:"Main Shop Diesel",   fuelType:"diesel",
+                 openingDate:"2025-07-01", openingGallons:5000, openingValue:17500 }),
+    createTank({ id:"B", name:"Main Shop Unleaded", fuelType:"unleaded",
+                 openingDate:"2025-07-01", openingGallons:1000, openingValue:3000 }),
+    createTank({ id:"C", name:"Bought Later",       fuelType:"diesel",
+                 openingDate:"2027-01-01", openingGallons:800,  openingValue:3200 }),
+  ];
+  const tx = [del({ id:"d1", tankId:"A", date:"2026-03-01", gallons:2000, unitCost:4.00, createdAt:"1" }),
+              del({ id:"d2", tankId:"A", date:"2026-09-01", gallons:2000, unitCost:5.00, createdAt:"2" })];
+  const fd = [{ id:"f1", sourceTankId:"A", date:"2026-04-01", gallons:1000, createdAt:"3" }];
+
+  const v = fuelValuation(tx, fd, tanks, "2026-06-30");
+  eq(v.asOf, "2026-06-30", "as at the fiscal year end");
+  eq(v.lines.length, 2, "a tank bought after the date is not in it");
+  const a = v.lines.find(l => l.tankId === "A");
+  close(a.gallons, 6000, "5,000 opening plus 2,000 delivered less 1,000 issued");
+  close(a.value, 17500 + 8000 - 3500, "valued FIFO — the 1,000 issued came off the opening layer");
+  // The September delivery is AFTER the date and must not appear.
+  ok(a.gallons < 8000, "a delivery after the year end is not counted");
+  close(v.totalGallons, 7000, "with the unleaded tank included");
+  close(v.totalValue, 22000 + 3000, "and the total is the tanks added");
+  eq(v.byFuel.length, 2, "broken down by fuel");
+  eq(v.unpriced, 0, "nothing unpriced");
+
+  // Run it again for the same date and it must not have moved.
+  const again = fuelValuation(tx, fd, tanks, "2026-06-30");
+  close(again.totalValue, v.totalValue, "re-running last year's figure gives last year's answer");
+
+  // Today's figure is a different number, and should be.
+  const now = fuelValuation(tx, fd, tanks, "2026-12-31");
+  ok(now.totalValue > v.totalValue, "by December the September load is in it");
+}
+
+{
+  console.log("\nA tank nobody gave an opening balance");
+  const t = createTank({ id:"T", name:"Kenesaw", fuelType:"diesel" });
+  const v = fuelValuation([], [], [t], "2026-06-30");
+  eq(v.lines[0].noOpening, true, "the report says so rather than showing a confident zero");
+  close(v.totalValue, 0, "and values it at nothing, which is honest");
 }
 
 console.log(failures.length ? `\n${failures.length} failed, ${passed} passed\n`

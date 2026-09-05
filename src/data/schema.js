@@ -931,6 +931,21 @@ export const createTank = (overrides = {}) => ({
   tankType:        "above_ground",// underground | above_ground | portable
   capacityGallons: 0,
   currentLevel:    0,            // calculated from transactions
+  // ── What was in it on day one ────────────────────────────────────────────
+  //
+  // Greg: "I would rather just have an opening balance when the tank is created
+  // and what the opening value is too."
+  //
+  // The alternative was carrying the old system's fuel rows across as tank
+  // openings, which meant matching a commodity group to a tank and getting it
+  // wrong for the portables when a truck is sold. Two numbers typed once, by
+  // the person who knows, beats a clever match nobody can check.
+  //
+  // Value rather than price per gallon, because that is what the closing
+  // inventory sheet says. The price is derived.
+  openingDate:     "",           // blank = no opening balance recorded
+  openingGallons:  0,
+  openingValue:    0,
   // Main shop tanks have an electronic monitor, balanced against the paper logs
   // daily. Outlying sheds don't — they're dipped once a year.
   hasMonitor:      false,
@@ -1685,8 +1700,20 @@ function drawFIFO(layers, want) {
 // through. One pass over all tanks at once, because a portable fill is a
 // withdrawal from one tank and a delivery into another and the two have to
 // happen in the same order they happened in real life.
-export function costFuel(tankTx = [], dispensing = []) {
+export function costFuel(tankTx = [], dispensing = [], tanks = []) {
   const events = [];
+
+  // The opening balance is the first thing in the tank, before any delivery.
+  // Without it, every gallon drawn before the first delivery prices at the
+  // "estimated" fallback and the year-end value is a guess.
+  for (const t of tanks || []) {
+    const gal = Number(t.openingGallons) || 0;
+    if (gal <= 0) continue;
+    const val = Number(t.openingValue) || 0;
+    events.push({ kind:"delivery", tankId:t.id, gallons:gal, unitCost: val / gal,
+                  additiveCost:0, date: t.openingDate || "0000-01-01",
+                  createdAt:"", id:`${t.id}-opening`, order:-1 });
+  }
 
   for (const t of tankTx || []) {
     if (t.type === "delivery" && t.tankId) {
@@ -1821,6 +1848,58 @@ export function quoteFuel(costing, tankId, gallons) {
 }
 
 const to = (n, dp) => Number((Number(n) || 0).toFixed(dp));
+
+// What the fuel is worth on a given day, tank by tank.
+//
+// Greg: "I'm assuming there will be a way to export the value for the end of
+// year count." The county's year runs to 30 June, and the fuel in the tanks is
+// part of what is counted — the same question the inventory count answers for
+// the shelves.
+//
+// It works by costing history only up to that date, so it is a real AS-AT
+// figure and not today's number with an old label. Running it again next year
+// for last year gives the same answer, which is the point of a closing balance.
+export function fuelValuation(tankTx = [], dispensing = [], tanks = [], asOf) {
+  const cut = String(asOf || today());
+  const upTo = (rows) => (rows || []).filter(r => String(r.date || "") <= cut);
+
+  // A tank whose opening balance is dated AFTER the valuation did not exist
+  // yet, as far as this date is concerned.
+  const eligible = (tanks || []).filter(t => !t.openingDate || String(t.openingDate) <= cut);
+  const costing = costFuel(upTo(tankTx), upTo(dispensing), eligible);
+
+  const lines = eligible.map(t => {
+    const v = tankFuelValue(costing, t.id);
+    return {
+      tankId: t.id, name: t.name, location: t.location,
+      fuelType: t.fuelType || "diesel",
+      capacityGallons: Number(t.capacityGallons) || 0,
+      gallons: Number(v.gallons.toFixed(1)),
+      value:   Number(v.value.toFixed(2)),
+      average: Number(v.average.toFixed(4)),
+      // Nothing priced it: no opening balance and no delivery on record. The
+      // gallons may still be right, so it is reported rather than dropped.
+      unpriced: v.gallons > 0 && v.value === 0,
+      noOpening: !(Number(t.openingGallons) > 0),
+    };
+  }).sort((a, b) => b.value - a.value);
+
+  const byFuel = {};
+  for (const l of lines) {
+    const f = byFuel[l.fuelType] || { fuelType: l.fuelType, gallons: 0, value: 0 };
+    f.gallons = Number((f.gallons + l.gallons).toFixed(1));
+    f.value   = Number((f.value + l.value).toFixed(2));
+    byFuel[l.fuelType] = f;
+  }
+
+  return {
+    asOf: cut, lines,
+    byFuel: Object.values(byFuel).sort((a, b) => b.value - a.value),
+    totalGallons: Number(lines.reduce((s, l) => s + l.gallons, 0).toFixed(1)),
+    totalValue:   Number(lines.reduce((s, l) => s + l.value, 0).toFixed(2)),
+    unpriced: lines.filter(l => l.unpriced).length,
+  };
+}
 
 // A month of one department's fuel, as the one-line bill Greg described:
 // gallons, cost per unit, final cost.

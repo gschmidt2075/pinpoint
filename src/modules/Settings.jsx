@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Field, SectionCard, Table, Icon, AlertBar, inp, btn, fmt, fmtSm, DateField, titleCase } from "../components/shared.jsx";
+import { Field, SectionCard, Table, Icon, AlertBar, inp, btn, fmt, fmtSm, DateField, MoneyField, titleCase } from "../components/shared.jsx";
 import { useUnsavedForm, useNavigationGuard } from "../components/unsaved.jsx";
 import { EXPENDITURE_CODES, REVENUE_CODES, FISCAL_YEAR } from "../data/accountCodes.js";
 import { parseCSV, crosswalkInventory } from "../data/crosswalk.js";
@@ -1379,6 +1379,7 @@ function TankSettings({ tanks, dispatch }) {
   const BLANK = {
     name:"", location:"", fuelType:"diesel", tankType:"above_ground",
     capacityGallons:"", hasMonitor:false, filledByContractor:false, carriedByUnit:"",
+    openingDate:"", openingGallons:"", openingValue:"",
     isUnderground:false, facilityId:"", tankRegistrationId:"", installedDate:"",
     status:"active", notes:"",
   };
@@ -1389,7 +1390,8 @@ function TankSettings({ tanks, dispatch }) {
 
   const startNew  = () => { setForm(BLANK); setEditing("new"); };
   const startEdit = (t) => {
-    setForm({ ...BLANK, ...t, capacityGallons: String(t.capacityGallons ?? "") });
+    setForm({ ...BLANK, ...t, capacityGallons: String(t.capacityGallons ?? ""),
+              openingGallons: String(t.openingGallons ?? ""), openingValue: String(t.openingValue ?? "") });
     setEditing(t.id);
   };
   const cancel = () => { setEditing(null); setForm(BLANK); };
@@ -1399,6 +1401,9 @@ function TankSettings({ tanks, dispatch }) {
     const payload = {
       ...form,
       capacityGallons: parseFloat(form.capacityGallons) || 0,
+      openingDate:     form.openingDate || "",
+      openingGallons:  parseFloat(form.openingGallons) || 0,
+      openingValue:    parseFloat(form.openingValue) || 0,
       // A tank cannot be underground and portable at once, and the type is what
       // people actually read on screen — keep the two in step rather than
       // letting them drift apart.
@@ -1450,6 +1455,44 @@ function TankSettings({ tanks, dispatch }) {
             <Field label="Capacity (gal)">
               <input type="number" min="0" value={form.capacityGallons} onChange={e=>set("capacityGallons",e.target.value)} style={{ ...inp, margin:0, fontFamily:"monospace" }} />
             </Field>
+          </div>
+
+          {/* ── What was in it to start with ──
+              Greg: "I would rather just have an opening balance when the tank
+              is created and what the opening value is too."
+              Without these, every gallon drawn before the first delivery is
+              priced at a fallback and the year-end value is a guess. Value
+              rather than price per gallon, because value is what the closing
+              inventory sheet says; the price is worked out from it. */}
+          <div style={{ borderTop:"1px solid #eee", paddingTop:14, marginBottom:14 }}>
+            <div style={{ fontSize:12.5, fontWeight:600, color:"#1a1a1a", marginBottom:3 }}>
+              Opening balance <span style={{ fontWeight:400, color:"#888" }}>— what was in it when Pinpoint took over</span>
+            </div>
+            <div style={{ fontSize:11.5, color:"#888", marginBottom:10, maxWidth:620, lineHeight:1.6 }}>
+              Leave blank for a tank that started empty. Fuel already in a tank has to be priced
+              somehow — without this, anything drawn before the first delivery is only an estimate,
+              and the year-end value cannot be relied on.
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1.4fr", gap:12, alignItems:"end" }}>
+              <Field label="As at">
+                <DateField value={form.openingDate} onChange={v=>set("openingDate",v)} />
+              </Field>
+              <Field label="Gallons">
+                <input type="number" min="0" step="any" value={form.openingGallons}
+                  onChange={e=>set("openingGallons",e.target.value)}
+                  style={{ ...inp, margin:0, fontFamily:"monospace" }} />
+              </Field>
+              <Field label="Value">
+                <MoneyField value={form.openingValue} onChange={v=>set("openingValue",v)} />
+              </Field>
+              <div style={{ fontSize:11.5, color:"#40607d", paddingBottom:9 }}>
+                {(parseFloat(form.openingGallons) > 0 && parseFloat(form.openingValue) > 0)
+                  ? <>Works out at <strong>${(parseFloat(form.openingValue)/parseFloat(form.openingGallons)).toFixed(4)}</strong> a gallon.</>
+                  : parseFloat(form.openingGallons) > 0
+                  ? <span style={{ color:"#a05a00" }}>Gallons with no value — they will price as estimated.</span>
+                  : ""}
+              </div>
+            </div>
           </div>
 
           <div style={{ display:"flex", gap:22, alignItems:"center", flexWrap:"wrap", marginBottom:12 }}>
