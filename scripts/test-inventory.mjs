@@ -14,6 +14,7 @@
 import { transferStock, stockByLocation, stockAtLocation, categoryName, createInventoryItem,
          groupByCode, groupById, groupLabel, locationName } from "../src/data/schema.js";
 import { parseCSV, crosswalkInventory, fluidRuleFor, FLUID_RULES } from "../src/data/crosswalk.js";
+import { receiptExpenditure, reconcileReceipt, claimCycleFor } from "../src/data/schema.js";
 import { readFileSync } from "node:fs";
 import { INITIAL_INVENTORY_ITEMS as ITEMS,
          INITIAL_INVENTORY_BATCHES as BATCHES,
@@ -614,6 +615,86 @@ console.log("\nMoney fields");
   ok(kinds.has("Fluid merged from several part numbers"), "and so is every merge");
   ok(kinds.has("Fluid rows disagree on unit of measure"), "EA against GAL on the same fluid is flagged");
   ok(kinds.has("Container size needed"), "and somebody is asked for the gallons per jug");
+}
+
+// ── Receiving creates the claim ──────────────────────────────────────────────
+//
+// Greg: "I want to make sure everything goes through that that we receive in
+// and have to pay for."
+//
+// Before this, ONE thing in the program created a claim from a receipt: a fuel
+// delivery. Parts, gravel and DEF all went onto the shelf with the money
+// invisible. These are the rules that stop that happening again.
+
+{
+  console.log("\nA receipt with the invoice in hand");
+  const e = receiptExpenditure({
+    receiptId:"bat-1", date:"2026-09-05", vendorName:"AUTO VALUE",
+    invoiceRef:"INV-4471", claimCycleId:"2026-09-15", glCode:"302.09",
+    description:"DEF 2.5 Gallon Jug", amount:104.28, quantity:12, unitOfMeasure:"EA",
+  });
+  eq(e.totalAmount, 104.28, "the claim is for what it cost");
+  eq(e.lines.length, 1, "one line");
+  eq(e.lines[0].code, "302.09", "charged to the item's GL code");
+  eq(e.lines[0].amount, 104.28, "and the line matches the total");
+  ok(/12 EA/.test(e.lines[0].description), "the line says how much of what");
+  eq(e.invoiceStatus, "reconciled", "invoice in hand means nothing left to chase");
+  eq(e.reference, "INV-4471", "referenced by the invoice number");
+  eq(e.sourceReceiptId, "bat-1", "and it points back at the batch it came from");
+}
+
+{
+  console.log("\nA receipt with no invoice yet");
+  const e = receiptExpenditure({
+    receiptId:"bat-2", date:"2026-09-05", vendorName:"FARMERS COOP",
+    invoiceRef:"", claimCycleId:"2026-09-15", glCode:"301.06",
+    description:"1½\" Crusher Run Rock", amount:2400, quantity:120, unitOfMeasure:"TON",
+  });
+  eq(e.invoiceStatus, "expected", "the claim still goes on, marked awaiting the paperwork");
+  eq(e.totalAmount, 2400, "at the price on the ticket");
+  eq(e.invoicedAmount, 0, "with nothing invoiced yet");
+  eq(e.reference, "bat-2", "referenced by the receipt until an invoice number exists");
+}
+
+{
+  console.log("\nWhat must NOT create a claim");
+  eq(receiptExpenditure({ receiptId:"x", date:"2026-09-05", amount:0 }), null,
+     "a zero-value receipt makes no claim");
+  eq(receiptExpenditure({ receiptId:"x", date:"2026-09-05", amount:-5 }), null,
+     "and neither does a negative one");
+  // The opening balances from the crosswalk are the important case: the county
+  // did not buy that stock this year, and 2,201 claim lines appearing on day
+  // one would be a disaster nobody could unpick.
+  const opening = BATCHES.slice(0, 50);
+  ok(opening.every(b => b.receiptRef === "CROSSWALK"),
+     "opening balances are marked as a crosswalk, not a purchase");
+}
+
+{
+  console.log("\nWhen the invoice lands and disagrees");
+  const batch = { id:"bat-3", quantityReceived:120, unitCost:20, totalCost:2400,
+                  invoiceStatus:"pending_reconciliation", invoiceRef:"" };
+  const exp   = receiptExpenditure({ receiptId:"bat-3", date:"2026-09-05", amount:2400,
+                                     glCode:"301.06", description:"rock", claimCycleId:"c1" });
+  const r = reconcileReceipt({ batch, expenditure: exp, invoicedAmount: 2455.20,
+                               invoiceRef:"INV-99", date:"2026-09-18" });
+  close(r.difference, 55.20, "the difference is reported");
+  close(r.batch.totalCost, 2455.20, "the batch is restated to what was actually billed");
+  close(r.batch.unitCost, 20.46, "so the unit cost moves — and FIFO reprices what was issued");
+  eq(r.batch.invoiceStatus, "final", "and it is no longer waiting");
+  close(r.expenditure.totalAmount, 2455.20, "the claim moves with it");
+  close(r.expenditure.lines[0].amount, 2455.20, "including its line, not just the header");
+  eq(r.expenditure.invoiceStatus, "reconciled", "and it is settled");
+  eq(r.expenditure.reference, "INV-99", "carrying the invoice number");
+}
+
+{
+  console.log("\nWhich claim cycle a receipt lands on");
+  const cycles = [{ id:"a", date:"2026-09-01" }, { id:"b", date:"2026-09-15" }, { id:"c", date:"2026-10-06" }];
+  eq(claimCycleFor("2026-09-02", cycles).id, "b", "the first cycle on or after the date");
+  eq(claimCycleFor("2026-09-15", cycles).id, "b", "the day of a cycle counts as that cycle");
+  eq(claimCycleFor("2026-08-01", cycles).id, "a", "something early lands on the first one");
+  eq(claimCycleFor("2027-01-01", cycles).id, "c", "and something past the end lands on the last");
 }
 
 // ── Result ───────────────────────────────────────────────────────────────────

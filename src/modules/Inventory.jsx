@@ -1,7 +1,9 @@
 import { useState, useMemo } from "react";
 import { Icon, Field, SectionCard, Table, KPICard, StatusBadge, SearchSelect, inp, btn, fmt, fmtSm, DateField, titleCase, MoneyField } from "../components/shared.jsx";
 import { groupLabel, groupByCode, groupTypeLabel, categoryName, locationName,
-         INVENTORY_GROUP_TYPES, buildFIFOLines, FLUID_TYPES } from "../data/schema.js";
+         INVENTORY_GROUP_TYPES, buildFIFOLines, FLUID_TYPES,
+         receiptExpenditure, claimCycleFor, reconcileReceipt } from "../data/schema.js";
+import { CLAIM_CYCLES } from "./FundAccounting.jsx";
 import { useUnsavedGuard, useNavigationGuard, useUnsavedForm } from "../components/unsaved.jsx";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -1074,7 +1076,9 @@ function ReceiveForm({ db, dispatch, onDone }) {
       unitCost:          parseFloat(form.unitCost),
       totalCost,
       vendorName:        form.vendorName,
-      invoiceStatus:     "final",
+      // The invoice may not have come with the goods. Greg: "the invoice needs
+      // to be reconciled if it is not with the delivery of anything."
+      invoiceStatus:     form.invoiceNumber ? "final" : "pending_reconciliation",
       invoiceRef:        form.invoiceNumber,
       status:            "open",
       notes:             form.notes,
@@ -1099,6 +1103,20 @@ function ReceiveForm({ db, dispatch, onDone }) {
         notes:           form.notes,
         createdAt:       new Date().toISOString(),
       },
+      // Stock arriving is also a bill to pay. The claim goes on at the price
+      // entered whether or not the invoice is in hand; if it is not, the batch
+      // is marked pending and the reconcile screen picks it up.
+      expenditure: receiptExpenditure({
+        receiptId: batchId, date: form.date,
+        vendorName: form.vendorName, invoiceRef: form.invoiceNumber,
+        claimCycleId: claimCycleFor(form.date, CLAIM_CYCLES)?.id || "",
+        glCode: selectedItem?.glAccountCode || "",
+        description: selectedItem?.name || "",
+        amount: totalCost,
+        quantity: parseFloat(form.quantity) || 0,
+        unitOfMeasure: selectedItem?.unitOfMeasure || "",
+        notes: form.invoiceNumber ? "Received, invoice in hand" : "Received, invoice to follow",
+      }),
     });
     setSaved(true);
     setForm({ date: today(), itemId:"", vendorName:"", invoiceNumber:"", quantity:"", unitCost:"", location:"", notes:"" });
@@ -1264,7 +1282,23 @@ function ScaleTicket({ db, dispatch, onDone }) {
       createdAt:           new Date().toISOString(),
     };
 
-    dispatch({ type:"ADD_INVENTORY_TRANSACTION", payload: tx });
+    // The gravel is bought and paid for like anything else. This is the flow
+    // Greg pointed at as the one to copy — a ticket now, an invoice later.
+    dispatch({
+      type: "ADD_INVENTORY_TRANSACTION",
+      payload: tx,
+      expenditure: receiptExpenditure({
+        receiptId: batchId, date: form.date,
+        vendorName: form.vendorName || form.source,
+        invoiceRef: "",
+        claimCycleId: claimCycleFor(form.date, CLAIM_CYCLES)?.id || "",
+        glCode: selectedItem?.glAccountCode || "",
+        description: `${selectedItem?.name || "material"}${form.ticketNumber ? ` — ticket ${form.ticketNumber}` : ""}`,
+        amount: totalCost,
+        quantity: qty, unitOfMeasure: form.unitOfMeasure,
+        notes: "Scale ticket, invoice to follow",
+      }),
+    });
 
     // Straight to a road segment — issue it back out against the project so the
     // cost actually lands somewhere. Without this the gravel was recorded as

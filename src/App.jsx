@@ -319,6 +319,22 @@ function baseReducer(state, action) {
       const tx = action.payload;
       let batches = [...state.inventoryBatches];
 
+      // A receipt is stock arriving AND a bill to pay. Greg: "I want to make
+      // sure everything goes through that that we receive in and have to pay
+      // for." Until now only a fuel delivery created a claim — parts, gravel
+      // and DEF all went onto the shelf with the money invisible.
+      //
+      // The claim travels WITH the receipt rather than as a second dispatch, so
+      // the two cannot come apart. Stock on the shelf that nobody is paying for
+      // is the failure this exists to prevent.
+      //
+      // Note it is keyed on the claim being PRESENT, not on the transaction
+      // type — a crosswalk opening balance passes none and correctly creates no
+      // claim, because the county did not buy that stock this year.
+      const expenditures = action.expenditure
+        ? [...state.expenditures, action.expenditure]
+        : state.expenditures;
+
       if (tx.type === "receive" || tx.type === "scale_ticket" || tx.type === "crosswalk") {
         // Batch is already created and passed in tx.batch — just add it
         if (tx.batch) batches = [...batches, tx.batch];
@@ -428,6 +444,7 @@ function baseReducer(state, action) {
       return {
         ...state,
         projects,
+        expenditures,
         inventoryBatches: batches,
         inventoryTransactions: [...state.inventoryTransactions, tx],
       };
@@ -843,6 +860,23 @@ function baseReducer(state, action) {
       return { ...state, townships: (state.townships || []).filter(t => t.id !== action.payload) };
 
     // Commodity groups. Greg: "we will need to be able to add/remove/edit codes."
+    // The invoice landed and disagreed with the ticket. The batch's unit cost
+    // moves — which reprices everything issued from it, because inventory is
+    // FIFO off the batches — and the claim line moves with it. Doing one
+    // without the other is how the stock and the money drift apart.
+    case "RECONCILE_RECEIPT": {
+      const { batch, expenditure } = action.payload;
+      return {
+        ...state,
+        inventoryBatches: batch
+          ? state.inventoryBatches.map(b => b.id === batch.id ? batch : b)
+          : state.inventoryBatches,
+        expenditures: expenditure
+          ? state.expenditures.map(e => e.id === expenditure.id ? expenditure : e)
+          : state.expenditures,
+      };
+    }
+
     case "ADD_INVENTORY_GROUP":
       return { ...state, inventoryGroups: [...(state.inventoryGroups || []), action.payload] };
     case "UPDATE_INVENTORY_GROUP": {

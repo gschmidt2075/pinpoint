@@ -2,7 +2,9 @@ import { useState, useMemo } from "react";
 import { Icon, Field, Table, inp, btn, fmtSm, DateField, MoneyField, SearchSelect } from "../../components/shared.jsx";
 import { useUnsavedForm } from "../../components/unsaved.jsx";
 import { fluidItems, fluidOnHand, locationName, placeName, groupLabel,
-         issueFluidToMachine, buildFIFOLines } from "../../data/schema.js";
+         issueFluidToMachine, buildFIFOLines,
+         receiptExpenditure, claimCycleFor } from "../../data/schema.js";
+import { CLAIM_CYCLES } from "../FundAccounting.jsx";
 import { today, fmtDate } from "./shared.js";
 
 // ── DEF ───────────────────────────────────────────────────────────────────────
@@ -57,8 +59,9 @@ export function DEFTab({ items = [], batches = [], groups = [], tanks = [], unit
       if (!ids.has(t.itemId)) continue;
       rows.push({
         date: t.date, kind: t.type, qty: t.quantity, cost: t.totalCost,
-        where: t.type === "transfer" ? `$`
-                                     : placeName(t.location, groups),
+        where: t.type === "transfer"
+          ? `${placeName(t.fromLocation, groups)} \u2192 ${placeName(t.toLocation, groups)}`
+          : placeName(t.location, groups),
         who: t.issuedTo || t.vendorName || "", notes: t.notes || "", id: t.id,
       });
     }
@@ -231,12 +234,11 @@ const placeOptions = (groups) =>
              .map(g => ({ value: g.code, label: groupLabel(g) }));
 
 // ── Received ──────────────────────────────────────────────────────────────────
-// NOTE — this does NOT create a claim. Nothing in the Inventory module does;
-// only a fuel delivery reaches Fund Accounting today. Greg has asked for
-// everything the county receives and pays for to go through it, so this form
-// will change when that is settled. Recorded here rather than left as a
-// surprise, because a receiving screen that looks complete and quietly skips
-// the accounting is worse than one that says so.
+// Receiving DEF puts it on the shelf AND puts it on a claim. Greg: "I want to
+// make sure everything goes through that that we receive in and have to pay
+// for." The claim cycle fills itself in — the first one on or after the date —
+// because asking somebody to pick from a list every time they put jugs away is
+// how the field comes to be left blank.
 function ReceiveForm({ defItems, groups, dispatch, onDone }) {
   const [form, setForm] = useState({ ...EMPTY_RECEIVE, itemId: defItems[0]?.id || "" });
   useUnsavedForm(form, "this DEF delivery");
@@ -245,6 +247,8 @@ function ReceiveForm({ defItems, groups, dispatch, onDone }) {
   const item = defItems.find(i => i.id === form.itemId);
   const qty  = parseFloat(form.containers) || 0;
   const cost = parseFloat(form.unitCost) || 0;
+  const total = Number((qty * cost).toFixed(2));
+  const cycle = claimCycleFor(form.date, CLAIM_CYCLES);
 
   const missing = [];
   if (!form.date)     missing.push("a date");
@@ -273,7 +277,15 @@ function ReceiveForm({ defItems, groups, dispatch, onDone }) {
         status:"open", notes: form.notes, createdAt: new Date().toISOString(),
       },
       notes: form.notes, createdAt: new Date().toISOString(),
-    }});
+    },
+    expenditure: receiptExpenditure({
+      receiptId: batchId, date: form.date,
+      vendorName: form.vendorName, invoiceRef: form.invoiceRef,
+      claimCycleId: cycle?.id || "", glCode: item.glAccountCode || "",
+      description: item.name, amount: total,
+      quantity: qty, unitOfMeasure: item.unitOfMeasure || "EA",
+      notes: form.invoiceRef ? "DEF received, invoice in hand" : "DEF received, invoice to follow",
+    })});
     setForm({ ...EMPTY_RECEIVE, itemId: form.itemId, location: form.location, vendorName: form.vendorName });
   };
 
@@ -319,8 +331,15 @@ function ReceiveForm({ defItems, groups, dispatch, onDone }) {
         <div style={{ fontSize:11.5, color:"#a05a00", marginTop:10 }}>Still needs {missing.join(", ")}.</div>
       )}
       {qty > 0 && cost > 0 && (
-        <div style={{ fontSize:11.5, color:"#40607d", marginTop:10 }}>
-          {qty} {qty===1?"jug":"jugs"} at {fmtSm(cost)} = <strong>{fmtSm(qty*cost)}</strong>
+        <div style={{ background:"#f4f7fa", border:"1px solid #dbe4ec", borderRadius:5,
+                      padding:"8px 11px", marginTop:10, fontSize:11.5, color:"#40607d", lineHeight:1.6 }}>
+          {qty} {qty===1?"jug":"jugs"} at {fmtSm(cost)} = <strong>{fmtSm(total)}</strong>
+          {cycle && <> · goes on the claim for <strong>{cycle.label || cycle.date}</strong></>}
+          <div style={{ marginTop:3, color: form.invoiceRef ? "#1a6b35" : "#a05a00" }}>
+            {form.invoiceRef
+              ? "Invoice number entered, so the claim is complete."
+              : "No invoice number — the claim goes on at this price and waits to be reconciled."}
+          </div>
         </div>
       )}
     </div>

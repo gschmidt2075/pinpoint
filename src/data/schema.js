@@ -1231,6 +1231,113 @@ export const DEFAULT_FUEL_DEPARTMENTS = [
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
+// RECEIVING SOMETHING THE COUNTY PAYS FOR
+//
+// Greg, 2026-09-05:
+//
+//   "I want to make sure everything goes through that that we receive in and
+//    have to pay for."
+//   "The parts manager does record what arrives. I think we should have the
+//    receive stock like the gravel is where the invoice needs to be reconciled
+//    if it is not with the delivery of anything. That would work across the
+//    board."
+//
+// Before this, ONE thing in the whole program created a claim from a receipt:
+// a fuel delivery. Parts, gravel and DEF all went onto the shelf with no
+// accounting entry at all — the stock was right and the money was invisible.
+//
+// So every receipt now builds its claim the same way, from here. One function
+// rather than three copies, because three copies is how the parts receipt and
+// the scale ticket come to disagree about what a claim line looks like.
+//
+// The invoice may or may not be in the driver's hand. If it is, the claim is
+// complete. If not, the claim still goes on at the price entered and the
+// receipt is marked as awaiting the paperwork — which is what the county
+// already does with gravel, and the reason Greg pointed at it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// The claim cycle a receipt should land on: the first one on or after the date.
+// Claims go on a cycle rather than a date, and making somebody pick from a list
+// every time they put a box of filters away is how the field gets left blank.
+export function claimCycleFor(date, cycles = []) {
+  const d = String(date || today());
+  return (cycles || []).find(c => c.date >= d) || (cycles || [])[cycles.length - 1] || null;
+}
+
+export function receiptExpenditure({
+  receiptId, date, vendorName = "", vendorId = null,
+  invoiceRef = "", claimCycleId = "", glCode = "",
+  description = "", amount = 0, notes = "", quantity = 0, unitOfMeasure = "",
+}) {
+  const total = Number(amount) || 0;
+  // No money, no claim. A zero-value receipt is a correction or an opening
+  // balance, and putting a $0.00 line on a claim sheet helps nobody.
+  if (total <= 0) return null;
+
+  return {
+    id: `${receiptId}-exp`,
+    date,
+    vendor: vendorName, vendorId,
+    type: "invoice",
+    reference: invoiceRef || receiptId,
+    claimCycleId, claimCycle: claimCycleId,
+    lines: [{
+      id: `${receiptId}-line`,
+      code: glCode,
+      description: [quantity ? `${quantity}${unitOfMeasure ? " " + unitOfMeasure : ""}` : "", description]
+        .filter(Boolean).join(" "),
+      amount: round2(total),
+      notes: "",
+    }],
+    totalAmount: round2(total),
+    status: "entered",
+    // Whether the paper came with the goods. `expected` is what the
+    // reconciliation screen looks for.
+    invoiceStatus: invoiceRef ? "reconciled" : "expected",
+    invoicedAmount: invoiceRef ? round2(total) : 0,
+    notes,
+    sourceReceiptId: receiptId,
+    createdAt: now(),
+  };
+}
+
+// (round2 already exists above — one definition, not two.)
+
+// What changes when the invoice finally lands and disagrees with the ticket.
+//
+// The claim amount moves, the batch's unit cost moves, and because inventory is
+// FIFO off the batches, everything issued from that batch reprices itself. Same
+// bargain as fuel: correcting a price corrects the record rather than leaving
+// two numbers that disagree.
+export function reconcileReceipt({ batch, expenditure, invoicedAmount, invoiceRef, date }) {
+  const actual = Number(invoicedAmount) || 0;
+  const qty    = Number(batch?.quantityReceived) || 0;
+  const was    = Number(batch?.totalCost) || 0;
+  const unit   = qty > 0 ? actual / qty : 0;
+
+  return {
+    difference: round2(actual - was),
+    batch: batch ? {
+      ...batch,
+      unitCost: Number(unit.toFixed(4)),
+      totalCost: round2(actual),
+      invoiceStatus: "final",
+      invoiceRef: invoiceRef || batch.invoiceRef,
+      reconciledDate: date || today(),
+    } : null,
+    expenditure: expenditure ? {
+      ...expenditure,
+      totalAmount: round2(actual),
+      invoicedAmount: round2(actual),
+      invoiceStatus: "reconciled",
+      reference: invoiceRef || expenditure.reference,
+      lines: (expenditure.lines || []).map((l, i) =>
+        i === 0 ? { ...l, amount: round2(actual) } : l),
+    } : null,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // FLUIDS ON A SHELF — DEF
 //
 // Greg, on how DEF actually moves:
