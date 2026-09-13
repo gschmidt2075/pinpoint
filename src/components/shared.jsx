@@ -1,9 +1,39 @@
 import { useState, useMemo, useRef } from "react";
+import { parseLatLong, mapUrl, formatLatLong } from "../data/schema.js";
 // ── Shared UI Components ──────────────────────────────────────────────────────
 
 // ── Icon component ────────────────────────────────────────────────────────────
 export function Icon({ name, size=16, color="currentColor", style={} }) {
   return <i className={`ti ti-${name}`} style={{ fontSize:size, color, lineHeight:1, display:"inline-block", verticalAlign:"middle", ...style }} />;
+}
+
+// ── Map button ────────────────────────────────────────────────────────────────
+//
+// Greg: "is there any way we could provide a map button for anything that has
+// GPS data that takes you to like Google maps."
+//
+// One component, used everywhere coordinates appear — bridges, culverts, signs,
+// roads, projects. A button that only shows up on some of them is one people
+// stop looking for.
+//
+// It renders NOTHING when the coordinates are missing or unreadable. A greyed
+// out button invites a click that goes nowhere; absence is clearer, and the
+// record already shows the field is empty.
+export function MapLink({ value, longitude, template, label = "Map", title,
+                          size = 12, style = {} }) {
+  const coords = parseLatLong(value, longitude);
+  if (!coords) return null;
+  return (
+    <a href={mapUrl(coords, template)} target="_blank" rel="noopener noreferrer"
+       title={title || `Open ${formatLatLong(coords)} in a map`}
+       onClick={e => e.stopPropagation()}
+       style={{ display:"inline-flex", alignItems:"center", gap:4, fontSize:size,
+                color:"#1a5a3a", textDecoration:"none", border:"1px solid #c8dcd0",
+                borderRadius:4, padding:"2px 7px", background:"#f4faf6",
+                whiteSpace:"nowrap", ...style }}>
+      <Icon name="map-pin" size={size} color="#1a5a3a" />{label}
+    </a>
+  );
 }
 
 // ── Icon + label pill ─────────────────────────────────────────────────────────

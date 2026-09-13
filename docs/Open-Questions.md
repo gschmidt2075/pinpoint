@@ -125,6 +125,21 @@ printed once at the top of the accounting block and every line shares it. It
 still has to be configurable: 704 and 707 exist, and another county's fund
 number will not be 0300.
 
+**A map button wherever there are coordinates.** Built 2026-09-13. Greg: *"is
+there any way we could provide a map button for anything that has GPS data that
+takes you to like Google maps."* One `MapLink`, used on roads, bridges,
+culverts and signs, and available to signs and projects when those are built.
+
+The map URL is a **template in settings**, not a constant — a county that
+standardises on something other than Google should not need a developer to
+change a web address. That is the go-live constraint applied to a two-line
+detail.
+
+It renders **nothing** when the coordinate is missing or unreadable, rather
+than a greyed-out button that invites a click going nowhere. And `0, 0` counts
+as unreadable: it is what two empty number fields look like, it is in the
+Atlantic, and it has never been a culvert.
+
 ### Equipment, settled 2026-09-13
 
 **PM intervals already work the way Greg described** — a list of separate

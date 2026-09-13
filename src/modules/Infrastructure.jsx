@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm, DateField, titleCase } from "../components/shared.jsx";
+import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm, DateField, titleCase, MapLink } from "../components/shared.jsx";
 import { useUnsavedForm, useNavigationGuard } from "../components/unsaved.jsx";
 import { createRoad, createBridge, createStructure, createStructureBarrel, createSign, createSignHistory, barrelLabel, barrelsSummary } from "../data/schema.js";
 
@@ -301,6 +301,22 @@ function AssetCostHistory({ assetId, projects }) {
 }
 
 // ── Module Shell ──────────────────────────────────────────────────────────────
+// The coordinate, and a way to go and look at it.
+//
+// Greg: "is there any way we could provide a map button for anything that has
+// GPS data that takes you to like Google maps." Every asset that carries
+// coordinates gets the same one — a button on some screens and not others is
+// one people stop looking for.
+function GPS({ lat, lon }) {
+  const shown = lat && lon ? `${lat}, ${lon}` : "\u2014";
+  return (
+    <span style={{ display:"inline-flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+      <span>{shown}</span>
+      <MapLink value={lat} longitude={lon} />
+    </span>
+  );
+}
+
 export default function Infrastructure({ db, dispatch }) {
   const go = useNavigationGuard();
   const [tab, setTab] = useState("roads");
@@ -494,7 +510,7 @@ function RoadDetail({ road: r, projects, onBack, onEdit, dispatch }) {
       {tab==="details" && (
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20 }}>
           <SectionCard title="Location">
-            {[["Road Name",r.name],["Authority",r.authority||"—"],["From",r.from||"—"],["To",r.to||"—"],["911 From",r.from911||"—"],["911 To",r.to911||"—"],["S/T/R",r.sectionTownshipRange||"—"],["GPS",r.latitude&&r.longitude?`${r.latitude}, ${r.longitude}`:"—"]].map(([k,v])=>(
+            {[["Road Name",r.name],["Authority",r.authority||"—"],["From",r.from||"—"],["To",r.to||"—"],["911 From",r.from911||"—"],["911 To",r.to911||"—"],["S/T/R",r.sectionTownshipRange||"—"],["GPS",<GPS lat={r.latitude} lon={r.longitude} />]].map(([k,v])=>(
               <div key={k} style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", borderBottom:"1px solid #f0f0ee", fontSize:13 }}>
                 <span style={{ color:"#666" }}>{k}</span><span style={{ fontWeight:600 }}>{v}</span>
               </div>
@@ -728,7 +744,7 @@ function BridgeDetail({ bridge: b, projects, onBack, onEdit }) {
             ))}
           </SectionCard>
           <SectionCard title="Dimensions">
-            {[["Deck Width",b.deckWidth?`${b.deckWidth} ft`:"—"],["Structure Length",b.structLength?`${b.structLength} ft`:"—"],["Max Span",b.maxSpanLength?`${b.maxSpanLength} ft`:"—"],["# Spans",b.spans||"—"],["GPS",b.latitude&&b.longitude?`${b.latitude}, ${b.longitude}`:"—"]].map(([k,v])=>(
+            {[["Deck Width",b.deckWidth?`${b.deckWidth} ft`:"—"],["Structure Length",b.structLength?`${b.structLength} ft`:"—"],["Max Span",b.maxSpanLength?`${b.maxSpanLength} ft`:"—"],["# Spans",b.spans||"—"],["GPS",<GPS lat={b.latitude} lon={b.longitude} />]].map(([k,v])=>(
               <div key={k} style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", borderBottom:"1px solid #f0f0ee", fontSize:13 }}>
                 <span style={{ color:"#666" }}>{k}</span><span style={{ fontWeight:600 }}>{v}</span>
               </div>
@@ -1020,7 +1036,7 @@ function StructureDetail({ structure: s, projects, onBack, onEdit }) {
               ["Culvert Number",s.culvertNumber||"—"],["Designation",s.designation||"—"],["Road Designation",s.roadDesignation||"—"],
               ["Road",s.road||"—"],["Township",s.township||"—"],
               ["Project Ref",s.project||"—"],
-              ["GPS",s.latitude&&s.longitude?`${s.latitude}, ${s.longitude}`:"—"],
+              ["GPS",<GPS lat={s.latitude} lon={s.longitude} />],
             ].map(([k,v])=>(
               <div key={k} style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", borderBottom:"1px solid #f0f0ee", fontSize:13 }}>
                 <span style={{ color:"#666" }}>{k}</span><span style={{ fontWeight:600 }}>{v}</span>
@@ -1275,7 +1291,7 @@ function SignDetail({ sign: s, history, projects, onBack, onEdit, dispatch }) {
       {tab==="details" && (
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:20 }}>
           <SectionCard title="Location">
-            {[["On Road",s.onRoad||"—"],["Township",s.township||"—"],["Side of Road",s.sideOfRoad||"—"],["Travel Direction",s.travelDirection||"—"],["Offset",s.offset||"—"],["Road Back",s.roadBack||"—"],["Road Ahead",s.roadAhead||"—"],["GPS",s.latitude&&s.longitude?`${s.latitude}, ${s.longitude}`:"—"]].map(([k,v])=>(
+            {[["On Road",s.onRoad||"—"],["Township",s.township||"—"],["Side of Road",s.sideOfRoad||"—"],["Travel Direction",s.travelDirection||"—"],["Offset",s.offset||"—"],["Road Back",s.roadBack||"—"],["Road Ahead",s.roadAhead||"—"],["GPS",<GPS lat={s.latitude} lon={s.longitude} />]].map(([k,v])=>(
               <div key={k} style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", borderBottom:"1px solid #f0f0ee", fontSize:13 }}>
                 <span style={{ color:"#666" }}>{k}</span><span style={{ fontWeight:600 }}>{v}</span>
               </div>

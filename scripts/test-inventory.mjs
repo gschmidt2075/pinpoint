@@ -15,7 +15,7 @@ import { transferStock, stockByLocation, stockAtLocation, categoryName, createIn
          groupByCode, groupById, groupLabel, locationName } from "../src/data/schema.js";
 import { parseCSV, crosswalkInventory, fluidRuleFor, FLUID_RULES } from "../src/data/crosswalk.js";
 import { receiptExpenditure, reconcileReceipt, claimCycleFor,
-         allocateInvoice } from "../src/data/schema.js";
+         allocateInvoice, parseLatLong, formatLatLong, mapUrl } from "../src/data/schema.js";
 import { readFileSync } from "node:fs";
 import { INITIAL_INVENTORY_ITEMS as ITEMS,
          INITIAL_INVENTORY_BATCHES as BATCHES,
@@ -727,6 +727,46 @@ console.log("\nMoney fields");
     [{ id:"a", totalCost:100 }, { id:"b", totalCost:100 }, { id:"c", totalCost:100 }], 100);
   close(thirds.reduce((s,r)=>s+r.amount, 0), 100, "three equal tickets against $100 still add to $100");
   close(thirds[2].amount, 33.34, "the last one carries the residual rather than losing a cent");
+}
+
+// ── Coordinates ──────────────────────────────────────────────────────────────
+//
+// Greg wants a map button anywhere there is GPS. The risk is not the button, it
+// is reading a coordinate wrongly and sending somebody to the wrong field — so
+// the parser refuses rather than guesses, and every shape in the county's own
+// 3,651 sign records is pinned here.
+{
+  console.log("\nReading a coordinate");
+  // Named `reads`, not `ok` — a local `ok` shadows the assertion helper and
+  // every later ok(condition, message) in this block silently calls the wrong
+  // function. Cost me two confusing failures.
+  const reads = (v, lat, lon, why) => {
+    const c = parseLatLong(v);
+    close(c ? c.lat : NaN, lat, why);
+    close(c ? c.lon : NaN, lon, why + " (lon)");
+  };
+  // Both shapes appear in the sign sheet — with a space and without.
+  reads("40.350357, -98.278190", 40.350357, -98.278190, "comma and a space");
+  reads("40.512371,-98.354399",  40.512371, -98.354399, "comma, no space");
+  reads("  40.35  -98.27 ",      40.35,     -98.27,     "whitespace only, and padded");
+  eq(parseLatLong(40.35, -98.27).lat, 40.35, "two separate number fields");
+
+  const no = (v, why) => eq(parseLatLong(v), null, why);
+  no("", "empty is nothing");
+  no(null, "null is nothing");
+  no("not a place", "words are not a coordinate");
+  no("40.35", "one number is not a pair");
+  no("91.2, -98.2", "a latitude past the pole is refused");
+  no("40.35, -198.2", "and so is a longitude off the globe");
+  // The one that matters: two empty number fields read as 0,0, which is in the
+  // Atlantic. It has never been a culvert.
+  no("0, 0", "0,0 is an empty form, not a location");
+
+  eq(formatLatLong(parseLatLong("40.350357, -98.278190")), "40.350357, -98.278190",
+     "written back in the format Greg asked for");
+  ok(mapUrl(parseLatLong("40.35, -98.27")).includes("40.35,-98.27"),
+      "the map link carries the pair");
+  eq(mapUrl(null), "", "and nothing at all when there is no coordinate");
 }
 
 // ── Result ───────────────────────────────────────────────────────────────────

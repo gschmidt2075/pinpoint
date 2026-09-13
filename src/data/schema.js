@@ -1246,6 +1246,73 @@ export const DEFAULT_FUEL_DEPARTMENTS = [
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
+// COORDINATES
+//
+// Greg: "is there any way we could provide a map button for anything that has
+// GPS data that takes you to like Google maps."
+//
+// Yes, and it is worth doing once rather than per screen — bridges, culverts,
+// signs, roads and projects all carry coordinates, and a button that only
+// appears on some of them is one somebody stops looking for.
+//
+// Greg on the format, from his Musings: "everywhere a Latitude and Longitude is
+// referenced it should be in Decimal Degrees and should be a LatLong expression
+// like 40.698371, -98.358867".
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Read a coordinate however it was typed or imported.
+//
+// The county's 3,651 sign records hold it as one string and are inconsistent
+// about the space — "40.350357, -98.278190" and "40.512371,-98.354399" both
+// appear. Separate latitude and longitude fields exist elsewhere in the
+// program. This takes any of them.
+//
+// Returns null rather than a guess when it cannot read something, because a
+// map button that opens the wrong field in the middle of Kansas is worse than
+// no button.
+export function parseLatLong(value, longitude) {
+  // Two separate fields.
+  if (longitude !== undefined && longitude !== null && String(longitude).trim() !== "") {
+    return validLatLong(Number(value), Number(longitude));
+  }
+  const s = String(value ?? "").trim();
+  if (!s) return null;
+
+  // One string: "lat, lon" — comma, whitespace, or both.
+  const parts = s.split(/[,\s]+/).filter(Boolean);
+  if (parts.length !== 2) return null;
+  return validLatLong(Number(parts[0]), Number(parts[1]));
+}
+
+function validLatLong(lat, lon) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (lat < -90 || lat > 90)   return null;
+  if (lon < -180 || lon > 180) return null;
+  // 0,0 is in the Atlantic. It is what an empty pair of number fields looks
+  // like, and it has never been a culvert.
+  if (lat === 0 && lon === 0)  return null;
+  return { lat, lon };
+}
+
+// How it should be written back — Greg's format, six places.
+export const formatLatLong = (coords) =>
+  coords ? `${coords.lat.toFixed(6)}, ${coords.lon.toFixed(6)}` : "";
+
+// Where the map button goes.
+//
+// The template is a SETTING rather than a constant. Greg will not have a
+// developer once this is on county servers, and a county that standardises on
+// something other than Google should not need one to change a URL.
+export const DEFAULT_MAP_URL = "https://www.google.com/maps?q={lat},{lon}";
+
+export function mapUrl(coords, template = DEFAULT_MAP_URL) {
+  if (!coords) return "";
+  return String(template || DEFAULT_MAP_URL)
+    .replace("{lat}", String(coords.lat))
+    .replace("{lon}", String(coords.lon));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // RECEIVING SOMETHING THE COUNTY PAYS FOR
 //
 // Greg, 2026-09-05:
