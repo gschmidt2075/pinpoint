@@ -13,6 +13,27 @@ so it can be overturned cheaply.
 
 ---
 
+## The constraint that shapes everything
+
+> *"I can't rely on you to work this once it goes live. When this is transferred
+> to county servers it will be clean and you will not have access to it."* —
+> Greg, 2026-09-13
+
+This sits alongside "don't hardcode Adams County" as a standing rule, and it is
+the sharper of the two. **Anything a county will need to change must be
+changeable by the county**, in the program, without a developer.
+
+It already ruled out a plan this week: the FEMA equipment rates were going to be
+a PDF I parsed and shipped as data, refreshed each year when Greg sent me the
+new schedule. That makes the county dependent on me every January. It is a table
+they edit instead — structured like the published schedule, Cost Code first, with
+the rows they actually use marked.
+
+Apply the same test to everything: if the answer to "who updates this next year"
+is me, it is built wrong.
+
+---
+
 ## Waiting on you
 
 | # | Question | Blocks |
@@ -103,6 +124,37 @@ type. Greg: the function code is *"per claim"* — which matches, since 0705 is
 printed once at the top of the accounting block and every line shares it. It
 still has to be configurable: 704 and 707 exist, and another county's fund
 number will not be 0300.
+
+### Equipment, settled 2026-09-13
+
+**PM intervals already work the way Greg described** — a list of separate
+services per unit, each with its own interval, not a nested ladder. Oil at 250,
+filters at 500, hydraulics at 1000 means all three land together at 1000 by
+arithmetic. Nobody describes the overlaps; they happen.
+
+**PM folds into work orders.** The PM log records service, meter, who and a cost
+and nothing else — no parts, labor or fluids, which is why it needed replacing.
+PM Due stays as the view of what is coming; marking one done opens a work order.
+
+**No pre-filled parts on a PM work order.** Greg: *"we may have a different part
+number for a filter depending on if it is OEM or a cross match."* A pre-filled
+list would be wrong about half the time and trusted anyway.
+
+**A closed work order reopens and everything is editable**, with no cut-off.
+Parts already issued unwind properly — changing a quantity puts stock back.
+
+**Fluids go through inventory at whatever unit the item carries** — quart,
+gallon, drum. Greg: *"there are quarts on the shelf, drums and large holding
+tanks."* A light "issue to a unit" action puts a quart of oil on a machine
+without opening a work order.
+
+**In Shop is removed.** Greg knows what is in his shop; an open work order says
+it anyway.
+
+**FEMA rates are also the county's own equipment rates.** Greg: *"we use this as
+a cost out on our projects also."* So importing the schedule is not a reference
+list, it sets the rates that cost every project — and only the handful matching
+machines the county owns need marking as in use.
 
 **Townships start empty, and some of them are real government.** 27 of
 Nebraska's 93 counties are township counties, where a township board has
