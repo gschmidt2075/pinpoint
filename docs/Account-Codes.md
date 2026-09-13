@@ -79,11 +79,58 @@ individually — useful when Projects gets its root.
 
 ---
 
+## What the county's own claim form says
+
+Greg confirmed 705 is on the blank claim form. It is — and so is a good deal
+more. Read out of `Blank Claim Form.xls` and `Claim Sheet Example.xlsx`, the
+accounting block is a five-part string, entered one digit per cell:
+
+```
+Fund   Function   ??   ?   Expenditure Line
+0300 - 0705     - 00 - 0 - 30106
+```
+
+Headed **Fund**, **Function** and **Expenditure Line** on the sheet. The blank
+form arrives with `0300-0705-00-0-` already filled in on every line and only the
+expenditure line left to type — so for this department the first four parts are
+constants, and only the object code varies.
+
+- **0300** — the Road fund
+- **0705** — Bridge and Road Maintenance, exactly the APA function code
+- **00** and **0** — always zero on this form. Purpose unknown; carried as
+  configurable defaults rather than guessed at.
+- **30106** — the object code. `3 0106` in the APA manual, `301.06` in Pinpoint
+
+All three notations agree. A worked example from the real claim sheet: an
+invoice of $562.32 for a specialty oil filter split into `...21400` $500.00
+(Road Equipment Repair) and `...20100` $62.32 (Postal Service — the freight),
+with mechanics wire at `...30106` $35.22 on its own line.
+
+### The shape of a claim
+
+Two separate lists, which is worth stating because they are easy to conflate:
+
+- **Invoice lines** — date, invoice number, description, invoice total
+- **Accounting lines** — the account string and an amount
+
+One invoice can split across several accounting lines. The $562.32 above is one
+invoice and two accounting lines. Pinpoint's expenditure already allows several
+lines with different codes, so the shape fits; what is missing is the first four
+parts of the account string.
+
+### Other things the form carries that Pinpoint does not
+
+- A **Vendor Code** assigned by the Clerk's office
+- *"ALL CLAIMS MUST BE FILED WITHIN 90 DAYS"*
+- Claim Preparer, Department Head, County Commissioner — Approve / Deny, and
+  *"Denying a claim must be voted on separately by the county board"*
+
 ## Open
 
-- Does Adams County's claim already carry a function code that Pinpoint is
-  simply not asking for? The office would know.
-- If so, should it be per claim line, or set once per project?
+- What are the **`00`** and **`0`** segments? Always zero here, but they are in
+  the county's account string and something means them.
+- Should Pinpoint **print the claim sheet** in this layout, the way it now
+  prints the department fuel invoice from the county's own blank?
 
 Sources: [APA County Manual, Chapter 5](https://auditors.nebraska.gov/County_Info/CountyManual_Chapter_5.pdf) ·
 [APA County Manual index](https://auditors.nebraska.gov/County_Info/County_Manual.html)

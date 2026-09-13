@@ -20,9 +20,9 @@ so it can be overturned cheaply.
 | 60 | Does the fiscal year selector change what you see **everywhere**, or only in Fund Accounting? Inventory, equipment and fuel are all dated too. | How wide the year work reaches |
 | 61 | **Proposed and approved budget** — two figures side by side all year, or one figure that gets edited until it is approved and then locked? | The budget screen |
 | 62 | **Retire by absence** — is a code hidden from the dashboard simply because it has no budget amount and no activity that year, with no separate "retired" switch? | Account codes |
-| 64 | Does the county's claim already carry an APA **function code** (704 construction / 705 maintenance / 707 special projects) that Pinpoint is not asking for? See `Account-Codes.md`. | Whether the chart of accounts is complete |
-| 65 | If so, is the function code **per claim line**, or set once **per project**? | Where the field goes |
-| 66 | The fiscal year selector governs money. Operational modules get a **date range** instead — does that suit Inventory, Equipment and Fuel as well as Projects? | The year work |
+| 67 | The claim form's account string is `0300-0705-**00-0**-30106`. What are the **`00`** and **`0`** segments? Always zero on your form, but they mean something. | Printing a claim that matches |
+| 68 | Should Pinpoint **print the claim sheet** in the county's own layout, the way it now prints the department fuel invoice? | Whether the Clerk gets a familiar page |
+| 69 | The form says **claims must be filed within 90 days**, and carries a **Vendor Code** from the Clerk's office. Should Pinpoint warn on the first and hold the second? | Vendors and claims |
 
 ## Waiting on somebody else
 
@@ -95,6 +95,14 @@ choosing which year to hide it from.
 approved. After it's approved I do not care to see the proposed."* Edited freely
 until the Board approves it in September, then locked. The audit trail carries
 what it used to say, for anyone who asks.
+
+**The account string is Fund-Function-XX-X-Object, and the first four parts are
+constant for this department.** Confirmed off the county's own blank claim form,
+which arrives pre-filled with `0300-0705-00-0-` and only the object code left to
+type. Greg: the function code is *"per claim"* — which matches, since 0705 is
+printed once at the top of the accounting block and every line shares it. It
+still has to be configurable: 704 and 707 exist, and another county's fund
+number will not be 0300.
 
 **Townships start empty, and some of them are real government.** 27 of
 Nebraska's 93 counties are township counties, where a township board has
