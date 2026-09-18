@@ -43,15 +43,16 @@ is me, it is built wrong.
 | 62 | **Retire by absence** — is a code hidden from the dashboard simply because it has no budget amount and no activity that year, with no separate "retired" switch? | Account codes |
 | 67 | The claim form's account string is `0300-0705-**00-0**-30106`. What are the **`00`** and **`0`** segments? Always zero on your form, but they mean something. | Printing a claim that matches |
 | 68 | Should Pinpoint **print the claim sheet** in the county's own layout, the way it now prints the department fuel invoice? | Whether the Clerk gets a familiar page |
-| 109 | Does the **county server have internet access**? Decides whether map tiles come from OpenStreetMap or have to be self-hosted. | Mapping |
-| 110 | Will the county GIS give you a **road centerline layer**, and do its road names match yours? A road segment holds one point today, so it can be pinned but not drawn. | Roads on a map |
-| 111 | On a map, do you want to **place things by clicking**, or only look at what is already there? | How big the map work is |
+| 112 | **Vendors:** should "items supplied" be strictly what has been received from that vendor, or a list somebody can also add to by hand? | Vendors |
+| 113 | The **479 signs with no coordinate** — do they get found and fixed, or stay unmapped? | Signs on a map |
 | 69 | The form says **claims must be filed within 90 days**, and carries a **Vendor Code** from the Clerk's office. Should Pinpoint warn on the first and hold the second? | Vendors and claims |
 
 ## Waiting on somebody else
 
 | # | Question | Who |
 |---|---|---|
+| 109 | Does the **county server have internet access**? Greg does not know. It decides whether map tiles come from OpenStreetMap or have to be hosted on the server itself. | County IT |
+| 110 | A **road centerline layer** from the county GIS — Greg is sure they would share one. Needed because a road segment holds one point, so it can be pinned but not drawn. | County GIS |
 | 59 | Can the county server do **Azure AD**, and what would a county without it use instead? Until this is known there is no point building a login. | County IT |
 | 35 | Which **fuel tax** the county actually remits — the rate table takes any number of named taxes, so nothing is blocked, but the report will name whatever you enter. | Whoever prepares the return |
 | — | **Liability and ownership** if the Board wants to proceed. | County Attorney |
@@ -207,6 +208,29 @@ done on Riverview".
 `PROJECT_TYPES_CAPITAL`, `PROJECT_TYPES_MAINT` and `FUNDING_SOURCES` while the
 Settings lookups of the same names sit empty — which is exactly the mismatch
 Greg reported. The lookup is the list.
+
+### Mapping, settled in principle 2026-09-18
+
+**Leaflet, not Google.** MIT licensed, about 40KB, no API key and no billing
+account. The Google Maps JavaScript API needs both plus per-load charges
+somebody has to watch, which fails the go-live rule. The map BUTTON can keep
+opening Google, because a link costs nothing to maintain.
+
+**Click to place.** Greg: *"I would like to click on a map if possible. That is
+how I enter a lot of stuff in the Appsheet app and it works really well."* So
+the map is an input, not only a view.
+
+Current location is a mobile concern and he said so himself. Worth noting the
+browser can offer it on a laptop too, just badly — it triangulates from the
+network rather than GPS, and in a rural county that can be miles out. Not worth
+building against.
+
+**Points are ready; lines are not.** 3,172 of 3,651 signs carry a coordinate,
+and bridges and culverts have them. A ROAD holds a single latitude and longitude
+— one point, where a segment is a line — so roads can be pinned but not drawn
+until a centerline layer is imported and matched to the road records. The
+matching is the work, not the drawing, and it is the same class of problem as
+the inventory crosswalk.
 
 ### Cost accounting, settled 2026-09-18
 
