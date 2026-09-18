@@ -256,7 +256,9 @@ export const createProject = (overrides = {}) => ({
   // miscellaneous: active | complete (auto at calendar year end)
   status:            "planning",
   workDescription:   "",
-  fundingSource:     "Roads Fund",
+  // Empty, not a guess. Funding sources are a Settings lookup the county edits,
+  // and "Roads Fund" was a fund rather than a source anyway.
+  fundingSource:     "",
   // FEMA
   isFEMA:            false,
   disasterNumber:    "",
@@ -3184,10 +3186,32 @@ export const LOOKUP_DEFS = [
   { key:"haulTypes",       label:"Haul Types", module:"Inventory",
     hint:"Who hauled the load",
     values:["County Pickup","Contractor Delivery"] },
-  { key:"projectTypesCapital",  label:"Capital Project Types", module:"Projects", values:[] },
-  { key:"projectTypesMaint",    label:"Maintenance Project Types", module:"Projects", values:[] },
+  // These three used to be empty here while Projects.jsx carried its own
+  // hardcoded copies — which is exactly the mismatch Greg reported: "None of the
+  // lists for the work type are the same from projects to the settings page."
+  // The lookup is the list now. The defaults below are the work types any county
+  // road department would recognise, not Adams County's own, and every one is
+  // editable.
+  { key:"projectTypesCapital",  label:"Capital Project Types", module:"Projects",
+    values:["Bridge Replacement","Bridge Repair","Bridge Deck Overlay",
+            "Culvert Replacement","Culvert Repair","Culvert Extension",
+            "Road Resurfacing / Overlay","Road Reconstruction","Road Widening",
+            "Drainage Improvement","Ditch / Waterway","Grading",
+            "Sign Installation","Traffic Safety","Guardrail",
+            "Structure Replacement","Structure Repair","Other Capital"] },
+  { key:"projectTypesMaint",    label:"Maintenance Project Types", module:"Projects",
+    values:["Culvert Replacement","Culvert Repair","Culvert Cleaning",
+            "Bridge Repair","Gravel Road \u2014 Grading / Shaping","Ditching / Drainage",
+            "Crack Sealing","Chip Seal","Patching / Pothole Repair",
+            "Mowing / Vegetation Control","Snow Removal","Shoulder Work",
+            "Sign Installation","Sign Replacement","Guardrail Repair",
+            "Structure Repair","Other Maintenance"] },
+  // Funding SOURCE is the programme the money comes from, which is not the same
+  // as the FUND it is accounted in. "Roads Fund" was in the old hardcoded list
+  // and is a fund, so it is not here.
   { key:"fundingSources",  label:"Funding Sources", module:"Projects",
-    values:["Local","State Aid","Federal","FEMA","Other"] },
+    values:["NDOT / STP","NDOT / STBG","FEMA PA","FEMA BRIC","CDBG",
+            "Local Match","Bridge Program","County Bond","Other"] },
   { key:"engPhases",       label:"Engineering Phases", module:"Cost Accounting",
     values:["design","inspection","survey","construction_mgmt","other"] },
   { key:"adjustReasons",   label:"Inventory Adjustment Reasons", module:"Inventory",

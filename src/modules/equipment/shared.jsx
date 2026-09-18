@@ -9,7 +9,8 @@ import {  } from "react";
 export const STATUS_META = {
   active:         { label:"Active",         color:"#1a6b35", bg:"#e6f4ec" },
   out_of_service: { label:"Out of Service", color:"#c0392b", bg:"#fdecea" },
-  in_shop:        { label:"In Shop",        color:"#d97706", bg:"#fef3cd" },
+  // in_shop removed on Greg's instruction. Kept OUT rather than left as an
+  // unreachable entry: a status nothing can set is one somebody re-introduces.
   sold:           { label:"Sold",           color:"#888",    bg:"#f0f0ee" },
 };
 

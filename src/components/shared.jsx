@@ -358,6 +358,10 @@ export function SearchSelect({
 
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
+    // An EMPTY box used to show the first 60 and say nothing about the other
+    // 2,230. Greg read that as a broken catalog — "it only gives you a limited
+    // amount of inventory items" — and reasonably so: the list looked complete
+    // because the most likely parts sort to the top.
     if (!q) return items.slice(0, maxRows);
     // Every whitespace-separated term must appear somewhere, so "cat filter"
     // finds a Cat filter without depending on word order.
@@ -422,6 +426,14 @@ export function SearchSelect({
         }}>
           {matches.length === 0 && (
             <div style={{ padding:"14px 12px", fontSize:12, color:"#999" }}>{emptyMessage}</div>
+          )}
+          {/* Say so when the list is only part of the catalog. The silence here
+              is what made a 2,290-item catalog look like a 60-item one. */}
+          {matches.length > 0 && matches.length < total && (
+            <div style={{ padding:"7px 11px", fontSize:11, color:"#8a6d1f", background:"#fdf7e3",
+                          borderBottom:"1px solid #f0e4bd", position:"sticky", top:0 }}>
+              Showing {matches.length} of {total.toLocaleString()} — type to search the rest
+            </div>
           )}
           {matches.map((i, n) => {
             const off = isDisabled(i);

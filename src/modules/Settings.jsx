@@ -851,7 +851,17 @@ function LookupLists({ db, dispatch }) {
                 {isOpen && (
                   <div style={{ padding:"4px 15px 15px" }}>
                     {values.length === 0 && (
-                      <div style={{ padding:"12px 0", color:"#aaa", fontSize:12 }}>Empty — add the first value below.</div>
+                      <div style={{ padding:"12px 0", color:"#aaa", fontSize:12 }}>
+                        Empty — add the first value below.
+                        {/* A list saved as empty stays empty on purpose: someone may have
+                            deleted every value, and quietly putting the defaults back would
+                            fight them. But if the list ships WITH defaults, empty is more
+                            likely to be a list that never got filled in, so say so. */}
+                        {def.values?.length > 0 && (
+                          <> Pinpoint ships {def.values.length} suggested value{def.values.length===1?"":"s"} for
+                            this list — <strong>Reset</strong> brings them in.</>
+                        )}
+                      </div>
                     )}
 
                     {values.map((v, i) => (

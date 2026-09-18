@@ -5,26 +5,16 @@ import { createProject } from "../data/schema.js";
 import { FISCAL_YEAR } from "../data/accountCodes.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const PROJECT_TYPES_CAPITAL = [
-  "Bridge Replacement","Bridge Repair","Bridge Deck Overlay",
-  "Culvert Replacement","Culvert Repair","Culvert Extension",
-  "Road Resurfacing / Overlay","Road Reconstruction","Road Widening",
-  "Drainage Improvement","Ditch / Waterway","Grading",
-  "Sign Installation","Traffic Safety","Guardrail",
-  "Structure Replacement","Structure Repair","Other Capital",
-];
-const PROJECT_TYPES_MAINT = [
-  "Culvert Replacement","Culvert Repair","Culvert Cleaning",
-  "Bridge Repair","Gravel Road — Grading / Shaping","Ditching / Drainage",
-  "Crack Sealing","Chip Seal","Patching / Pothole Repair",
-  "Mowing / Vegetation Control","Snow Removal","Shoulder Work",
-  "Sign Installation","Sign Replacement","Guardrail Repair",
-  "Structure Repair","Other Maintenance",
-];
-const FUNDING_SOURCES = [
-  "Roads Fund","NDOT / STP","NDOT / STBG","FEMA PA","FEMA BRIC",
-  "CDBG","Local Match","Bridge Program","County Bond","Other",
-];
+//
+// PROJECT_TYPES_CAPITAL, PROJECT_TYPES_MAINT and FUNDING_SOURCES used to be
+// hardcoded here while Settings held lookups of the same names — one of them
+// empty, the other holding different values. That is Greg's "None of the lists
+// for the work type are the same from projects to the settings page", and it was
+// two lists where there should have been one.
+//
+// They live in Settings now, as `projectTypesCapital`, `projectTypesMaint` and
+// `fundingSources`, and this module reads them.
+
 const ONE_SIX_YEARS = ["Year 1","Year 2","Year 3","Year 4","Year 5","Year 6"];
 
 const STATUS_META = {
@@ -90,6 +80,7 @@ export default function Projects({ db, dispatch }) {
       <ProjectForm
         type={newType}
         projects={projects}
+        lookups={db.lookups || {}}
         assets={db.infrastructureAssets || []}
         equipment={db.equipment || []}
         onSave={payload => {
@@ -246,6 +237,7 @@ function ProjectDetail({ project, db, dispatch, onBack, onEdit }) {
       <ProjectForm
         project={project}
         projects={db.projects||[]}
+        lookups={db.lookups||{}}
         assets={db.infrastructureAssets||[]}
         equipment={db.equipment||[]}
         onSave={updated => { onEdit(updated); setEditing(false); }}
@@ -923,7 +915,7 @@ function CostSummaryTab({ project, totals }) {
 }
 
 // ── Project Form ──────────────────────────────────────────────────────────────
-function ProjectForm({ type: initialType, project, projects, assets, equipment, onSave, onCancel }) {
+function ProjectForm({ type: initialType, project, projects, assets, equipment, lookups = {}, onSave, onCancel }) {
   const isEdit = !!project;
   const [form, setForm] = useState(() => {
     if (project) return { ...project };
@@ -935,6 +927,19 @@ function ProjectForm({ type: initialType, project, projects, assets, equipment, 
   });
   useUnsavedForm(form, "this project");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
+
+  // From Settings, not from a copy kept here. Greg has to be able to change
+  // these without a developer: "I can't rely on you to work this once it goes
+  // live."
+  const projectTypesCapital = lookups.projectTypesCapital || [];
+  const projectTypesMaint   = lookups.projectTypesMaint   || [];
+  const fundingSources      = lookups.fundingSources      || [];
+
+  // A lookup the county edits can lose a value a saved project still carries.
+  // Showing it keeps the old project honest instead of silently blanking it the
+  // next time somebody opens the form.
+  const withCurrent = (list, current) =>
+    current && !list.includes(current) ? [...list, current] : list;
 
   const isCapital = form.type==="capital";
   const isMaint   = form.type==="maintenance";
@@ -976,7 +981,8 @@ function ProjectForm({ type: initialType, project, projects, assets, equipment, 
           <Field label="Work Type">
             <select value={form.projectType} onChange={e=>set("projectType",e.target.value)} style={inp}>
               <option value="">Select…</option>
-              {(isCapital?PROJECT_TYPES_CAPITAL:isMaint?PROJECT_TYPES_MAINT:[]).map(t=><option key={t} value={t}>{titleCase(t)}</option>)}
+              {withCurrent(isCapital ? projectTypesCapital : isMaint ? projectTypesMaint : [], form.projectType)
+                .map(t=><option key={t} value={t}>{titleCase(t)}</option>)}
             </select>
           </Field>
           <Field label="Start Date"><DateField value={form.startDate} onChange={v => set("startDate", v)} /></Field>
@@ -990,7 +996,9 @@ function ProjectForm({ type: initialType, project, projects, assets, equipment, 
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
           <Field label="Funding Source">
             <select value={form.fundingSource} onChange={e=>set("fundingSource",e.target.value)} style={inp}>
-              {FUNDING_SOURCES.map(f=><option key={f} value={f}>{titleCase(f)}</option>)}
+              <option value="">Select…</option>
+              {withCurrent(fundingSources, form.fundingSource)
+                .map(f=><option key={f} value={f}>{titleCase(f)}</option>)}
             </select>
           </Field>
           {isMisc && <Field label="Calendar Year"><input type="number" value={form.calendarYear} onChange={e=>set("calendarYear",parseInt(e.target.value)||new Date().getFullYear())} style={{ ...inp, fontFamily:"monospace" }} /></Field>}

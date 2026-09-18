@@ -1,7 +1,8 @@
 import { useState, useMemo } from "react";
 import { Icon, Field, SectionCard, Table, KPICard, inp, btn, fmt, fmtSm, DateField, titleCase, MoneyField } from "../components/shared.jsx";
 import { useUnsavedForm, useNavigationGuard } from "../components/unsaved.jsx";
-import { createLaborEntry, createEquipmentEntry, createMaterialEntry, createContractorEntry, createEngineeringEntry, uid, today } from "../data/schema.js";
+import { createLaborEntry, createEquipmentEntry, createMaterialEntry, createContractorEntry, createEngineeringEntry, uid, today,
+         laborRateFor } from "../data/schema.js";
 import { FEMA_EQUIPMENT_RATES } from "../data/femaRates.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -278,7 +279,7 @@ function EnterCostsTab({ db, dispatch }) {
           </div>
 
           {activeEntryTab==="labor"       && <LaborEntries      project={project} employees={employees} dispatch={entryDispatch} />}
-          {activeEntryTab==="equipment"   && <EquipmentEntries  project={project} equipment={equipment} dispatch={entryDispatch} />}
+          {activeEntryTab==="equipment"   && <EquipmentEntries  project={project} employees={employees} equipment={equipment} dispatch={entryDispatch} />}
           {activeEntryTab==="materials"   && <MaterialEntries   project={project} invItems={invItems} invBatches={invBatches} dispatch={entryDispatch} />}
           {activeEntryTab==="contractor"  && <ContractorEntries project={project} vendors={vendors} dispatch={entryDispatch} />}
           {activeEntryTab==="engineering" && <EngineeringEntries project={project} vendors={vendors} dispatch={entryDispatch} />}
@@ -349,11 +350,36 @@ function LaborEntries({ project, employees, dispatch }) {
   useUnsavedForm(form, "what you have entered");
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
-  const fillEmployee = id => {
-    const emp = employees.find(e=>e.id===id);
-    if (!emp) { set("employeeId",id); return; }
-    setForm(f=>({ ...f, employeeId:id, employeeName:emp.name, classification:emp.classification, straightTimeRate:emp.straightTimeRate||0, overtimeRate:emp.overtimeRate||0, fringeRate:emp.fringeRate||0 }));
+  // What this person cost ON THE DAY THE WORK WAS DONE.
+  //
+  // This used to read emp.classification, emp.straightTimeRate, emp.overtimeRate
+  // and emp.fringeRate — four fields that stopped existing when pay moved to a
+  // dated rateHistory and classification to dated assignments. They all read
+  // `undefined` and quietly filled zeros, which is Greg's "a lot of the rates or
+  // classifications do not come over". Nothing warned, because a zero is a
+  // perfectly good number.
+  //
+  // Greg, on which date decides: "the price on the date the work was done." So a
+  // backdated correction reprices, the same bargain as fuel.
+  const fillRates = (f, id, date) => {
+    const emp = employees.find(e => e.id === id);
+    if (!emp) return { ...f, employeeId:id };
+    const r = laborRateFor(emp, date || f.date || today());
+    return {
+      ...f, employeeId:id,
+      employeeName:    [emp.firstName, emp.lastName].filter(Boolean).join(" ") || emp.name || "",
+      classification:  r.classification || "",
+      straightTimeRate:r.hourlyRate     || 0,
+      overtimeRate:    r.overtimeRate   || 0,
+      fringeRate:      r.fringePerHour  || 0,
+    };
   };
+
+  const fillEmployee = id => setForm(f => fillRates(f, id, f.date));
+
+  // Changing the DATE has to reprice too, or a corrected date leaves the rate
+  // that was in force on the wrong day.
+  const setWorkDate = (d) => setForm(f => fillRates({ ...f, date:d }, f.employeeId, d));
 
   const cost = laborTotal(form);
   const fema = laborFEMA(form);
@@ -392,7 +418,7 @@ function LaborEntries({ project, employees, dispatch }) {
         <div style={{ background:"#f7f7f5", border:"1px solid #ddd", borderRadius:8, padding:18, marginBottom:16 }}>
           <div style={{ fontWeight:700, fontSize:12, marginBottom:12 }}>{editId?"Edit Labor Entry":"New Labor Entry"}</div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr 1fr", gap:12, marginBottom:12 }}>
-            <Field label="Date"><DateField value={form.date} onChange={v => set("date", v)} /></Field>
+            <Field label="Date"><DateField value={form.date} onChange={v => setWorkDate(v)} /></Field>
             <Field label="Employee">
               {employees.length>0
                 ? <select value={form.employeeId} onChange={e=>fillEmployee(e.target.value)} style={{ ...inp, margin:0 }}>
@@ -402,7 +428,12 @@ function LaborEntries({ project, employees, dispatch }) {
                 : <input type="text" value={form.employeeName} onChange={e=>set("employeeName",e.target.value)} style={{ ...inp, margin:0 }} placeholder="Employee name…" />
               }
             </Field>
-            <Field label="Classification"><input type="text" value={form.classification} onChange={e=>set("classification",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <Field label="Classification">
+              <div style={{ ...inp, margin:0, background:"#f7f7f5", color: form.classification ? "#1a1a1a" : "#bbb" }}>
+                {form.classification || "—"}
+              </div>
+              <div style={{ fontSize:10.5, color:"#aaa", marginTop:3 }}>From the employee, on the work date</div>
+            </Field>
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr 1fr", gap:12, marginBottom:12 }}>
             <Field label="ST Hours"><input type="number" min="0" step="0.25" value={form.straightTimeHours} onChange={e=>set("straightTimeHours",parseFloat(e.target.value)||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
@@ -452,7 +483,7 @@ function LaborEntries({ project, employees, dispatch }) {
 }
 
 // ── Equipment Entries ─────────────────────────────────────────────────────────
-function EquipmentEntries({ project, equipment, dispatch }) {
+function EquipmentEntries({ project, equipment, employees = [], dispatch }) {
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId]     = useState(null);
   const entries = project.equipmentEntries||[];
@@ -510,7 +541,25 @@ function EquipmentEntries({ project, equipment, dispatch }) {
             <Field label="Hours Operated"><input type="number" min="0" step="0.25" value={form.hoursOperated} onChange={e=>set("hoursOperated",parseFloat(e.target.value)||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
             <Field label="FEMA Rate ($/hr)"><MoneyField value={form.femaRate} onChange={v=>set("femaRate",v||0)} style={{ ...inp, margin:0, fontFamily:"monospace" }} /></Field>
             <Field label="Total Cost"><div style={{ ...inp, margin:0, background:"#fff", fontFamily:"monospace", fontWeight:700, color:"#1a3a5c" }}>{fmtSm(cost)}</div></Field>
-            <Field label="Operator"><input type="text" value={form.operatorName} onChange={e=>set("operatorName",e.target.value)} style={{ ...inp, margin:0 }} /></Field>
+            <Field label="Operator">
+              {/* A typed name spells itself differently every time and cannot be
+                  counted. Same fix as the fuel pump. */}
+              {employees.filter(e => e.active !== false).length > 0 ? (
+                <select value={form.operatorName} onChange={e=>set("operatorName",e.target.value)}
+                        style={{ ...inp, margin:0 }}>
+                  <option value="">Who was on it?…</option>
+                  {[...employees].filter(e => e.active !== false)
+                    .sort((a,b)=>(a.lastName||a.name||"").localeCompare(b.lastName||b.name||""))
+                    .map(e => {
+                      const name = [e.firstName, e.lastName].filter(Boolean).join(" ") || e.name;
+                      return <option key={e.id} value={name}>{name}</option>;
+                    })}
+                </select>
+              ) : (
+                <input type="text" value={form.operatorName} onChange={e=>set("operatorName",e.target.value)}
+                       style={{ ...inp, margin:0 }} placeholder="Add employees to get a list" />
+              )}
+            </Field>
           </div>
           <div style={{ display:"flex", gap:10 }}>
             <Field label="Notes" style={{ flex:1 }}><input type="text" value={form.notes} onChange={e=>set("notes",e.target.value)} style={{ ...inp, margin:0 }} /></Field>

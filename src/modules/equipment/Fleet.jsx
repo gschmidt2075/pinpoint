@@ -20,7 +20,6 @@ export function FleetTab({ units, workOrders, dispensing, dispatch, onSelect }) 
   const [search, setSearch] = useState("");
 
   const active   = units.filter(u=>u.status==="active").length;
-  const inShop   = units.filter(u=>u.status==="in_shop").length;
   const oos      = units.filter(u=>u.status==="out_of_service").length;
   const openWOs  = workOrders.filter(w=>w.status==="open").length;
 
@@ -54,7 +53,6 @@ export function FleetTab({ units, workOrders, dispensing, dispatch, onSelect }) 
 
       <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12, marginBottom:18 }}>
         <KPICard label="Active"         value={active}  sub="Units"      accent="#1a6b35" icon="check-circle" />
-        <KPICard label="In Shop"        value={inShop}  sub="Units"      accent="#d97706" icon="tool" />
         <KPICard label="Out of Service" value={oos}     sub="Units"      accent="#c0392b" icon="alert-circle" />
         <KPICard label="Open Work Orders" value={openWOs} sub="WOs"      accent="#1a3a5c" icon="clipboard-check" />
         <KPICard label="PM Due"         value={pmDue.length}
@@ -103,7 +101,10 @@ export function FleetTab({ units, workOrders, dispensing, dispatch, onSelect }) 
       )}
 
       <div style={{ display:"flex", border:"1px solid #ddd", borderRadius:6, overflow:"hidden", marginBottom:16, width:"fit-content" }}>
-        {[["all","All"],["active","Active"],["in_shop","In Shop"],["out_of_service","OOS"],["sold","Sold"]].map(([v,l])=>(
+        {/* No In Shop. Greg: "I know what machines are down and in the shop. I want
+            to remove it." An open work order already says a machine is in the shop,
+            and a status somebody has to remember to set is a status that goes stale. */}
+        {[["all","All"],["active","Active"],["out_of_service","OOS"],["sold","Sold"]].map(([v,l])=>(
           <button key={v} onClick={()=>setStatusFilter(v)} style={{ padding:"6px 13px", fontSize:12, fontWeight:600, border:"none", cursor:"pointer", background:statusFilter===v?"#1a3a5c":"#fff", color:statusFilter===v?"#fff":"#555" }}>{l}</button>
         ))}
       </div>
@@ -199,10 +200,10 @@ export function UnitDetail({ unit, workOrders, pmLogs, dispensing, invItems, inv
         </div>
         <div style={{ display:"flex", gap:10, alignItems:"center" }}>
           <StatusChip status={unit.status} />
-          {unit.status==="active" && (
-            <button onClick={()=>dispatch({ type:"UPDATE_EQUIPMENT_STATUS", payload:{ id:unit.id, status:"in_shop" } })} style={{ ...btn.small, background:"#d97706", fontSize:11 }}>→ In Shop</button>
-          )}
-          {unit.status==="in_shop" && (
+          {/* In Shop is gone, so the only status move left from here is back to
+              active from out of service. Greg: "I know what machines are down and
+              in the shop. I want to remove it." */}
+          {unit.status === "out_of_service" && (
             <button onClick={()=>dispatch({ type:"UPDATE_EQUIPMENT_STATUS", payload:{ id:unit.id, status:"active" } })} style={{ ...btn.small, background:"#1a6b35", fontSize:11 }}>→ Active</button>
           )}
           <button onClick={()=>setEditing(true)} style={{ ...btn.small, background:"#1a3a5c" }}>Edit</button>
@@ -460,7 +461,6 @@ function UnitForm({ unit, onSave, onCancel }) {
           <Field label="Status">
             <select value={form.status} onChange={e=>set("status",e.target.value)} style={inp}>
               <option value="active">Active</option>
-              <option value="in_shop">In Shop</option>
               <option value="out_of_service">Out of Service</option>
               <option value="sold">Sold</option>
             </select>
