@@ -119,6 +119,12 @@ for (const file of files) {
         return;
       }
 
+      // `import.meta` and `new.target` are language syntax, not two identifiers.
+      // Walking into them looked for variables called "import" and "meta", which
+      // of course do not exist — a false alarm that would have taught people to
+      // ignore this check.
+      if (n.type === "MetaProperty") return;
+
       // Names that are not references to anything in this file.
       if (n.type === "MemberExpression") {
         visit(n.object, chain);

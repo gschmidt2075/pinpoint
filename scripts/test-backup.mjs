@@ -5,6 +5,7 @@
 // are the ugly ones — a file missing keys that now exist, a file with keys that
 // no longer do, a file somebody renamed, and a file that is not a backup at all.
 
+import { readFileSync } from "node:fs";
 import { buildBackup, readBackup, backupSummary, backupFilename,
          BACKUP_MARKER, BACKUP_FORMAT } from "../src/data/backup.js";
 
@@ -135,6 +136,67 @@ group("Counting an unfamiliar list");
   ok("named lists come first", s[0].key, "expenditures");
   ok("and an unknown one is still counted",
      s.find(r => r.key === "somethingNew")?.count, 2);
+}
+
+// ── The sample data set that ships with Pinpoint ──────────────────────────────
+//
+// A dangling id is the failure mode that matters here. It does not crash: the
+// screen renders a blank where a unit number should be, and the person testing
+// writes down "equipment doesn't show" when in truth the sample data was wrong.
+// That wastes exactly the session the sample exists to make useful.
+group("The shipped sample data");
+{
+  const raw = readFileSync(new URL("../public/sample-data.json", import.meta.url), "utf8");
+  const r = readBackup(raw);
+  ok("it reads as a backup", r.ok, true);
+
+  const d = r.data;
+  const ids = (list) => new Set((list || []).map(x => x.id));
+  const dangling = (list, field, pool) =>
+    (list || []).filter(x => x[field] && !pool.has(x[field])).map(x => x[field]);
+
+  const equipIds = ids(d.equipment), tankIds = ids(d.tanks);
+  const vendorIds = ids(d.vendors),  empIds  = ids(d.employees);
+
+  ok("every fuelling points at a machine that exists",
+     dangling(d.fuelDispensing, "equipmentId", equipIds), []);
+  ok("every fuelling points at a tank that exists",
+     dangling(d.fuelDispensing, "sourceTankId", tankIds), []);
+  ok("every tank transaction points at a tank that exists",
+     dangling(d.tankTransactions, "tankId", tankIds), []);
+  ok("every delivery names a vendor that exists",
+     dangling(d.tankTransactions, "vendorId", vendorIds), []);
+  ok("every claim names a vendor that exists",
+     dangling(d.expenditures, "vendorId", vendorIds), []);
+  ok("every work order names a machine that exists",
+     dangling(d.workOrders, "unitId", equipIds), []);
+
+  const allLabor = [
+    ...(d.workOrders || []).flatMap(w => w.laborEntries || []),
+    ...(d.projects   || []).flatMap(p => p.laborEntries || []),
+  ];
+  ok("every labor line names an employee that exists",
+     dangling(allLabor, "employeeId", empIds), []);
+  ok("and there are labor lines to check", allLabor.length > 0, true);
+
+  const allEquipEntries = (d.projects || []).flatMap(p => p.equipmentEntries || []);
+  ok("every project equipment line names a machine that exists",
+     dangling(allEquipEntries, "equipmentId", equipIds), []);
+
+  // The catalog is real, crosswalked data. An empty array here would replace it;
+  // an absent key leaves it alone. This is the difference between the two.
+  ok("it carries no inventory keys, so a restore leaves the real catalog alone",
+     Object.keys(d).filter(k => k.startsWith("inventory")), []);
+
+  // Greg: "Please don't hardcode Adams County into this program as I would like
+  // to keep a clean version that may be used by other counties."
+  ok("and nothing in it names a real county, shop or road",
+     (raw.match(/adams|kenesaw|holstein|roseland|pauline|hastings/gi) || []), []);
+
+  ok("the county is the invented one", r.meta.county, "Example County");
+  ok("every classification used by an employee is in the lookup it ships",
+     (d.employees || []).flatMap(e => (e.assignments || []).map(a => a.classification))
+       .filter(c => c && !(d.lookups?.classifications || []).includes(c)), []);
 }
 
 console.log(failed === 0

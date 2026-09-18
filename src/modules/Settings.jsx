@@ -2140,6 +2140,7 @@ function BackupRestore({ db, dispatch, access }) {
   const [pending, setPending] = useState(null);   // { meta, data, summary, name }
   const [error, setError]     = useState("");
   const [done, setDone]       = useState("");
+  const [loading, setLoading] = useState(false);
   const mayRestore = access?.has?.("deleteRecords") !== false;
 
   const counts = useMemo(() => backupSummary(db), [db]);
@@ -2174,6 +2175,23 @@ function BackupRestore({ db, dispatch, access }) {
       setPending({ ...result, name: file.name });
     };
     reader.readAsText(file);
+  };
+
+  // The sample set that ships with Pinpoint. Same path as any other restore —
+  // it IS a backup file, just one written by us rather than by the county.
+  const loadSample = async () => {
+    setError(""); setDone(""); setPending(null); setLoading(true);
+    try {
+      const res = await fetch(`${import.meta.env.BASE_URL || "/"}sample-data.json`);
+      if (!res.ok) throw new Error(`the file could not be fetched (${res.status})`);
+      const result = readBackup(await res.text());
+      if (!result.ok) throw new Error(result.error);
+      setPending({ ...result, name: "sample-data.json (shipped with Pinpoint)" });
+    } catch (err) {
+      setError(`Could not load the sample data — ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const confirmRestore = () => {
@@ -2250,11 +2268,23 @@ function BackupRestore({ db, dispatch, access }) {
             </div>
           ) : (
             <>
-              <label style={{ ...btn.ghost, display:"inline-block", cursor:"pointer" }}>
-                Choose a backup file…
-                <input type="file" accept=".json,application/json" onChange={pickFile}
-                       style={{ display:"none" }} />
-              </label>
+              <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
+                <label style={{ ...btn.ghost, display:"inline-block", cursor:"pointer" }}>
+                  Choose a backup file…
+                  <input type="file" accept=".json,application/json" onChange={pickFile}
+                         style={{ display:"none" }} />
+                </label>
+                <button onClick={loadSample} disabled={loading} style={{ ...btn.ghost, opacity: loading ? 0.5 : 1 }}>
+                  {loading ? "Loading…" : "Load sample test data"}
+                </button>
+              </div>
+
+              <div style={{ fontSize:12, color:"#888", marginTop:10, lineHeight:1.7, maxWidth:640 }}>
+                The sample set fills every screen with invented records for
+                &ldquo;Example County&rdquo; — people, machines, claims, projects, fuel, roads and
+                signs — so a new screen can be judged on what it does rather than on an
+                empty table. It leaves the parts catalog alone. Nothing in it is real.
+              </div>
 
               {pending && (
                 <div style={{ marginTop:16, border:"1px solid #ddd", borderRadius:8, overflow:"hidden" }}>

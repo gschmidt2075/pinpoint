@@ -11,6 +11,7 @@ import Vendors from "./modules/Vendors.jsx";
 import Employees from "./modules/Employees.jsx";
 import Reporting from "./modules/Reporting.jsx";
 import { FISCAL_YEAR } from "./data/accountCodes.js";
+import { SEED_VERSION, RESEED } from "./data/seedVersion.js";
 import { DEFAULT_TOWNSHIPS, DEFAULT_LOOKUPS, DEFAULT_TANKS, nextWorkOrderNumber,
          createTank, createInventoryGroup, createInventoryItem, createEquipmentUnit,
          createWorkOrder, createVendor, createEmployee,
@@ -1147,41 +1148,6 @@ function rehydrate(state) {
 
 const auditedReducer = withAudit(reducer);
 
-// Seeded data that has been RESHAPED, not just added to.
-//
-// mergeSaved fills in missing keys, and rehydrate gives saved records defaults
-// for new fields. Neither can help when the shape of the seed itself changes:
-// the saved array wins wholesale, so somebody testing since before the
-// inventory rebuild would keep 2,375 one-row-per-shed items forever and never
-// see the new model at all.
-//
-// Bumping this replaces those specific seeded lists with the current ones, and
-// leaves everything the person actually entered — claims, work orders, fuel —
-// untouched. Bump it whenever a seeded list is regenerated in a new shape, and
-// say so here.
-//
-//   1  inventory rebuilt: one item per part number, stock per location  (2026-08-23)
-//   2  the commodity group became the single source of truth for both what a
-//      thing is and where it is; Inventory Usual Location dropped  (2026-08-26)
-// v3: fuel routed out of the inventory catalog to the tanks, and DEF merged
-// from five shed rows onto one item. Without a bump, anyone already testing
-// keeps the old catalog in localStorage — five DEF items and $55,637.89 of
-// diesel counted twice — and would have no idea why the screens disagree with
-// what the program now does.
-const SEED_VERSION = 3;
-const RESEED = ["inventoryItems", "inventoryBatches", "inventoryTransactions",
-                "inventoryGroups", "inventoryExceptions",
-                // Removed by the v2 rebuild — delete so they cannot linger.
-                "storageLocations", "inventoryCategories"];
-
-// Turn a saved state — from localStorage OR from a backup file — into a state
-// this build can run on.
-//
-// One function, used by both, on purpose. A restore that had its own private
-// way in would drift from the load path, and the drift would only show up as a
-// blank screen on somebody else's computer a month later. Everything a backup
-// needs in order to survive a rebuild is here: the seed check, the merge onto
-// current defaults, the rehydrate that gives old records new fields.
 function hydrateSaved(saved) {
   const incoming = { ...saved };
 
