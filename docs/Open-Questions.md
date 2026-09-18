@@ -43,9 +43,11 @@ is me, it is built wrong.
 | 62 | **Retire by absence** — is a code hidden from the dashboard simply because it has no budget amount and no activity that year, with no separate "retired" switch? | Account codes |
 | 67 | The claim form's account string is `0300-0705-**00-0**-30106`. What are the **`00`** and **`0`** segments? Always zero on your form, but they mean something. | Printing a claim that matches |
 | 68 | Should Pinpoint **print the claim sheet** in the county's own layout, the way it now prints the department fuel invoice? | Whether the Clerk gets a familiar page |
-| 100 | A capital project's **final synopsis** — contractor, contract amount, actual against estimate. A screen in Cost Accounting, or a printed closeout for the Board? You did not remember your thinking; my proposal is below. | Where capital money lives |
-| 101 | **Misc projects are county-wide but some need locations** — asphalt patching. Proposal below: the project stays county-wide and the COST ENTRIES carry the segment. | Whether misc projects get a location |
 | 104 | The pending-project list lives in a Google Sheet **and** an AppSheet map layer with scope, photos and diagrams. What should Pinpoint hold of that, given no AppSheet integration? | The planning list |
+| 105 | Which date sets a **labor rate** — the day the work was done, I assume, meaning a backdated correction reprices it exactly like fuel? | Cost Accounting labor |
+| 106 | When a work order closes, does the project get **one figure or separate lines** for parts, labor and fluids? | Whether project material and labor totals are real numbers |
+| 107 | Does **every** work order belong to a project? A grader serviced in February probably does not — so the project reference is optional and the cost stays on the machine? | The work order to project link |
+| 108 | **Enter Costs as a dashboard** — pick the project first, then enter everything against it, rather than choosing a project on every line? | The Enter Costs screen |
 | 69 | The form says **claims must be filed within 90 days**, and carries a **Vendor Code** from the Clerk's office. Should Pinpoint warn on the first and hold the second? | Vendors and claims |
 
 ## Waiting on somebody else
@@ -192,6 +194,16 @@ disagree with what Infrastructure says.
 **Who can issue a project number is a permission**, not a person. Greg: *"They
 will not have the sole right to issue a number. It should be a setting as to who
 can."*
+
+**A capital project's final synopsis is a SCREEN in Cost Accounting**, not a
+third place for money to live — estimate, bid, contract amount, actual to date,
+variance, contractor. Printable for the Board, but the screen is the thing.
+
+**A misc project has no location; its COST ENTRIES carry the segment.** Greg
+wants to know where asphalt patching happened without pretending a county-wide
+project sits somewhere. One relationship seen from two ends again: the project
+answers "what did patching cost this year", the segment answers "what has been
+done on Riverview".
 
 **The hardcoded lists go.** `Projects.jsx` carries its own
 `PROJECT_TYPES_CAPITAL`, `PROJECT_TYPES_MAINT` and `FUNDING_SOURCES` while the
