@@ -43,6 +43,9 @@ is me, it is built wrong.
 | 62 | **Retire by absence** — is a code hidden from the dashboard simply because it has no budget amount and no activity that year, with no separate "retired" switch? | Account codes |
 | 67 | The claim form's account string is `0300-0705-**00-0**-30106`. What are the **`00`** and **`0`** segments? Always zero on your form, but they mean something. | Printing a claim that matches |
 | 68 | Should Pinpoint **print the claim sheet** in the county's own layout, the way it now prints the department fuel invoice? | Whether the Clerk gets a familiar page |
+| 100 | A capital project's **final synopsis** — contractor, contract amount, actual against estimate. A screen in Cost Accounting, or a printed closeout for the Board? You did not remember your thinking; my proposal is below. | Where capital money lives |
+| 101 | **Misc projects are county-wide but some need locations** — asphalt patching. Proposal below: the project stays county-wide and the COST ENTRIES carry the segment. | Whether misc projects get a location |
+| 104 | The pending-project list lives in a Google Sheet **and** an AppSheet map layer with scope, photos and diagrams. What should Pinpoint hold of that, given no AppSheet integration? | The planning list |
 | 69 | The form says **claims must be filed within 90 days**, and carries a **Vendor Code** from the Clerk's office. Should Pinpoint warn on the first and hold the second? | Vendors and claims |
 
 ## Waiting on somebody else
@@ -139,6 +142,61 @@ It renders **nothing** when the coordinate is missing or unreadable, rather
 than a greyed-out button that invites a click going nowhere. And `0, 0` counts
 as unreadable: it is what two empty number fields look like, it is in the
 Atlantic, and it has never been a culvert.
+
+### Projects, settled 2026-09-18
+
+**There are TWO years, and neither of them is stored.**
+
+Greg: *"Once a project gets a number and work actually starts on it, the number
+stays with it and isn't across fiscal year but calendar year. A M-2026-54 may
+have been started on June 1, 2026 and finished on July 5, 2026... So if
+something got bought for the project on July 2 it would apply to the next fiscal
+year. The other problem being is if the State does any auditing for work and not
+the fund accounting it is calendar year and not fiscal."*
+
+So one project spans two fiscal years while keeping one calendar-year number,
+and the same costs have to report two ways:
+
+| Question | Basis |
+|---|---|
+| What did the county spend, and against which budget | **Fiscal** year, 1 July – 30 June |
+| What work was done, for a state audit of the work | **Calendar** year |
+
+This settles the fiscal year design rather than complicating it. **A record
+stores its date and nothing else.** Both years are worked out from that date,
+and a report picks which basis it is asking on. Storing either one would create
+a second fact that can disagree with the date — and here it would be wrong half
+the time by construction, since a project legitimately belongs to one calendar
+year and two fiscal years at once.
+
+The same shape already exists for the fuel tax, which reports on calendar
+quarters while the county's books run July to June.
+
+**A project keeps its number.** Renumbering happens in exactly one case: a
+number was issued, no work started, and 1 January arrives — then it takes a new
+calendar-year number. Not at fiscal year end, and not because work is
+unfinished.
+
+**A FEMA number can be added to a project already running** — a flood event mid
+job. So the FEMA identifier is something a project gains, not something it is
+created as.
+
+**Always reference a road segment**, even for a bridge or culvert job. Greg:
+*"so we can keep track of what has been done in that segment of road throughout
+the years."* The segment is the spine that everything else hangs off.
+
+**Coordinates are never stored on a project.** They come from the referenced
+asset — structure if there is one, segment if not — so the project can never
+disagree with what Infrastructure says.
+
+**Who can issue a project number is a permission**, not a person. Greg: *"They
+will not have the sole right to issue a number. It should be a setting as to who
+can."*
+
+**The hardcoded lists go.** `Projects.jsx` carries its own
+`PROJECT_TYPES_CAPITAL`, `PROJECT_TYPES_MAINT` and `FUNDING_SOURCES` while the
+Settings lookups of the same names sit empty — which is exactly the mismatch
+Greg reported. The lookup is the list.
 
 ### Equipment, settled 2026-09-13
 
