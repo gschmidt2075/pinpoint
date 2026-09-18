@@ -274,6 +274,20 @@ function baseReducer(state, action) {
       return { ...state, lookups: { ...state.lookups, [key]: [...values] } };
     }
 
+    // ── Restore from a backup file ─────────────────────────────────────────
+    //
+    // Deliberately the SAME path loading from localStorage takes: seed check,
+    // merge onto current defaults, rehydrate every record through its factory.
+    // That is what lets a backup written before a rebuild load afterwards — a
+    // field added since gets its default on the way in, rather than arriving as
+    // undefined and breaking a screen.
+    //
+    // It replaces the whole state. Merging two sets of records would produce
+    // duplicate claims and doubled inventory, and no county wants to spend an
+    // afternoon telling which of two identical work orders is the real one.
+    case "RESTORE_BACKUP":
+      return hydrateSaved(action.payload);
+
     // Update a cost entry within a project
     case "UPDATE_PROJECT_ENTRY": {
       const { projectId, entryType, entry } = action.payload;
@@ -953,7 +967,7 @@ function baseReducer(state, action) {
 const RECOSTS_FUEL = new Set([
   "ADD_TANK_TRANSACTION", "UPDATE_TANK_TRANSACTION", "DELETE_TANK_TRANSACTION",
   "ADD_FUEL_DISPENSING",  "UPDATE_FUEL_DISPENSING",  "DELETE_FUEL_DISPENSING",
-  "IMPORT_INVENTORY", "RESET_DATA",
+  "IMPORT_INVENTORY", "RESET_DATA", "RESTORE_BACKUP",
 ]);
 
 function reducer(state, action) {
@@ -1160,24 +1174,36 @@ const RESEED = ["inventoryItems", "inventoryBatches", "inventoryTransactions",
                 // Removed by the v2 rebuild — delete so they cannot linger.
                 "storageLocations", "inventoryCategories"];
 
+// Turn a saved state — from localStorage OR from a backup file — into a state
+// this build can run on.
+//
+// One function, used by both, on purpose. A restore that had its own private
+// way in would drift from the load path, and the drift would only show up as a
+// blank screen on somebody else's computer a month later. Everything a backup
+// needs in order to survive a rebuild is here: the seed check, the merge onto
+// current defaults, the rehydrate that gives old records new fields.
+function hydrateSaved(saved) {
+  const incoming = { ...saved };
+
+  if ((incoming.seedVersion || 0) < SEED_VERSION) {
+    for (const key of RESEED) delete incoming[key];
+    console.info(
+      `Inventory seed data was rebuilt — reloading it and keeping your other work. ` +
+      `(seed v${saved.seedVersion || 0} → v${SEED_VERSION})`);
+  }
+
+  const state = rehydrate(mergeSaved(initialState, { ...incoming, seedVersion: SEED_VERSION }));
+  // Recost the fuel that was saved before this ran. Data written under the
+  // old rule — one price per tank, the newest one — is priced wrongly, and
+  // this is the only moment that fixes it without anyone being asked to.
+  return { ...state, fuelDispensing: recostFuelDispensing(state.tankTransactions, state.fuelDispensing) };
+}
+
 function loadPersisted() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return initialState;
-    const saved = JSON.parse(raw);
-
-    if ((saved.seedVersion || 0) < SEED_VERSION) {
-      for (const key of RESEED) delete saved[key];
-      console.info(
-        `Inventory seed data was rebuilt — reloading it and keeping your other work. ` +
-        `(seed v${saved.seedVersion || 0} → v${SEED_VERSION})`);
-    }
-
-    const state = rehydrate(mergeSaved(initialState, { ...saved, seedVersion: SEED_VERSION }));
-    // Recost the fuel that was saved before this ran. Data written under the
-    // old rule — one price per tank, the newest one — is priced wrongly, and
-    // this is the only moment that fixes it without anyone being asked to.
-    return { ...state, fuelDispensing: recostFuelDispensing(state.tankTransactions, state.fuelDispensing) };
+    return hydrateSaved(JSON.parse(raw));
   } catch (err) {
     console.warn("Could not load saved data — starting fresh.", err);
     return initialState;

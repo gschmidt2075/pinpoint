@@ -8,6 +8,7 @@ import { LOOKUP_DEFS, createTownship, createInventoryGroup, groupLabel,
          DEFAULT_INVOICES_PER_CLAIM, MODULES, ACCESS_LEVELS, LOCKED_CAPABILITIES,
          DEFAULT_ROLES, createRole, ROOT_ROLE_ID, hasCapability, isGrantable,
          createUser, AUDIT_ACTIONS } from "../data/schema.js";
+import { buildBackup, backupFilename, readBackup, backupSummary } from "../data/backup.js";
 
 // Townships and storage locations are COUNTY data, not program data. They used
 // to be hardcoded here as Adams County's list, which meant every county that
@@ -653,6 +654,7 @@ function SystemSettings({ db, dispatch, access }) {
     { id:"tanks",     label:"Fuel Tanks",        icon:"gas-station" },
     { id:"funds",     label:"Custom Funds",     icon:"coin" },
     { id:"fema",      label:"FEMA Rates",       icon:"alert-octagon" },
+    { id:"backup",    label:"Backup & Restore", icon:"database" },
     ...(access?.has?.("deleteRecords") ? [{ id:"danger", label:"Testing Tools", icon:"alert-triangle" }] : []),
   ];
 
@@ -702,6 +704,8 @@ function SystemSettings({ db, dispatch, access }) {
       {activeSection==="import" && <InventoryImport db={db} dispatch={dispatch} />}
 
       {activeSection==="danger" && <DangerZone access={access} />}
+
+      {activeSection==="backup" && <BackupRestore db={db} dispatch={dispatch} access={access} />}
 
       {activeSection==="tanks" && (
         <TankSettings tanks={tanks} dispatch={dispatch} />
@@ -2121,6 +2125,191 @@ function AuditTrail({ db }) {
 // It is here, behind a typed confirmation, because a reset should take a
 // deliberate act rather than a stray click. Before go-live it comes out
 // altogether; the notes say so.
+// ── Backup & Restore ──────────────────────────────────────────────────────────
+//
+// Greg: "The test data import would be very helpful as it is difficult to get
+// things to work after massive rebuilds."
+//
+// Two buttons and a warning. Export writes the whole system to a file; Restore
+// reads one back, tells you what is in it, and asks before replacing anything.
+//
+// The restore deliberately shows its summary FIRST and keeps the button dark
+// until it has, because the one thing worse than losing a day's test entry is
+// losing it to a file that turned out to be empty.
+function BackupRestore({ db, dispatch, access }) {
+  const [pending, setPending] = useState(null);   // { meta, data, summary, name }
+  const [error, setError]     = useState("");
+  const [done, setDone]       = useState("");
+  const mayRestore = access?.has?.("deleteRecords") !== false;
+
+  const counts = useMemo(() => backupSummary(db), [db]);
+  const totalRows = counts.reduce((a, r) => a + r.count, 0);
+
+  const doExport = () => {
+    setError(""); setDone("");
+    try {
+      const text = JSON.stringify(buildBackup(db), null, 2);
+      const blob = new Blob([text], { type:"application/json" });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href = url; a.download = backupFilename(db);
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setDone(`Backup written — ${totalRows.toLocaleString()} records.`);
+    } catch (err) {
+      setError(`Could not write the backup: ${err.message}`);
+    }
+  };
+
+  const pickFile = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";                       // so the same file can be picked twice
+    if (!file) return;
+    setError(""); setDone(""); setPending(null);
+    const reader = new FileReader();
+    reader.onerror = () => setError("Could not read that file.");
+    reader.onload = () => {
+      const result = readBackup(String(reader.result || ""));
+      if (!result.ok) { setError(result.error); return; }
+      setPending({ ...result, name: file.name });
+    };
+    reader.readAsText(file);
+  };
+
+  const confirmRestore = () => {
+    if (!pending) return;
+    const rows = pending.summary.reduce((a, r) => a + r.count, 0);
+    if (!window.confirm(
+      `Replace everything in Pinpoint with the contents of ${pending.name}?\n\n` +
+      `${rows.toLocaleString()} records will be loaded. Everything currently in the ` +
+      `system is discarded — export a backup first if you want to keep it.\n\n` +
+      `This cannot be undone.`)) return;
+    dispatch({ type:"RESTORE_BACKUP", payload: pending.data });
+    setPending(null);
+    setDone(`Restored from ${pending.name}.`);
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom:20 }}>
+        <div style={{ fontSize:16, fontWeight:700, display:"flex", alignItems:"center", gap:8 }}>
+          <Icon name="database" size={18} color="#1a3a5c" /> Backup &amp; Restore
+        </div>
+        <div style={{ fontSize:13, color:"#888", marginTop:3 }}>
+          Write everything to a file, and load it back — including after an update
+        </div>
+      </div>
+
+      {error && <AlertBar type="danger"  message={error} />}
+      {done   && <AlertBar type="success" message={done} />}
+
+      <SectionCard title="Export" subtitle="One file holding the whole system" icon="download">
+        <div style={{ padding:18 }}>
+          <div style={{ fontSize:13, color:"#555", lineHeight:1.75, marginBottom:14, maxWidth:640 }}>
+            Every record Pinpoint holds — claims, projects, equipment, inventory, fuel,
+            people, settings and the audit trail — written to a single <code>.json</code> file
+            you can keep anywhere. Take one before a big change, and take one at the end of a
+            day of test entry. It is the only copy: Pinpoint stores its data in this browser
+            on this computer, so clearing the browser clears the data.
+          </div>
+
+          <div style={{ display:"flex", gap:10, alignItems:"center", marginBottom:16, flexWrap:"wrap" }}>
+            <button onClick={doExport} style={btn.primary}>Export backup ↓</button>
+            <span style={{ fontSize:12, color:"#888" }}>
+              {totalRows.toLocaleString()} records across {counts.length} lists
+            </span>
+          </div>
+
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(210px,1fr))",
+                        gap:"3px 18px", fontSize:12, color:"#666" }}>
+            {counts.map(r => (
+              <div key={r.key} style={{ display:"flex", justifyContent:"space-between", gap:10,
+                                        borderBottom:"1px solid #f4f4f2", padding:"3px 0" }}>
+                <span>{r.label}</span>
+                <span style={{ fontFamily:"monospace", color:"#333" }}>{r.count.toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </SectionCard>
+
+      <div style={{ height:14 }} />
+
+      <SectionCard title="Restore" subtitle="Load a backup file, replacing what is here now" icon="upload">
+        <div style={{ padding:18 }}>
+          <div style={{ background:"#fef3cd", border:"1px solid #f0d080", borderRadius:8,
+                        padding:"13px 16px", marginBottom:16, fontSize:13, color:"#7a4f00", lineHeight:1.7 }}>
+            <strong>Restoring replaces everything.</strong> It does not merge — two sets of the
+            same claims and work orders would be worse than none. Export first if there is
+            anything here worth keeping.
+          </div>
+
+          {!mayRestore ? (
+            <div style={{ fontSize:13, color:"#888" }}>
+              Your account can export a backup but not restore one.
+            </div>
+          ) : (
+            <>
+              <label style={{ ...btn.ghost, display:"inline-block", cursor:"pointer" }}>
+                Choose a backup file…
+                <input type="file" accept=".json,application/json" onChange={pickFile}
+                       style={{ display:"none" }} />
+              </label>
+
+              {pending && (
+                <div style={{ marginTop:16, border:"1px solid #ddd", borderRadius:8, overflow:"hidden" }}>
+                  <div style={{ padding:"11px 15px", background:"#f7f7f5", borderBottom:"1px solid #eee" }}>
+                    <div style={{ fontSize:13, fontWeight:700 }}>{pending.name}</div>
+                    <div style={{ fontSize:12, color:"#888", marginTop:3 }}>
+                      {[pending.meta.county, pending.meta.department].filter(Boolean).join(" · ") || "No county recorded"}
+                      {pending.meta.createdAt && ` · written ${new Date(pending.meta.createdAt).toLocaleString()}`}
+                    </div>
+                    {!pending.meta.wrapped && (
+                      <div style={{ fontSize:11.5, color:"#7a4f00", marginTop:4 }}>
+                        Raw data, not a Pinpoint backup file — it will still load.
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ padding:"12px 15px" }}>
+                    {pending.summary.length === 0 ? (
+                      <div style={{ fontSize:13, color:"#c0392b" }}>
+                        This file has no records in it. Restoring it would empty the system.
+                      </div>
+                    ) : (
+                      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(210px,1fr))",
+                                    gap:"3px 18px", fontSize:12, color:"#666" }}>
+                        {pending.summary.map(r => (
+                          <div key={r.key} style={{ display:"flex", justifyContent:"space-between", gap:10,
+                                                    borderBottom:"1px solid #f4f4f2", padding:"3px 0" }}>
+                            <span>{r.label}</span>
+                            <span style={{ fontFamily:"monospace", color:"#333" }}>{r.count.toLocaleString()}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ padding:"12px 15px", borderTop:"1px solid #eee", display:"flex", gap:10 }}>
+                    <button onClick={confirmRestore} style={btn.danger}>Replace everything with this file</button>
+                    <button onClick={()=>setPending(null)} style={btn.ghost}>Cancel</button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          <div style={{ fontSize:11.5, color:"#888", marginTop:16, lineHeight:1.7, maxWidth:640 }}>
+            A backup taken before an update still loads. It comes in through the same path the
+            program uses to read its own saved data, so anything added since gets its normal
+            starting value rather than arriving empty.
+          </div>
+        </div>
+      </SectionCard>
+    </div>
+  );
+}
+
 function DangerZone() {
   const [typed, setTyped] = useState("");
   const armed = typed.trim().toUpperCase() === "RESET";
