@@ -43,11 +43,9 @@ is me, it is built wrong.
 | 62 | **Retire by absence** — is a code hidden from the dashboard simply because it has no budget amount and no activity that year, with no separate "retired" switch? | Account codes |
 | 67 | The claim form's account string is `0300-0705-**00-0**-30106`. What are the **`00`** and **`0`** segments? Always zero on your form, but they mean something. | Printing a claim that matches |
 | 68 | Should Pinpoint **print the claim sheet** in the county's own layout, the way it now prints the department fuel invoice? | Whether the Clerk gets a familiar page |
-| 104 | The pending-project list lives in a Google Sheet **and** an AppSheet map layer with scope, photos and diagrams. What should Pinpoint hold of that, given no AppSheet integration? | The planning list |
-| 105 | Which date sets a **labor rate** — the day the work was done, I assume, meaning a backdated correction reprices it exactly like fuel? | Cost Accounting labor |
-| 106 | When a work order closes, does the project get **one figure or separate lines** for parts, labor and fluids? | Whether project material and labor totals are real numbers |
-| 107 | Does **every** work order belong to a project? A grader serviced in February probably does not — so the project reference is optional and the cost stays on the machine? | The work order to project link |
-| 108 | **Enter Costs as a dashboard** — pick the project first, then enter everything against it, rather than choosing a project on every line? | The Enter Costs screen |
+| 109 | Does the **county server have internet access**? Decides whether map tiles come from OpenStreetMap or have to be self-hosted. | Mapping |
+| 110 | Will the county GIS give you a **road centerline layer**, and do its road names match yours? A road segment holds one point today, so it can be pinned but not drawn. | Roads on a map |
+| 111 | On a map, do you want to **place things by clicking**, or only look at what is already there? | How big the map work is |
 | 69 | The form says **claims must be filed within 90 days**, and carries a **Vendor Code** from the Clerk's office. Should Pinpoint warn on the first and hold the second? | Vendors and claims |
 
 ## Waiting on somebody else
@@ -209,6 +207,35 @@ done on Riverview".
 `PROJECT_TYPES_CAPITAL`, `PROJECT_TYPES_MAINT` and `FUNDING_SOURCES` while the
 Settings lookups of the same names sit empty — which is exactly the mismatch
 Greg reported. The lookup is the list.
+
+### Cost accounting, settled 2026-09-18
+
+**A labor rate comes from the day the work was done**, not the day it was
+typed. So a backdated correction reprices, exactly like fuel and for the same
+reason.
+
+**An equipment work order is its own cost target, not a line on a road
+project.** Greg: *"any equipment work order should be treated like an M-XXXX-XX
+type of project but with equipment and not infrastructure."* It accumulates
+parts, labor and fluids against itself and against the machine. It does **not**
+belong to a project — Greg, flatly, on whether every work order does: *"No."*
+
+That is simpler than the alternative. Nothing has to decide which road project a
+February grader service belongs to, because the answer is none.
+
+**Enter Costs is a dashboard**: pick the project, then enter everything against
+it, rather than choosing a project on every line.
+
+**Three rates bugs that are mine, not design gaps.** `CostAccounting.jsx` line
+355 reads `emp.classification`, `emp.straightTimeRate`, `emp.overtimeRate` and
+`emp.fringeRate` — none of which exist any more. The employee rebuild moved pay
+to a dated `rateHistory` and classification to dated `assignments`, so all four
+read `undefined` and quietly fill zeros. That is Greg's *"a lot of the rates or
+classifications do not come over"*, and it is breakage I introduced.
+
+The operator field is free text and should be the employee list, like the fuel
+pump. And nothing in the reducer connects a closing work order to anything —
+that was never built rather than broken.
 
 ### Equipment, settled 2026-09-13
 
