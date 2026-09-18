@@ -66,6 +66,43 @@ is me, it is built wrong.
 - **Testing Tools** (Settings → Reset Data) must be removed before go-live.
 - The seeded Adams County inventory must be **stripped and re-crosswalked** from
   a fresh export at go-live.
+- **`DEFAULT_TANKS` still names Adams County's shops** — Kenesaw, Holstein,
+  Roseland, Pauline, and the two portables carried on units 402 and 430. They
+  are editable in Settings, so this is not a wall, but a clean copy handed to
+  another county would arrive holding your tank list. Left in place for now
+  because emptying it would take your tanks away the next time you reset the
+  data mid-test; it goes in the same sweep as Testing Tools. Same for
+  `state: "NE"` as a vendor default, which is a smaller thing.
+
+---
+
+## Settled, 2026-09-18 — backup, restore and sample data
+
+**Settings → Backup & Restore.** *"The test data import would be very helpful as
+it is difficult to get things to work after massive rebuilds."*
+
+Export writes the whole system to one `.json` file. Restore reads one back,
+shows what is in it, and asks before replacing anything — it replaces rather
+than merges, because two sets of the same claims is worse than none.
+
+The part that makes it worth having: a backup taken **before** a rebuild loads
+**after** one. Restoring goes through the same path the program uses to read its
+own saved data, so a file written before a field existed gets that field's
+normal starting value on the way in. There is deliberately no second, private
+way in for restore — one that drifted from the load path would only show up as a
+blank screen on somebody else's computer a month later.
+
+**Load sample test data** fills every screen with invented records for "Example
+County" — six people with real rate histories, ten machines, six work orders,
+five projects including one that straddles the fiscal year, twelve claims, a
+fuel year, roads, bridges, structures and signs. Nothing in it is real, nothing
+in it is Adams County, and it deliberately carries **no inventory**, so loading
+it leaves the crosswalked catalog exactly where it is.
+
+That last one is for the staff sessions: an empty screen cannot be judged.
+Nobody can tell a dashboard that is wrong from a dashboard with nothing in it,
+and the feedback that comes back is "it didn't do anything" rather than "the
+fuel total is off."
 
 ---
 
